@@ -33,6 +33,7 @@ class ContactProviderTest {
     private lateinit var account: Account
     private lateinit var prefs: ContactSyncPreferences
     private var accountCreated = false
+    private val deviceRows = mutableSetOf<Long>()
     private val fixtureMarker = "microG fixture " + UUID.randomUUID().toString() + " "
     private val api = Api()
 
@@ -88,6 +89,12 @@ class ContactProviderTest {
     @After fun cleanup() {
         if (!accountCreated) return
         if (::prefs.isInitialized) prefs.configure(SyncMode.OFF, 0)
+        // Track the raw row before its Data insert: even a failed insertLocal must
+        // remove its own unowned row, without touching any pre-existing Device row.
+        for (id in deviceRows) {
+            resolver.delete(ContentUris.withAppendedId(RawContacts.CONTENT_URI, id).buildUpon()
+                .appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build(), null, null)
+        }
         resolver.delete(RawContacts.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build(),
             "${RawContacts.ACCOUNT_NAME}=? AND ${RawContacts.ACCOUNT_TYPE}=?", arrayOf(account.name, account.type))
         AccountManager.get(context).removeAccountExplicitly(account)
@@ -105,6 +112,7 @@ class ContactProviderTest {
             if (fixtureAccount) { put(RawContacts.ACCOUNT_NAME, account.name); put(RawContacts.ACCOUNT_TYPE, account.type) }
         })!!
         val id = ContentUris.parseId(raw)
+        if (!fixtureAccount) deviceRows.add(id)
         resolver.insert(Data.CONTENT_URI, ContentValues().apply {
             put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, fixtureMarker + name)
         })
