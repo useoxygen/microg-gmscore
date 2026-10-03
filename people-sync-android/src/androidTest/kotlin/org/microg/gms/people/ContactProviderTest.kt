@@ -7,6 +7,7 @@ import android.accounts.AccountManager
 import android.content.ContentUris
 import android.content.ContentValues
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
@@ -23,7 +24,7 @@ import org.junit.runner.RunWith
 import org.microg.gms.people.sync.*
 import java.util.UUID
 
-/** Real Contacts Provider, mock remote service, isolated emulator only. */
+/** Real Contacts Provider, mock remote service; physical devices require explicit serial opt-in. */
 @RunWith(AndroidJUnit4::class)
 class ContactProviderTest {
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)
@@ -31,12 +32,14 @@ class ContactProviderTest {
     private val resolver get() = context.contentResolver
     private lateinit var account: Account
     private lateinit var prefs: ContactSyncPreferences
+    private var accountCreated = false
+    private val fixtureMarker = "microG fixture " + UUID.randomUUID().toString() + " "
     private val api = Api()
 
     private fun person(resource: String = "people/a", name: String = "Alice", number: String = "123", etag: String = "e1") = Person.parse(
         JSONObject().put("resourceName", resource).put("metadata", JSONObject().put("sources", JSONArray().put(
             JSONObject().put("type", "CONTACT").put("id", resource.removePrefix("people/")).put("etag", etag))))
-            .put("names", JSONArray().put(JSONObject().put("givenName", name)))
+            .put("names", JSONArray().put(JSONObject().put("givenName", fixtureMarker + name)))
             .put("phoneNumbers", JSONArray().put(JSONObject().put("value", number).put("type", "mobile"))))
     private inner class Api : ContactsApi {
         var remote: Person? = person()
@@ -60,18 +63,31 @@ class ContactProviderTest {
         }
         override fun delete(resource: String) { writes++; remote = null; afterWrite?.invoke() }
     }
+    private fun approvedDevice(): Boolean {
+        if (Build.HARDWARE in listOf("ranchu", "goldfish")) return true
+        // Default runs still refuse physical phones. The caller must supply the
+        // exact connected serial, and the phone must be a development build.
+        if (Build.TYPE !in listOf("userdebug", "eng") || Build.VERSION.SDK_INT < 29) return false
+        val expected = InstrumentationRegistry.getArguments().getString("physicalDeviceSerial")
+            ?.takeIf { it.isNotBlank() } ?: return false
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation
+            .executeShellCommand("getprop ro.serialno")
+        val actual = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText().trim() }
+        return actual.isNotBlank() && actual == expected
+    }
     @Before fun setup() {
-        check(context.packageName == "org.microg.gms.people.sync.android.test" && Build.HARDWARE in listOf("ranchu", "goldfish")) {
-            "Fixture tests require the provider test APK on an isolated emulator"
+        check(context.packageName == "org.microg.gms.people.sync.android.test" && approvedDevice()) {
+            "Fixture tests require an emulator or an explicitly selected development phone"
         }
         account = Account("fixture-" + UUID.randomUUID(), "org.microg.gms.contacts.fixture")
-        assertTrue(AccountManager.get(context).addAccountExplicitly(account, null, null))
+        accountCreated = AccountManager.get(context).addAccountExplicitly(account, null, null)
+        assertTrue(accountCreated)
         prefs = ContactSyncPreferences(context, account)
         prefs.configure(SyncMode.DOWNLOAD, 0)
     }
     @After fun cleanup() {
-        if (!::account.isInitialized) return
-        prefs.configure(SyncMode.OFF, 0)
+        if (!accountCreated) return
+        if (::prefs.isInitialized) prefs.configure(SyncMode.OFF, 0)
         resolver.delete(RawContacts.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build(),
             "${RawContacts.ACCOUNT_NAME}=? AND ${RawContacts.ACCOUNT_TYPE}=?", arrayOf(account.name, account.type))
         AccountManager.get(context).removeAccountExplicitly(account)
@@ -90,7 +106,7 @@ class ContactProviderTest {
         })!!
         val id = ContentUris.parseId(raw)
         resolver.insert(Data.CONTENT_URI, ContentValues().apply {
-            put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, name)
+            put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, fixtureMarker + name)
         })
         return id
     }
