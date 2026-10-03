@@ -23,6 +23,7 @@ class ContactsSyncTest {
     private class Store : ContactStore {
         var token: String? = null
         var commits = 0
+        var afterBegin: (() -> Unit)? = null
         var nextId = 1L
         val rows = linkedMapOf<Long, LocalContact>()
         override fun checkpoint() = token
@@ -42,7 +43,7 @@ class ContactsSyncTest {
         }
         override fun begin(existing: LocalContact, pending: JSONObject): LocalContact {
             check(rows.getValue(existing.id).version == existing.version)
-            return existing.copy(version = existing.version + 1, pending = pending).also { rows[existing.id] = it }
+            return existing.copy(version = existing.version + 1, pending = pending).also { rows[existing.id] = it; afterBegin?.invoke() }
         }
         override fun rejected(existing: LocalContact) { rows[existing.id] = rows.getValue(existing.id).copy(pending = null) }
         override fun acknowledge(existing: LocalContact, remote: Person?) {
@@ -107,6 +108,21 @@ class ContactsSyncTest {
     @Test fun offDoesNotReadOrWrite() {
         val store = Store(); val api = Api().apply { page = { _, _ -> error("Unexpected read") } }
         assertEquals(SyncReport(0, 0, 0, 0), ContactsSync(api, store) { SyncMode.OFF }.sync())
+    }
+    @Test fun disablingUploadsBeforeDispatchDoesNotLeaveAnUnsentJournal() {
+        val (store, api) = setup()
+        store.edit(fields = fields(phone = "456"))
+        var mode = SyncMode.TWO_WAY
+        store.afterBegin = { mode = SyncMode.OFF }
+        ContactsSync(api, store) { mode }.sync()
+        assertEquals(0, api.writes)
+        assertNull(store.rows.getValue(1).pending)
+        assertTrue(store.rows.getValue(1).dirty)
+        store.afterBegin = null
+        mode = SyncMode.TWO_WAY
+        ContactsSync(api, store) { mode }.sync()
+        assertEquals(1, api.writes)
+        assertFalse(store.rows.getValue(1).dirty)
     }
     @Test fun fullDownloadAndReplayDoNotDuplicate() {
         val (store, api) = setup()

@@ -174,7 +174,7 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
             val journaled = store.begin(existing, pending)
             try {
                 // Recheck the current opt-in immediately before cloud effects.
-                check(mode() == SyncMode.TWO_WAY) { "Contact uploads disabled" }
+                if (mode() != SyncMode.TWO_WAY) throw UploadDisabled()
                 val response = when (kind) {
                     "create" -> api.create(payload)
                     "update" -> api.update(latest!!, changed, payload)
@@ -182,6 +182,11 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
                 }
                 store.acknowledge(journaled, response)
                 uploaded++
+            } catch (e: UploadDisabled) {
+                // The guard rejected dispatch; no remote effect is ambiguous.
+                store.rejected(journaled)
+                conflicts++
+                break
             } catch (e: ApiException) {
                 if (e.definitelyRejected) store.rejected(journaled)
                 if (e.status in listOf(400, 409, 412)) { conflicts++; continue }

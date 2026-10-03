@@ -52,6 +52,7 @@ class ApiException(val status: Int, val expired: Boolean = false, val retryAfter
     IOException("Contacts API request failed ($status)") {
     val definitelyRejected get() = status in listOf(400, 401, 403, 404, 409, 412, 429)
 }
+class UploadDisabled : IllegalStateException("Contact uploads are disabled")
 class UnsupportedContactEdit : Exception("Contact field contains unmapped values")
 
 interface ContactsApi {
@@ -114,7 +115,7 @@ class PeopleApi(private val transport: HttpTransport, private val canUpload: () 
         return resource
     }
     private fun call(method: String, path: String, params: Map<String, String>, body: JSONObject? = null): JSONObject {
-        if (method != "GET") check(canUpload()) { "Contact uploads are disabled" }
+        if (method != "GET" && !canUpload()) throw UploadDisabled()
         val reply = transport.request(method, url(path, params), body?.toString())
         if (reply.status !in 200..299) {
             val expired = reply.status == 410 && runCatching {
