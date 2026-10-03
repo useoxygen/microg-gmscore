@@ -78,9 +78,9 @@ signing and account-retention migration before delivery.
 `ContactProviderTest` runs on an isolated emulator with a standalone library
 test APK and synthetic `org.microg.gms.contacts.fixture` accounts. GmsCore uses
 the same Android library for its provider integration. Fixture tests use a mock
-remote service,
-write the real Android Contacts Provider, and refuse to run on physical phones.
-They do not authenticate a real Google account.
+remote service, write the real Android Contacts Provider, and refuse physical phones by default.
+All fixture account and contact names are unique for each test; cleanup removes
+only rows created by that test. They do not authenticate a real Google account.
 
 After installing the fixture APK on that emulator, run the test runner
 for the exact selected emulator:
@@ -88,6 +88,21 @@ for the exact selected emulator:
 ```sh
 adb -s EMULATOR_SERIAL shell am instrument -w \
   -e class org.microg.gms.people.ContactProviderTest \
+  org.microg.gms.people.sync.android.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Physical testing is also available on an explicitly authorized `userdebug` or
+`eng` phone (Android 10 or newer). Verify the serial first, install only the
+standalone fixture APK, and pass the same serial as the instrumentation argument.
+The test verifies that argument against the phone's actual serial before writing
+contacts. A missing or mismatched argument refuses the run. This tests the
+engine/provider integration, not GmsCore installation, Google authorization, or
+real Google-side effects.
+
+```sh
+adb -s DEVICE_SERIAL shell am instrument -w \
+  -e class org.microg.gms.people.ContactProviderTest \
+  -e physicalDeviceSerial DEVICE_SERIAL \
   org.microg.gms.people.sync.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
