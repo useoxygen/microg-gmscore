@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="contacts_sync_title">Contacts sync</string>
+    <string name="contacts_sync_description">Keep Google contacts on this phone up to date. Device contacts and contacts belonging to other apps are kept separately.</string>
+    <string name="contacts_sync_off">Off</string>
+    <string name="contacts_sync_download">Download only</string>
+    <string name="contacts_sync_two_way">Two-way sync</string>
+    <string name="contacts_sync_two_way_consent">Allow changes to contacts in this Google account to be uploaded, including new contacts and deletions. Existing Device contacts will not be uploaded. Names, numbers, email addresses, postal addresses, organizations, notes, birthdays, nicknames and websites are supported. Conflicting edits are kept for review.</string>
+    <string name="contacts_sync_enable">Enable</string>
+    <string name="contacts_sync_no_accounts">Add a Google account in microG first.</string>
+    <string name="contacts_sync_enable_failed">Contacts access could not be enabled. Check the permission request, Google authorization and connection, then try again.</string>
+    <string name="contacts_sync_ready">Waiting to sync</string>
+    <string name="contacts_sync_success">Contacts are up to date</string>
+    <string name="contacts_sync_conflict">Some changes need review. Conflicting or unsupported edits have been preserved.</string>
+    <string name="contacts_sync_uncertain">An upload could not be confirmed. Sync will look for the result without creating another copy.</string>
+    <string name="contacts_sync_authorization">Google authorization needs to be renewed.</string>
+    <string name="contacts_sync_network">Sync will retry when the connection is available.</string>
+    <string name="contacts_sync_local">Sync stopped while applying contacts. Try syncing again to finish.</string>
+    <string name="contacts_sync_last_success">Last successful sync: %1$s</string>
+    <string name="contacts_sync_refresh">Sync now</string>
+    <string name="contacts_sync_reconnect">Reconnect</string>
+</resources>
