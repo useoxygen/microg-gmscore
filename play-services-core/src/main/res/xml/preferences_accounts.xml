@@ -24,6 +24,13 @@
         android:key="prefcat_account_settings"
         android:title="@string/prefcat_accounts_settings_title"
         app:iconSpaceReserved="false">
+        <Preference
+            android:title="@string/contacts_sync_title"
+            android:summary="@string/contacts_sync_description"
+            app:iconSpaceReserved="false">
+            <intent android:targetClass="org.microg.gms.people.ContactsSyncActivity"
+                android:targetPackage="@string/package_id" />
+        </Preference>
         <SwitchPreferenceCompat
             android:persistent="false"
             android:key="auth_manager_trust_google"

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="org.microg.gms.contacts.fixture" android:label="Contacts sync fixtures"
+    android:icon="@android:drawable/ic_menu_info_details" android:smallIcon="@android:drawable/ic_menu_info_details" />

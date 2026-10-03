@@ -60,5 +60,7 @@ jobs:
           done
       - name: "Execute Gradle assemble"
         run: "./gradlew assemble${{ matrix.target }}"
+      - name: "Test contacts synchronization"
+        run: "./gradlew :people-sync:test"
       - name: "Execute Gradle lint"
         run: "./gradlew lint${{ matrix.target }}"

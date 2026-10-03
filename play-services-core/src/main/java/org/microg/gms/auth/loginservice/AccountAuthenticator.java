@@ -142,7 +142,6 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         try {
             AuthResponse res = requestAuthForAccountManager(authManager, account, true);
             if (res.auth != null) {
-                Log.d(TAG, "getAuthToken: " + res.auth);
                 Bundle result = new Bundle();
                 result.putString(KEY_ACCOUNT_TYPE, account.type);
                 result.putString(KEY_ACCOUNT_NAME, account.name);
