@@ -4,7 +4,10 @@ apply plugin: 'kotlin-android'
 
 dependencies {
     implementation project(':people-sync')
+    implementation project(':people-sync-android')
     implementation "com.squareup.okhttp3:okhttp:$okHttpVersion"
+    // Test client only: exercise the public Google auth protocol against microG.
+    implementation 'com.google.android.gms:play-services-auth-base:18.3.4'
 }
 
 android {

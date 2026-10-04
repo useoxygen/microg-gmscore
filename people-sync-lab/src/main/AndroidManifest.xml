@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <application android:label="Contacts sync lab" android:allowBackup="false"
         android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <service android:name=".LabAuthenticatorService" android:exported="true"
+            android:permission="android.permission.BIND_ACCOUNT_AUTHENTICATOR">
+            <intent-filter><action android:name="android.accounts.AccountAuthenticator" /></intent-filter>
+            <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/contacts_lab_account" />
+        </service>
         <service android:name=".ContactsProbeService" android:exported="true"
             android:permission="android.permission.DUMP" android:foregroundServiceType="dataSync" />
         <activity android:name=".ContactsLabActivity" android:exported="true">
