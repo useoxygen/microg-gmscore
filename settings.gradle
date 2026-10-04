@@ -126,3 +126,5 @@ include ':play-services-core:microg-ui-tools' // Legacy
 include ':play-services-core'
 include ':people-sync'
 include ':people-sync-android'
+// Optional, development-only OAuth/People API acceptance app; never shipped in GmsCore.
+if (hasModule("contactsLab", false)) include ':people-sync-lab'

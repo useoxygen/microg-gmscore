@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+dependencies {
+    implementation project(':people-sync')
+    implementation "com.squareup.okhttp3:okhttp:$okHttpVersion"
+}
+
+android {
+    namespace 'org.microg.gms.contacts.lab'
+    compileSdk androidCompileSdk
+    defaultConfig {
+        applicationId 'org.microg.gms.contacts.lab'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions { jvmTarget = '1.8' }
+}
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant -> variant.enable = false }
+}
