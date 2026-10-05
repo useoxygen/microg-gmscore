@@ -96,6 +96,12 @@
         android:description="@string/perm_provision_description"
         android:label="@string/perm_provision_label"
         android:protectionLevel="privileged|signature" />
+    <!-- Cyclon: reads push registrations, message counts and the connection (org.microg.gms.cyclon.PushStateProvider). -->
+    <permission
+        android:name="ai.cyclon.microg.permission.READ_PUSH_STATE"
+        android:description="@string/perm_cyclon_read_push_state_description"
+        android:label="@string/perm_cyclon_read_push_state_label"
+        android:protectionLevel="privileged|signature" />
 
     <permission
         android:name="com.google.android.gms.permission.CAR_SPEED"
@@ -354,6 +360,15 @@
         <service
             android:name="org.microg.gms.gcm.McsService"
             android:process=":persistent" />
+
+        <!-- Cyclon: read-only push state for holders of READ_PUSH_STATE; call() enforces it, in McsService's process. -->
+        <provider
+            android:name="org.microg.gms.cyclon.PushStateProvider"
+            android:authorities="${applicationId}.cyclon.push"
+            android:exported="true"
+            android:process=":persistent"
+            android:readPermission="ai.cyclon.microg.permission.READ_PUSH_STATE"
+            android:writePermission="ai.cyclon.microg.permission.READ_PUSH_STATE" />
 
         <service
             android:name="org.microg.gms.gcm.GcmInGmsService"
