@@ -263,6 +263,43 @@ public class McsService extends Service implements Handler.Callback {
         return true;
     }
 
+    /** The connection as Cyclon's push bridge (org.microg.gms.cyclon.PushStateProvider) reports it; times in ms since the epoch, 0 for never. */
+    public static class ConnectionSnapshot {
+        public final boolean connected;
+        public final long connectedSince;
+        public final long lastHeartbeatPing;
+        public final long lastHeartbeatAck;
+        public final long lastReceived;
+        public final String networkPref;
+
+        ConnectionSnapshot(boolean connected, long connectedSince, long lastHeartbeatPing, long lastHeartbeatAck, long lastReceived, String networkPref) {
+            this.connected = connected;
+            this.connectedSince = connectedSince;
+            this.lastHeartbeatPing = lastHeartbeatPing;
+            this.lastHeartbeatAck = lastHeartbeatAck;
+            this.lastReceived = lastReceived;
+            this.networkPref = networkPref;
+        }
+    }
+
+    /**
+     * Cyclon: a read-only view of the connection. Unlike {@link #isConnected(Context)} it never closes the connection
+     * or learns a timeout; connected means the streams are alive and no heartbeat ack is overdue.
+     */
+    public synchronized static ConnectionSnapshot snapshot() {
+        warnIfNotPersistentProcess(McsService.class);
+        boolean alive = inputStream != null && inputStream.isAlive() && outputStream != null && outputStream.isAlive();
+        long elapsed = SystemClock.elapsedRealtime();
+        boolean ackOverdue = lastHeartbeatAckElapsedRealtime < lastHeartbeatPingElapsedRealtime
+                && elapsed - lastHeartbeatPingElapsedRealtime > HEARTBEAT_ACK_AFTER_PING_TIMEOUT_MS;
+        return new ConnectionSnapshot(alive && !ackOverdue, alive ? startTimestamp : 0, wallTime(lastHeartbeatPingElapsedRealtime, elapsed),
+                wallTime(lastHeartbeatAckElapsedRealtime, elapsed), wallTime(lastIncomingNetworkRealtime, elapsed), activeNetworkPref);
+    }
+
+    private static long wallTime(long elapsedRealtime, long now) {
+        return elapsedRealtime <= 0 ? 0 : System.currentTimeMillis() - (now - elapsedRealtime);
+    }
+
     public static long getStartTimestamp() {
         warnIfNotPersistentProcess(McsService.class);
         return startTimestamp;

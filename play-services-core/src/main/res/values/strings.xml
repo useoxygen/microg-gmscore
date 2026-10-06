@@ -80,6 +80,8 @@ Please set up a password, PIN, or pattern lock screen."</string>
     <string name="perm_extended_access_label">Extended access to Google services</string>
     <string name="perm_provision_label">provision microG services</string>
     <string name="perm_provision_description">Allows the app to configure microG services without user interaction</string>
+    <string name="perm_cyclon_read_push_state_label">read push registrations</string>
+    <string name="perm_cyclon_read_push_state_description">Allows the app to read which apps registered for push messages, their message counts and the push connection state, without message content</string>
 
     <string name="perm_car_speed_label">Car speed</string>
     <string name="perm_car_speed_description">"Access your car's speed"</string>

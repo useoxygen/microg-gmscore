@@ -4,10 +4,10 @@ package org.microg.gms.people
 import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.content.pm.PackageManager
 import android.content.ContentUris
 import android.content.ContentValues
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
@@ -15,19 +15,28 @@ import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.RawContacts
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.rule.GrantPermissionRule
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
+import org.junit.rules.ExternalResource
 import org.microg.gms.people.sync.*
 import java.util.UUID
+import java.io.File
 
 /** Real Contacts Provider, mock remote service; physical devices require explicit serial opt-in. */
 @RunWith(AndroidJUnit4::class)
 class ContactProviderTest {
-    @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)
+    @get:Rule val permissions = object : ExternalResource() {
+        override fun before() {
+            for (permission in listOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)) {
+                check(context.packageManager.checkPermission(permission, context.packageName) == PackageManager.PERMISSION_GRANTED) {
+                    "Grant contacts permissions to the fixture APK before running provider tests"
+                }
+            }
+        }
+    }
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val resolver get() = context.contentResolver
     private lateinit var account: Account
@@ -69,12 +78,19 @@ class ContactProviderTest {
         // Default runs still refuse physical phones. The caller must supply the
         // exact connected serial, and the phone must be a development build.
         if (Build.TYPE !in listOf("userdebug", "eng") || Build.VERSION.SDK_INT < 29) return false
-        val expected = InstrumentationRegistry.getArguments().getString("physicalDeviceSerial")
+        val arguments = InstrumentationRegistry.getArguments()
+        val expected = arguments.getString("physicalDeviceSerial")
             ?.takeIf { it.isNotBlank() } ?: return false
-        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation
-            .executeShellCommand("getprop ro.serialno")
-        val actual = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText().trim() }
-        return actual.isNotBlank() && actual == expected
+        val nonce = arguments.getString("physicalDeviceNonce")?.takeIf { it.isNotBlank() } ?: return false
+        // The serial-pinned host runner reads ro.serialno through ADB and writes
+        // a fresh, one-run proof into this debug APK's private storage. Avoid
+        // UiAutomation entirely so another agent can retain its screen connection.
+        return runCatching {
+            val proof = JSONObject(File(context.filesDir, "physical-device-authorization.json").readText())
+            val age = System.currentTimeMillis() - proof.getLong("createdAt")
+            proof.getString("serial") == expected && proof.getString("nonce") == nonce &&
+                proof.getString("fingerprint") == Build.FINGERPRINT && age in 0..300_000
+        }.getOrDefault(false)
     }
     @Before fun setup() {
         check(context.packageName == "org.microg.gms.people.sync.android.test" && approvedDevice()) {

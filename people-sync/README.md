@@ -86,25 +86,35 @@ After installing the fixture APK on that emulator, run the test runner
 for the exact selected emulator:
 
 ```sh
-adb -s EMULATOR_SERIAL shell am instrument -w \
-  -e class org.microg.gms.people.ContactProviderTest \
-  org.microg.gms.people.sync.android.test/androidx.test.runner.AndroidJUnitRunner
+python3 people-sync-android/tools/run-provider-tests.py --serial EMULATOR_SERIAL
 ```
 
 Physical testing is also available on an explicitly authorized `userdebug` or
 `eng` phone (Android 10 or newer). Verify the serial first, install only the
 standalone fixture APK, and pass the same serial as the instrumentation argument.
-The test verifies that argument against the phone's actual serial before writing
-contacts. A missing or mismatched argument refuses the run. This tests the
+The host runner verifies the ADB transport against `ro.serialno`, then binds the
+test run to that serial, build fingerprint, and a fresh nonce in the debug APK's
+private storage. A missing, stale, or mismatched proof refuses the run. This tests the
 engine/provider integration, not GmsCore installation, Google authorization, or
 real Google-side effects.
 
 ```sh
-adb -s DEVICE_SERIAL shell am instrument -w \
-  -e class org.microg.gms.people.ContactProviderTest \
-  -e physicalDeviceSerial DEVICE_SERIAL \
-  org.microg.gms.people.sync.android.test/androidx.test.runner.AndroidJUnitRunner
+python3 people-sync-android/tools/run-provider-tests.py --serial DEVICE_SERIAL --physical
+python3 people-sync-android/tools/run-provider-tests.py --serial DEVICE_SERIAL --physical --expect-refusal
 ```
+
+The same runner accepts an emulator serial without `--physical`. It grants only
+the fixture APK's contact permissions and never acquires `UiAutomation`, taps
+the shared screen, stops another app, or disables accessibility services. Its
+provider tests can therefore run alongside another phone automation session.
+Run this helper instead of the direct instrumentation command when permissions
+have not already been granted; raw instrumentation intentionally cannot approve
+a physical phone by itself. The helper removes its temporary proof after the run.
+
+An optional [Google access probe](../people-sync-lab/README.md) tests the selected
+account through ordinary AccountManager authorization and the production People
+API parser. It is a separate debug app, with its own actual OAuth identity, and
+does not replace the installed GmsCore or enable account sync.
 
 ## API references
 
