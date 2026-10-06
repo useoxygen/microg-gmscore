@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import android.webkit.*
 import androidx.activity.ComponentActivity
@@ -140,10 +141,16 @@ class EnrollmentActivity : ComponentActivity() {
                         "weblogin:continue=" + URLEncoder.encode(REGISTRATION, "utf-8"))
                         .requestAuthWithForegroundResolution(false)?.auth
                 }
-                require(authUrl != null && allowed(Uri.parse(authUrl)))
-                createBrowser(authUrl)
+                // Google can decline silent web sign-in even after native account addition.
+                // Fall back to its normal page; the selected-account guard still precedes any write.
+                val target = authUrl?.takeUnless { it.contains("WILL_NOT_SIGN_IN") } ?: REGISTRATION
+                require(allowed(Uri.parse(target)))
+                createBrowser(target)
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { busy = false; status = R.string.cyclon_enrollment_web_error }
+            catch (e: Exception) {
+                Log.w("CyclonEnrollment", "Registration preparation failed: ${e.javaClass.simpleName}")
+                busy = false; status = R.string.cyclon_enrollment_web_error
+            }
         }
     }
 
@@ -160,16 +167,23 @@ class EnrollmentActivity : ComponentActivity() {
             setSupportMultipleWindows(false)
         }
         view.webViewClient = object : WebViewClient() {
+            private fun blocks(uri: Uri, mainFrame: Boolean): Boolean {
+                val blocked = !allowed(uri)
+                if (blocked && mainFrame) { busy = false; status = R.string.cyclon_enrollment_web_error }
+                return blocked
+            }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                !allowed(request.url)
-            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = !allowed(Uri.parse(url))
+                blocks(request.url, request.isForMainFrame)
+            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = blocks(Uri.parse(url), true)
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 busy = true
-                if (isRegistration(url)) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                else window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                secureWindow(!isRegistration(url))
             }
             override fun onPageFinished(view: WebView, url: String?) {
                 busy = false
+                if (isRegistration(url)) {
+                    secureWindow(false)
+                }
                 status = if (isRegistration(url)) R.string.cyclon_enrollment_verifying else R.string.cyclon_enrollment_signin
             }
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
@@ -191,9 +205,12 @@ class EnrollmentActivity : ComponentActivity() {
         job?.cancel()
         pollStarted = System.currentTimeMillis()
         job = lifecycleScope.launch {
-            while (isActive && !completed && System.currentTimeMillis() - pollStarted < 120_000) {
+            while (isActive && !completed && System.currentTimeMillis() - pollStarted < 600_000) {
                 val view = browser ?: return@launch
-                if (isRegistration(view.url)) evaluate(view, false)
+                if (isRegistration(view.url)) {
+                    secureWindow(false)
+                    evaluate(view, false)
+                }
                 delay(750)
             }
             if (!completed) { busy = false; status = R.string.cyclon_enrollment_needs_help }
@@ -230,12 +247,21 @@ class EnrollmentActivity : ComponentActivity() {
         setResult(RESULT_OK, Intent().putExtra("cyclon.google_enrollment", if (completed) "accepted" else "deferred"))
         finish()
     }
+    private fun secureWindow(secure: Boolean) {
+        val flag = WindowManager.LayoutParams.FLAG_SECURE
+        // Repeated relayouts can disrupt WebView rendering; only change the actual flag.
+        if ((window.attributes.flags and flag != 0) == secure) return
+        if (secure) window.addFlags(flag) else window.clearFlags(flag)
+    }
     override fun onDestroy() { job?.cancel(); browser?.destroy(); browser = null; super.onDestroy() }
 
     companion object {
         private const val REGISTRATION = "https://www.google.com/android/uncertified/?hl=en"
         private fun allowed(uri: Uri): Boolean = uri.scheme == "https" && uri.userInfo == null &&
             uri.port in setOf(-1, 443) && (uri.host == "accounts.google.com" ||
+            // Google's account-session redirect, observed during the live enrollment test.
+            uri.host == "gds.google.com" && uri.path == "/web/landing" ||
+            uri.host == "myaccount.google.com" && uri.path == "/accounts/SetOSID" ||
             uri.host == "www.google.com" && (uri.path == "/android/uncertified/" || uri.path?.startsWith("/recaptcha/") == true))
         private fun isRegistration(url: String?): Boolean = url?.let { Uri.parse(it) }?.let {
             allowed(it) && it.host == "www.google.com" && it.path == "/android/uncertified/"

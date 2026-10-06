@@ -10,8 +10,11 @@
   const accountButton = document.querySelector('[aria-label^="Google Account:"]');
   if (!accountButton || !accountButton.getAttribute('aria-label').includes('(' + account + ')'))
     return 'account_mismatch';
+  // Google's input needs 19 digits, but its saved list may omit padding zeros.
+  // Compare decimal strings without converting either 64-bit value to Number.
+  const decimal = s => /^[0-9]{1,19}$/.test(s) ? s.replace(/^0+/, '') : null;
   // Google's page lists the exact IDs belonging to its currently signed-in account.
-  if (Array.from(document.querySelectorAll('li[listItem]')).some(e => visible(e) && e.innerText.trim() === id))
+  if (Array.from(document.querySelectorAll('li[listItem]')).some(e => visible(e) && decimal(e.innerText.trim()) === decimal(id)))
     return 'accepted';
   const messages = Array.from(document.querySelectorAll('[role="alert"], [role="status"], [aria-live]'))
     .filter(visible).map(e => e.innerText.trim());
@@ -50,8 +53,9 @@
   const response = document.querySelector('textarea[name="g-recaptcha-response"]');
   const verified = !!response && !!response.value;
   if (!verified) return challenge ? 'challenge' : 'verification';
-  const buttons = Array.from(document.querySelectorAll('button[type="submit"]'))
-    .filter(e => visible(e) && e.innerText.trim() === 'Register' && !e.disabled);
+  // Google's button uses the default submit type without a literal type attribute.
+  const buttons = Array.from(document.querySelectorAll('button'))
+    .filter(e => visible(e) && e.type === 'submit' && e.innerText.trim() === 'Register' && !e.disabled);
   if (buttons.length !== 1) return 'loading';
   if (submit && !window.__cyclonEnrollmentSubmitted) {
     // Native code persists submission admission before calling this branch.

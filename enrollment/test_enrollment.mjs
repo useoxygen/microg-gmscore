@@ -20,11 +20,11 @@ function fixture() {
   const state = {input, response, messages:[], ids:[], clicks:0, frames:[], window:{},
     location:{origin:'https://www.google.com',pathname:'/android/uncertified/'},
     label:'Google Account: Fixture (' + account + ')'};
-  state.button = {...visible('Register'), disabled:false, click:()=>state.clicks++};
+  state.button = {...visible('Register'), type:'submit', getAttribute:()=>null, disabled:false, click:()=>state.clicks++};
   state.document = {
     querySelector: selector => selector.includes('aria-label') ? {getAttribute:()=>state.label} : response,
     querySelectorAll: selector => selector === 'input' ? [input] : selector === 'iframe' ? state.frames :
-      selector.includes('button') ? [state.button] : selector.includes('listItem') ? state.ids.map(visible) : state.messages.map(visible)
+      selector === 'button' ? [state.button] : selector.includes('button') ? [] : selector.includes('listItem') ? state.ids.map(visible) : state.messages.map(visible)
   };
   state.run = (submit=false, suppliedId=id) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
     .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit)),
@@ -37,6 +37,7 @@ test('preserves 64-bit decimal ID and fills without submitting before verificati
 });
 test('explicit admission submits once; repeated polls cannot register twice',()=>{
   const f=fixture(); f.response.value='opaque token stays in page';
+  assert.equal(f.button.getAttribute('type'),null); // The live Google button has no attribute.
   assert.equal(f.run(),'ready'); assert.equal(f.clicks,0);
   assert.equal(f.run(true),'submitting'); f.run(true); assert.equal(f.clicks,1);
 });
@@ -44,6 +45,12 @@ test('only the actual ID in the registered list is acceptance',()=>{
   const f=fixture(); f.messages=['Device registered.']; assert.notEqual(f.run(),'accepted');
   f.ids=['7123456789012345678']; assert.notEqual(f.run(),'accepted');
   f.ids=[id]; assert.equal(f.run(),'accepted'); assert.equal(f.clicks,0);
+});
+test('saved IDs can omit input padding without losing any 64-bit precision',()=>{
+  const f=fixture(), padded='0812345678901234567';
+  f.ids=['812345678901234568']; assert.notEqual(f.run(false,padded),'accepted');
+  f.ids=['8.12345678901234567e17']; assert.notEqual(f.run(false,padded),'accepted');
+  f.ids=['812345678901234567']; assert.equal(f.run(false,padded),'accepted');
 });
 test('different account, lookalike origin and invalid IDs cannot write',()=>{
   const f=fixture(); f.label='Google Account: Other (other@example.com)'; assert.equal(f.run(true),'account_mismatch');
