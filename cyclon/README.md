@@ -1,0 +1,40 @@
+# Cyclon location build configuration
+
+The official microG APK includes Positon (suggested), BeaconDB, and Custom. Its
+source-only default has BeaconDB and Custom: the official release supplies the
+extra provider through an untracked `local.properties` file. Cyclon's clean
+source builds previously lost that configuration.
+
+`location-sources.json` declares the exact upstream release APK used as a
+configuration input. The location module verifies its size and SHA-256, extracts
+the embedded provider list, and uses it for `BuildConfig.ONLINE_SOURCES`. This
+retains the same provider IDs, endpoint configuration, terms, suggested flag,
+import behavior, and contribution flags as the official release. API tokens and
+APK bytes are not committed to Git. Existing user selections are retained;
+Positon is offered as suggested without automatically changing a selection or
+enabling online location.
+
+The first build downloads the pinned APK into the root build directory. An
+existing exact copy can be reused, including offline, with
+`-Pcyclon.locationSourceApk=/absolute/path/upstream.apk`. A mismatched input fails
+the build rather than silently falling back to a reduced provider list. The
+existing `location.online-sources` and `ichnaea.endpoint` overrides continue to
+work for upstream development builds.
+
+Verify the extraction and byte-pin checks without configuring Android modules:
+
+```sh
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew -p cyclon/tests \
+  testLocationSources -PupstreamApk=/absolute/path/upstream.apk
+```
+
+Then generate the actual location module configuration:
+
+```sh
+JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME=~/Library/Android/sdk \
+  ./gradlew :play-services-location-core-base:generateReleaseBuildConfig \
+  -Pcyclon.locationSourceApk=/absolute/path/upstream.apk
+```
+
+This source change requires a new product source pin, rebuilt/signed APKs, and
+normal delivery acceptance before it changes an installed Cyclon image.
