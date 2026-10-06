@@ -1,0 +1,22 @@
+<resources>
+    <string name="cyclon_enrollment_title">Connect Google</string>
+    <string name="cyclon_enrollment_settings_summary">Finish account and phone registration</string>
+    <string name="cyclon_enrollment_intro">Connect your Google account for apps and notifications. Cyclon will prepare Google services and register this phone with Google. You can do this later.</string>
+    <string name="cyclon_enrollment_connect">Connect Google</string>
+    <string name="cyclon_enrollment_continue">Continue setup</string>
+    <string name="cyclon_enrollment_later">Set up later</string>
+    <string name="cyclon_enrollment_check">Check registration</string>
+    <string name="cyclon_enrollment_preparing">Preparing Google services…</string>
+    <string name="cyclon_enrollment_choose">Choose the Google account for this phone.</string>
+    <string name="cyclon_enrollment_choose_web">Google has a different account open. Select the account you connected, then tap Check registration.</string>
+    <string name="cyclon_enrollment_signin">Sign in securely with Google.</string>
+    <string name="cyclon_enrollment_signin_cancelled">Sign-in was cancelled. Try again or continue setup.</string>
+    <string name="cyclon_enrollment_registering">Registering this phone with Google…</string>
+    <string name="cyclon_enrollment_verifying">Completing Google verification…</string>
+    <string name="cyclon_enrollment_challenge">Google needs a quick verification. Complete the challenge below; Cyclon will finish registration.</string>
+    <string name="cyclon_enrollment_done">Google accepted this phone’s registration. Your account is connected.</string>
+    <string name="cyclon_enrollment_network_error">Could not prepare Google services. Check your internet connection and try again.</string>
+    <string name="cyclon_enrollment_web_error">Could not open Google registration. Try again or continue setup.</string>
+    <string name="cyclon_enrollment_needs_help">Google verification needs attention below. You can continue setup and finish later.</string>
+    <string name="cyclon_enrollment_uncertain">Registration was already submitted. Check Google’s result below before trying again.</string>
+</resources>

@@ -533,6 +533,22 @@
         </activity>
 
         <activity
+            android:name="org.microg.gms.cyclon.EnrollmentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+        <activity-alias
+            android:name="org.microg.gms.cyclon.SetupEnrollment"
+            android:targetActivity="org.microg.gms.cyclon.EnrollmentActivity"
+            android:exported="true"
+            android:permission="android.permission.WRITE_SECURE_SETTINGS">
+            <intent-filter>
+                <action android:name="org.lineageos.settings.device.SUW_SETTINGS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity
             android:name="org.microg.gms.auth.login.LoginActivity"
             android:configChanges="keyboardHidden|keyboard|orientation|screenSize"
             android:exported="true"
