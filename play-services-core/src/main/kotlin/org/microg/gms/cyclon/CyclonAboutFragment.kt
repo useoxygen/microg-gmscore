@@ -103,50 +103,52 @@ private fun CyclonAbout() {
         bodyMedium = defaults.bodyMedium.copy(fontFamily = body),
         labelLarge = defaults.labelLarge.copy(fontFamily = body, fontWeight = FontWeight.SemiBold)
     ), shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(8.dp))) {
-        // The settings host owns vertical scrolling; a nested lazy/scroll container gets
-        // unbounded height here. Keep this column wrap-content, including full license text.
-        Column(Modifier.fillMaxWidth().background(paper).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            when {
-                selected != null -> {
-                    TextButton(onClick = { selectedTitle = null }) { Text(stringResource(R.string.cyclon_back)) }
-                    Text(selected.title, style = MaterialTheme.typography.titleMedium)
-                    Text(selected.license, color = muted)
-                    SelectionContainer { Text(selected.text, style = MaterialTheme.typography.bodyMedium) }
-                }
-                showingLicenses -> {
-                    TextButton(onClick = { showingLicenses = false }) { Text(stringResource(R.string.cyclon_back)) }
-                    Text(stringResource(R.string.cyclon_notices), style = MaterialTheme.typography.headlineSmall)
-                    OutlinedTextField(
-                        value = query, onValueChange = { query = it }, singleLine = true,
-                        label = { Text(stringResource(R.string.cyclon_search_licenses)) }, modifier = Modifier.fillMaxWidth()
-                    )
-                    when {
-                        notices == null -> Text(stringResource(R.string.cyclon_loading))
-                        notices!!.isEmpty() -> Text(stringResource(R.string.cyclon_licenses_unavailable))
-                        else -> {
-                            val results = notices!!.filter { it.title.contains(query, true) || it.license.contains(query, true) }
-                            if (results.isEmpty()) Text(stringResource(R.string.cyclon_no_results))
-                            results.forEach { notice ->
-                                Column(Modifier.fillMaxWidth().clickable { selectedTitle = notice.title }.padding(vertical = 12.dp)) {
-                                    Text(notice.title, style = MaterialTheme.typography.bodyLarge)
-                                    Text(notice.license, color = muted, style = MaterialTheme.typography.bodyMedium)
+        CompositionLocalProvider(LocalContentColor provides ink) {
+            // The settings host owns vertical scrolling; a nested lazy/scroll container gets
+            // unbounded height here. Keep this column wrap-content, including full license text.
+            Column(Modifier.fillMaxWidth().background(paper).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                when {
+                    selected != null -> {
+                        TextButton(onClick = { selectedTitle = null }) { Text(stringResource(R.string.cyclon_back)) }
+                        Text(selected.title, style = MaterialTheme.typography.titleMedium)
+                        Text(selected.license, color = muted)
+                        SelectionContainer { Text(selected.text, style = MaterialTheme.typography.bodyMedium) }
+                    }
+                    showingLicenses -> {
+                        TextButton(onClick = { showingLicenses = false }) { Text(stringResource(R.string.cyclon_back)) }
+                        Text(stringResource(R.string.cyclon_notices), style = MaterialTheme.typography.headlineSmall)
+                        OutlinedTextField(
+                            value = query, onValueChange = { query = it }, singleLine = true,
+                            label = { Text(stringResource(R.string.cyclon_search_licenses)) }, modifier = Modifier.fillMaxWidth()
+                        )
+                        when {
+                            notices == null -> Text(stringResource(R.string.cyclon_loading))
+                            notices!!.isEmpty() -> Text(stringResource(R.string.cyclon_licenses_unavailable))
+                            else -> {
+                                val results = notices!!.filter { it.title.contains(query, true) || it.license.contains(query, true) }
+                                if (results.isEmpty()) Text(stringResource(R.string.cyclon_no_results))
+                                results.forEach { notice ->
+                                    Column(Modifier.fillMaxWidth().clickable { selectedTitle = notice.title }.padding(vertical = 12.dp)) {
+                                        Text(notice.title, style = MaterialTheme.typography.bodyLarge)
+                                        Text(notice.license, color = muted, style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    HorizontalDivider()
                                 }
-                                HorizontalDivider()
                             }
                         }
                     }
-                }
-                else -> {
-                    CyclonSymbol(ink, Modifier.size(64.dp))
-                    Text(stringResource(R.string.cyclon_services_name), style = MaterialTheme.typography.headlineSmall)
-                    Text(stringResource(R.string.cyclon_based_on_microg), color = muted)
-                    Text(stringResource(R.string.cyclon_about_description))
-                    Text(stringResource(R.string.cyclon_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), color = muted)
-                    HorizontalDivider()
-                    Text(stringResource(R.string.cyclon_credits), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = { showingLicenses = true }, modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)) {
-                        Text(stringResource(R.string.cyclon_notices))
+                    else -> {
+                        CyclonSymbol(ink, Modifier.size(64.dp))
+                        Text(stringResource(R.string.cyclon_services_name), style = MaterialTheme.typography.headlineSmall)
+                        Text(stringResource(R.string.cyclon_based_on_microg), color = muted)
+                        Text(stringResource(R.string.cyclon_about_description))
+                        Text(stringResource(R.string.cyclon_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), color = muted)
+                        HorizontalDivider()
+                        Text(stringResource(R.string.cyclon_credits), style = MaterialTheme.typography.bodyMedium)
+                        OutlinedButton(onClick = { showingLicenses = true }, modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)) {
+                            Text(stringResource(R.string.cyclon_notices))
+                        }
                     }
                 }
             }
