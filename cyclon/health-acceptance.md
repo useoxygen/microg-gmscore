@@ -4,7 +4,7 @@ The health screen reads local state. It does not sign in, register the device,
 enable a service, reconnect push, request a sync, or request a position. Recovery
 buttons open the existing settings; those screens retain their consent flows.
 The report preview is frozen, contains only enums and numbers, and is shared only
-when the owner chooses the Android share action. No report is written to storage.
+when the owner chooses the Android share action. No report file is created.
 
 Host validation: `:play-services-core:testMapboxDefaultDebugUnitTest` covers Off,
 Paused, Unknown, a disconnected enabled push service, multiple Contacts accounts,
