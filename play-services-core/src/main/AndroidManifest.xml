@@ -205,6 +205,7 @@
         coil.singleton, coil.base, androidx.compose.material3, com.google.accompanist.systemuicontroller, androidx.compose.animation.graphics,
         androidx.compose.ui.tooling.data, androidx.compose.ui.tooling.preview, androidx.compose.ui.tooling,androidx.compose.material" />
 
+    <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
     <application
         android:allowBackup="true"
         android:forceQueryable="true"
@@ -538,6 +539,34 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Version-qualified enabled resource enforces this API requirement at runtime. -->
+        <activity
+            android:name="org.microg.gms.cyclon.EnrollmentActivity"
+            android:enabled="@bool/cyclon_enrollment_supported"
+            tools:targetApi="23"
+            android:exported="false"
+            android:process=":ui"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+        <activity-alias
+            android:name="org.microg.gms.cyclon.SetupEnrollment"
+            android:enabled="@bool/cyclon_enrollment_supported"
+            tools:targetApi="23"
+            android:targetActivity="org.microg.gms.cyclon.EnrollmentActivity"
+            android:exported="true"
+            android:permission="android.permission.WRITE_SECURE_SETTINGS">
+        </activity-alias>
+
+        <!-- Shares LoginActivity's WebView and the foreground enrollment activity reference. -->
+        <provider
+            android:name="org.microg.gms.cyclon.EnrollmentChallengeProvider"
+            android:enabled="@bool/cyclon_enrollment_supported"
+            tools:targetApi="23"
+            android:authorities="com.google.android.gms.cyclon.enrollment"
+            android:exported="true"
+            android:process=":ui"
+            android:permission="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" />
 
         <activity
             android:name="org.microg.gms.auth.login.LoginActivity"

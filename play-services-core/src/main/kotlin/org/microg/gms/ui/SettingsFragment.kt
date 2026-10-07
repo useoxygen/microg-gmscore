@@ -1,4 +1,4 @@
-// Modified by Cyclon in 2026: passive Cyclon Services health navigation.
+// Modified by Cyclon in 2026: passive Cyclon Services health navigation and Google enrollment entry.
 /*
  * SPDX-FileCopyrightText: 2020, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -7,6 +7,8 @@
 package org.microg.gms.ui
 
 import android.os.Bundle
+import android.os.Build
+import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
@@ -31,6 +33,20 @@ class SettingsFragment : ResourceSettingsFragment() {
             findNavController().navigate(R.id.cyclonHealthFragment)
             true
         }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val enrollment = Preference(requireContext()).apply {
+                title = getString(R.string.cyclon_enrollment_title)
+                summary = getString(R.string.cyclon_enrollment_settings_summary)
+                isPersistent = false
+                setOnPreferenceClickListener {
+                    startActivity(Intent(requireContext(), org.microg.gms.cyclon.EnrollmentActivity::class.java))
+                    true
+                }
+            }
+            findPreference<PreferenceCategory>("prefcat_google_services")?.addPreference(enrollment)
+        }
+
         findPreference<Preference>(PREF_ACCOUNTS)!!.onPreferenceClickListener = Preference.OnPreferenceClickListener {
             findNavController().navigate(requireContext(), R.id.accountManagerFragment)
             true

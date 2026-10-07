@@ -1,0 +1,29 @@
+<resources>
+    <!-- Enrollment needs modern WebView main-frame error handling. Keep legacy microG available. -->
+    <bool name="cyclon_enrollment_supported">false</bool>
+    <string name="cyclon_enrollment_title">Connect Google</string>
+    <!-- Names the step's purpose above the title; set in a monospace face, lowercase by design. -->
+    <string name="cyclon_enrollment_eyebrow">google account</string>
+    <string name="cyclon_enrollment_settings_summary">Finish account and phone registration</string>
+    <string name="cyclon_enrollment_intro">Connect Google for apps and notifications. We’ll also guide you through registering this phone with Google. Google may ask you to solve a puzzle.</string>
+    <string name="cyclon_enrollment_connect">Connect Google</string>
+    <string name="cyclon_enrollment_continue">Continue</string>
+    <string name="cyclon_enrollment_later">Set up later</string>
+    <string name="cyclon_enrollment_check">Check again</string>
+    <string name="cyclon_enrollment_preparing">Preparing Google services…</string>
+    <string name="cyclon_enrollment_choose">Choose the Google account to use on this phone.</string>
+    <string name="cyclon_enrollment_choose_web">Google has a different account open. Switch to the account you chose for this phone, then tap Check again.</string>
+    <string name="cyclon_enrollment_signin">Sign in with your Google account.</string>
+    <string name="cyclon_enrollment_signin_cancelled">Sign-in didn’t finish. Try again, or set up Google later.</string>
+    <string name="cyclon_enrollment_registering">Registering this phone with Google…</string>
+    <string name="cyclon_enrollment_verifying">Checking this phone’s registration with Google…</string>
+    <string name="cyclon_enrollment_challenge">Solve Google’s puzzle below to continue registering this phone.</string>
+    <string name="cyclon_enrollment_done">This phone is registered with Google, and your account is connected.</string>
+    <string name="cyclon_enrollment_network_error">Couldn’t prepare Google services. Check your internet connection, then try again.</string>
+    <string name="cyclon_enrollment_web_error">Couldn’t load Google’s page. Try again, or set up Google later.</string>
+    <string name="cyclon_enrollment_needs_help">Registration hasn’t finished. Check Google’s page below, or set this up later.</string>
+    <string name="cyclon_enrollment_uncertain">This phone was already submitted. Check Google’s page below before trying again.</string>
+    <string name="cyclon_enrollment_assisting">Cyclon is trying to solve Google’s puzzle. You can take over at any time.</string>
+    <string name="cyclon_enrollment_manual">Solve it myself</string>
+    <string name="cyclon_enrollment_retry">Try again</string>
+</resources>
