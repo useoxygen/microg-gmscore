@@ -131,7 +131,8 @@ class LocationManagerInstance(
     override fun flushLocations(callback: IFusedLocationProviderCallback?) {
         Log.d(TAG, "flushLocations by ${getClientIdentity().packageName}")
         checkHasAnyLocationPermission()
-        callback?.onFusedLocationProviderResult(FusedLocationProviderResult.create(Status(CommonStatusCodes.ERROR, "This API is not implemented")))
+        // Locations are delivered immediately; there is no batch waiting to be flushed.
+        callback?.onFusedLocationProviderResult(FusedLocationProviderResult.SUCCESS)
     }
 
     override fun getLocationAvailabilityWithReceiver(request: LocationAvailabilityRequest, receiver: LocationReceiver) {

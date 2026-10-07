@@ -5,6 +5,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentUris
 import android.content.ContentValues
+import android.content.Intent
 import android.os.Build
 import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
@@ -55,6 +56,71 @@ class CalendarProviderTest {
             arrayOf(AndroidCalendarStore.MARKER, calendarId.toString()), Events._ID)!!.use { c ->
                 buildList<Long> { while(c.moveToNext()) add(c.getLong(0)) }
             }
+    }
+    @Test fun clearedProviderRowsLoseTheirCheckpointAndRestoreACompleteSnapshot() {
+        store { assertTrue(it.event(calendar,event())); it.checkpoint(calendar.id,"old"); assertEquals("old",it.checkpoint(calendar.id)) }
+        resolver.delete(Calendars.CONTENT_URI.buildUpon().appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER,"true").build(),
+            "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=?",arrayOf(account.name,account.type))
+        val tokens = mutableListOf<String?>()
+        val api = object : CalendarApi {
+            override fun calendars(page: String?) = CalendarPage(listOf(calendar),null)
+            override fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?): EventPage {
+                tokens += checkpoint
+                return EventPage(if (checkpoint == null) listOf(event()) else emptyList(),null,"fresh")
+            }
+        }
+        requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
+            val store = AndroidCalendarStore(it,account,prefs)
+            assertNull(store.checkpoint(calendar.id))
+            assertEquals(1,CalendarSync(api,store) { prefs.enabled }.sync().events)
+            assertEquals("fresh",store.checkpoint(calendar.id))
+        }
+        assertEquals(listOf<String?>(null),tokens)
+        assertEquals(1,ids().size)
+    }
+    @Test fun removedAccountForgetsItsOptInAndStatusWithoutChangingExistingAccounts() {
+        prefs.status = "success"; prefs.lastSuccess = 1234
+        val other = Account("fixture-" + UUID.randomUUID(),account.type)
+        assertTrue(AccountManager.get(context).addAccountExplicitly(other,null,null))
+        val otherPrefs = CalendarSyncPreferences(context,other)
+        try {
+            otherPrefs.configure(true)
+            val receiver = CalendarAccountRemovedReceiver()
+            receiver.onReceive(context,Intent(AccountManager.ACTION_ACCOUNT_REMOVED))
+            assertTrue(prefs.enabled); assertTrue(otherPrefs.enabled)
+            assertTrue(AccountManager.get(context).removeAccountExplicitly(account))
+            receiver.onReceive(context,Intent(AccountManager.ACTION_ACCOUNT_REMOVED))
+            assertFalse(prefs.enabled); assertEquals("",prefs.status); assertEquals(0L,prefs.lastSuccess)
+            assertTrue(otherPrefs.enabled)
+            assertTrue(AccountManager.get(context).addAccountExplicitly(account,null,null))
+            assertFalse(CalendarSyncPreferences(context,account).enabled)
+        } finally {
+            otherPrefs.configure(false)
+            AccountManager.get(context).removeAccountExplicitly(other)
+        }
+    }
+    @Test fun calendarSyncChoiceSurvivesRefreshRemovalAndRestoration() {
+        store { assertTrue(it.event(calendar,event())); it.checkpoint(calendar.id,"keep") }
+        val selection = "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=?"
+        val args = arrayOf(account.name,account.type,AndroidCalendarStore.MARKER)
+        resolver.update(Calendars.CONTENT_URI.buildUpon().appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER,"true").build(),
+            ContentValues().apply { put(Calendars.SYNC_EVENTS,0) },selection,args)
+        val api = object : CalendarApi {
+            override fun calendars(page: String?) = CalendarPage(listOf(calendar),null)
+            override fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?) = error("Calendar is disabled")
+        }
+        repeat(2) { iteration ->
+            if (iteration == 1) store { it.reconcileCalendars(emptySet()) }
+            requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
+                val store = AndroidCalendarStore(it,account,prefs)
+                assertEquals(0,CalendarSync(api,store) { prefs.enabled }.sync().events)
+                assertEquals("keep",store.checkpoint(calendar.id))
+            }
+            resolver.query(Calendars.CONTENT_URI,arrayOf(Calendars.VISIBLE,Calendars.SYNC_EVENTS),selection,args,null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(1,it.getInt(0)); assertEquals(0,it.getInt(1))
+            }
+        }
+        assertEquals(1,ids().size)
     }
     @Test fun recurringMasterExceptionAndReminderAreIdempotent() {
         val exception = GoogleCalendarApi.parseEvent(JSONObject("""{"id":"exception","status":"cancelled","recurringEventId":"master","originalStartTime":{"date":"2026-10-07"}}"""), calendar)

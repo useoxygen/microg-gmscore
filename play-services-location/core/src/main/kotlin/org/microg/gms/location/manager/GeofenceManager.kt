@@ -194,6 +194,9 @@ internal class GeofenceManager(private val context: Context, private val locatio
                 }
                 override fun onLocationAvailability(availability: LocationAvailability?) = Unit
                 override fun cancel() { lifecycleScope.launchWhenStarted { lock.withLock {
+                    // Removing a superseded sampling request also cancels its callback. Only
+                    // cancellation of the current request may discard this owner's fences.
+                    if (bindings[owner.packageName] !== binder) return@withLock
                     entries.filter { it.value.owner.packageName == owner.packageName }.keys.toList().forEach { removeEntry(it) }
                     refreshBindings()
                 } } }

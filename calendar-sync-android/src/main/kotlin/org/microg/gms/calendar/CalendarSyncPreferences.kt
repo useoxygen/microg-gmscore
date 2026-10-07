@@ -3,6 +3,7 @@
 package org.microg.gms.calendar
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.content.Context
 import android.os.Bundle
@@ -17,11 +18,6 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
     var lastSuccess: Long
         get() = prefs.getLong(prefix + "lastSuccess", 0)
         set(value) { prefs.edit().putLong(prefix + "lastSuccess", value).apply() }
-    fun checkpoint(calendar: String): String? = prefs.getString(prefix + "checkpoint:" + calendar, null)
-    fun checkpoint(calendar: String, value: String) {
-        check(enabled)
-        check(prefs.edit().putString(prefix + "checkpoint:" + calendar, value).commit())
-    }
     fun configure(value: Boolean) {
         check(prefs.edit().putBoolean(prefix + "enabled", value).commit())
         ContentResolver.setIsSyncable(account, AUTHORITY, if (value) 1 else 0)
@@ -40,5 +36,25 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
             putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
         })
     }
-    companion object { const val AUTHORITY = "com.android.calendar" }
+    companion object {
+        const val AUTHORITY = "com.android.calendar"
+        /** Removal must withdraw the old opt-in, even if the same account is added again later. */
+        fun forgetRemovedAccounts(context: Context) {
+            val accounts = AccountManager.get(context).accounts.toSet()
+            val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
+            val keys = prefs.all.keys
+            val removedPrefixes = keys.filter { it.endsWith(":enabled") }.mapNotNull { key ->
+                val identity = key.removeSuffix(":enabled")
+                val separator = identity.indexOf(':')
+                if (separator <= 0 || separator == identity.lastIndex) null else {
+                    val account = Account(identity.substring(separator + 1), identity.substring(0, separator))
+                    (identity + ":").takeIf { account !in accounts }
+                }
+            }
+            if (removedPrefixes.isEmpty()) return
+            val editor = prefs.edit()
+            keys.filter { key -> removedPrefixes.any(key::startsWith) }.forEach(editor::remove)
+            check(editor.commit())
+        }
+    }
 }

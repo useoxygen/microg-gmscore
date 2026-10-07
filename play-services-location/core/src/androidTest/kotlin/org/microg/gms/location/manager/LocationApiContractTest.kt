@@ -9,12 +9,30 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.android.gms.common.api.Status
 import com.google.android.gms.common.api.internal.IStatusCallback
+import com.google.android.gms.location.internal.FusedLocationProviderResult
+import com.google.android.gms.location.internal.IFusedLocationProviderCallback
 import org.junit.Test
 import org.junit.Assert.*
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class LocationApiContractTest {
+    @Test fun flushCompletesExactlyOnceWithSuccessWhenThereIsNoBatch() {
+        check(Build.HARDWARE in listOf("ranchu", "goldfish"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val results = mutableListOf<FusedLocationProviderResult>()
+        instrumentation.runOnMainSync {
+            val owner = object : LifecycleOwner { override val lifecycle = LifecycleRegistry(this) }
+            val context = instrumentation.targetContext
+            val service = LocationManagerInstance(context, LocationManager(context, owner.lifecycle), context.packageName, owner.lifecycle)
+            service.flushLocations(object : IFusedLocationProviderCallback.Stub() {
+                override fun onFusedLocationProviderResult(result: FusedLocationProviderResult) { results += result }
+                override fun cancel() { fail("A completed no-op flush must not be cancelled") }
+            })
+        }
+        assertEquals(1,results.size)
+        assertTrue(results.single().status.isSuccess)
+    }
     @Test fun unsupportedCallsCompleteOnceAndNeverSucceed() {
         check(Build.HARDWARE in listOf("ranchu", "goldfish"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()

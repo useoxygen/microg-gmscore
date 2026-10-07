@@ -33,6 +33,16 @@ class CalendarSyncTest {
         override fun calendars(page: String?) = CalendarPage(listOf(calendar), null)
         override fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?) = events(checkpoint, page)
     }
+    @Test fun disabledCalendarRefreshesMetadataWithoutDownloadingEventsOrChangingCheckpoint() {
+        val backing = Store(); backing.token = "keep"
+        var metadata = 0
+        val store = object : CalendarStore by backing {
+            override fun shouldSync(calendar: RemoteCalendar) = false
+            override fun calendar(calendar: RemoteCalendar) { metadata++ }
+        }
+        val report = CalendarSync(api { _, _ -> error("Disabled calendar must not download events") },store) { true }.sync()
+        assertEquals(1,metadata); assertEquals(0,report.events); assertEquals("keep",backing.token); assertEquals(0,backing.prunes)
+    }
     @Test fun allDayAndTimedOffsetsAreIndependentOfHostTimezone() {
         val all = event()
         assertTrue(all.start!!.allDay); assertEquals("UTC", all.start.zone)

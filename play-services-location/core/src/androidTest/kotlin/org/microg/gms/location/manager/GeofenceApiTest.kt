@@ -74,12 +74,23 @@ class GeofenceApiTest {
                     .setTransitionTypes(1).setExpirationDuration(120_000).build() }
                 api!!.addGeofences(GeofencingRequest.Builder().addGeofences(hundred).build(),pending,callbacks)
                 assertEquals(0,results.poll(10,TimeUnit.SECONDS))
-                // Replacing an existing ID at the cap must succeed.
-                api!!.addGeofences(GeofencingRequest.Builder().addGeofence(hundred.first()).build(),pending,callbacks)
+                // Changing the shared sampling interval must retain all existing registrations.
+                val fast = Geofence.Builder().setRequestId("cap-0").setCircularRegion(37.0,-122.0,100f)
+                    .setTransitionTypes(1).setNotificationResponsiveness(5_000).setExpirationDuration(120_000).build()
+                api!!.addGeofences(GeofencingRequest.Builder().addGeofence(fast).build(),pending,callbacks)
                 assertEquals(0,results.poll(10,TimeUnit.SECONDS))
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
                 val overflow = Geofence.Builder().setRequestId("overflow").setCircularRegion(37.0,-122.0,100f)
                     .setTransitionTypes(1).setExpirationDuration(120_000).build()
                 api!!.addGeofences(GeofencingRequest.Builder().addGeofence(overflow).build(),pending,callbacks)
+                assertEquals(GeofenceStatusCodes.GEOFENCE_TOO_MANY_GEOFENCES,results.poll(10,TimeUnit.SECONDS))
+                // Removing the fast fence must switch back to slow sampling without losing the other 99.
+                api!!.removeGeofencesById(arrayOf("cap-0"),callbacks,context.packageName)
+                assertEquals(0,results.poll(5,TimeUnit.SECONDS))
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                val secondOverflow = Geofence.Builder().setRequestId("overflow-2").setCircularRegion(37.0,-122.0,100f)
+                    .setTransitionTypes(1).setExpirationDuration(120_000).build()
+                api!!.addGeofences(GeofencingRequest.Builder().addGeofences(listOf(overflow,secondOverflow)).build(),pending,callbacks)
                 assertEquals(GeofenceStatusCodes.GEOFENCE_TOO_MANY_GEOFENCES,results.poll(10,TimeUnit.SECONDS))
                 api!!.removeAllGeofences(callbacks,context.packageName)
                 assertEquals(0,results.poll(5,TimeUnit.SECONDS))
@@ -89,8 +100,13 @@ class GeofenceApiTest {
             GeofenceFixtureReceiver.events.clear()
             val fence = Geofence.Builder().setRequestId("fixture").setCircularRegion(37.0,-122.0,100f)
                 .setTransitionTypes(7).setLoiteringDelay(0).setNotificationResponsiveness(5_000).setExpirationDuration(120_000).build()
+            val slow = Geofence.Builder().setRequestId("fixture").setCircularRegion(37.0,-122.0,100f)
+                .setTransitionTypes(7).setLoiteringDelay(0).setNotificationResponsiveness(60_000).setExpirationDuration(120_000).build()
+            api!!.addGeofences(GeofencingRequest.Builder().addGeofence(slow).setInitialTrigger(5).build(),pending,callbacks)
+            assertEquals(0,results.poll(10,TimeUnit.SECONDS))
             api!!.addGeofences(GeofencingRequest.Builder().addGeofence(fence).setInitialTrigger(5).build(),pending,callbacks)
             assertEquals(0,results.poll(10,TimeUnit.SECONDS))
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             context.unbindService(connection); bound = false
             fun position(latitude: Double) { system.setTestProviderLocation("gps",Location("gps").apply {
                 this.latitude=latitude; longitude=-122.0; accuracy=2f; time=System.currentTimeMillis(); elapsedRealtimeNanos=SystemClock.elapsedRealtimeNanos()

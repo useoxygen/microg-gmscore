@@ -13,6 +13,10 @@ fetched before pruning or committing a new sync token. Expired tokens trigger a
 complete replacement fetch before reconciliation. A removed remote calendar is
 hidden while all its local events are retained. Failed requests and unreadable
 provider state cannot be interpreted as an empty calendar.
+Checkpoints live on the owned Calendar Provider row, so clearing its data forces a
+full snapshot. Account removal withdraws its saved opt-in and status. Individual
+calendar sync choices are retained, including through removal/restoration; disabled
+calendars refresh their metadata without downloading or reconciling events.
 Response pages are bounded to 16 MiB, calendar lists to 200 entries, and a single
 calendar snapshot to 10,000 events/16 MiB of event text. Exceeding a bound fails
 without pruning or committing a new token; exceptionally large calendars need a
@@ -72,6 +76,9 @@ The Android tests exercise Calendar Provider recurrence expansion, cancelled
 exceptions, idempotency, dirty/unowned row protections, opt-out, and calendar
 removal/restoration. They also exercise the actual location service/Binder API,
 pending-intent ENTER/DWELL/EXIT delivery, removal and failed unsupported callbacks.
+They cover sampling interval changes without losing registrations, an immediate
+successful no-op location flush, provider-reset recovery, account-removal opt-out,
+and preservation of per-calendar sync choices.
 Host tests cover pagination failures, invalid token recovery, repeated cursors,
 consent withdrawal, timezone mapping and transition/health precedence.
 

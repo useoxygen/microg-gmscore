@@ -20,33 +20,55 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
     private fun sync(uri: Uri) = uri.buildUpon().appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
         .appendQueryParameter(Calendars.ACCOUNT_NAME, account.name).appendQueryParameter(Calendars.ACCOUNT_TYPE, account.type).build()
     private val calendars = mutableMapOf<String, Long>()
-    override fun checkpoint(calendar: String) = prefs.checkpoint(calendar)
-    override fun checkpoint(calendar: String, value: String) = prefs.checkpoint(calendar, value)
+    private fun calendarSelection() = "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars._SYNC_ID}=? AND ${Calendars.CAL_SYNC1}=?"
+    private fun calendarArgs(calendar: String) = arrayOf(account.name, account.type, calendar, MARKER)
+    override fun shouldSync(calendar: RemoteCalendar): Boolean = requireNotNull(provider.query(sync(Calendars.CONTENT_URI),
+        arrayOf(Calendars.SYNC_EVENTS, Calendars.CAL_SYNC2, Calendars.CAL_SYNC6), calendarSelection(), calendarArgs(calendar.id), null)).use {
+        if (!it.moveToFirst()) true
+        else if (it.getString(1) == "removed") it.isNull(2) || it.getInt(2) != 0
+        else it.getInt(0) != 0
+    }
+    // A checkpoint describes these provider rows. Losing the calendar row must also lose
+    // its token, so cleared storage or a re-added account receives a complete snapshot.
+    override fun checkpoint(calendar: String): String? = requireNotNull(provider.query(sync(Calendars.CONTENT_URI),
+        arrayOf(Calendars.CAL_SYNC4), calendarSelection(), calendarArgs(calendar), null)).use {
+        if (it.moveToFirst()) it.getString(0)?.takeIf(String::isNotBlank) else null
+    }
+    override fun checkpoint(calendar: String, value: String) {
+        check(prefs.enabled)
+        check(provider.update(sync(Calendars.CONTENT_URI), ContentValues().apply { put(Calendars.CAL_SYNC4, value) },
+            calendarSelection(), calendarArgs(calendar)) == 1)
+    }
+    private data class RemovedCalendar(val id: Long, val remote: String, val visible: Int, val syncing: Int)
     override fun reconcileCalendars(present: Set<String>) {
         check(prefs.enabled)
-        val rows = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID, Calendars._SYNC_ID, Calendars.VISIBLE),
+        val rows = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID, Calendars._SYNC_ID, Calendars.VISIBLE, Calendars.SYNC_EVENTS),
             "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=? AND (${Calendars.CAL_SYNC2} IS NULL OR ${Calendars.CAL_SYNC2} != ?)",
             arrayOf(account.name, account.type, MARKER, "removed"), null)).use { c ->
-                buildList<Triple<Long,String,Int>> { while(c.moveToNext()) add(Triple(c.getLong(0),c.getString(1),c.getInt(2))) }
+                buildList<RemovedCalendar> { while(c.moveToNext()) add(RemovedCalendar(c.getLong(0),c.getString(1),c.getInt(2),c.getInt(3))) }
             }
-        for ((id,remote,visible) in rows.filter { it.second !in present }) {
+        for ((id,remote,visible,syncing) in rows.filter { it.remote !in present }) {
             check(prefs.enabled)
             // Retain all event rows, including local/unowned ones. Hide only our removed remote calendar.
             provider.update(sync(Calendars.CONTENT_URI),ContentValues().apply {
                 put(Calendars.VISIBLE,0); put(Calendars.SYNC_EVENTS,0)
-                put(Calendars.CAL_SYNC2,"removed"); put(Calendars.CAL_SYNC3,visible)
+                put(Calendars.CAL_SYNC2,"removed"); put(Calendars.CAL_SYNC3,visible); put(Calendars.CAL_SYNC6,syncing)
             },"${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=? AND ${Calendars._ID}=?",
                 arrayOf(account.name,account.type,MARKER,id.toString()))
         }
     }
     override fun calendar(calendar: RemoteCalendar) {
         check(prefs.enabled)
-        val selection = "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars._SYNC_ID}=? AND ${Calendars.CAL_SYNC1}=?"
-        val args = arrayOf(account.name, account.type, calendar.id, MARKER)
+        val selection = calendarSelection()
+        val args = calendarArgs(calendar.id)
         var restoreVisibility: Int? = null
-        val id = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID,Calendars.CAL_SYNC2,Calendars.CAL_SYNC3), selection, args, null)).use {
+        var restoreSyncing: Int? = null
+        val id = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID,Calendars.CAL_SYNC2,Calendars.CAL_SYNC3,Calendars.CAL_SYNC6), selection, args, null)).use {
             if (it.moveToFirst()) {
-                if (it.getString(1) == "removed") restoreVisibility = it.getInt(2)
+                if (it.getString(1) == "removed") {
+                    restoreVisibility = it.getInt(2)
+                    restoreSyncing = if (it.isNull(3)) 1 else it.getInt(3)
+                }
                 it.getLong(0)
             } else null
         }
@@ -57,9 +79,10 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
             put(Calendars.CALENDAR_TIME_ZONE, calendar.zone); put(Calendars.OWNER_ACCOUNT, account.name)
             put(Calendars.CALENDAR_COLOR, runCatching { android.graphics.Color.parseColor(calendar.color) }.getOrDefault(0xff64748b.toInt()))
             put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_READ)
-            put(Calendars.SYNC_EVENTS, 1); put(Calendars.DIRTY, 0)
-            if (id == null) put(Calendars.VISIBLE, 1)
+            put(Calendars.DIRTY, 0)
+            if (id == null) { put(Calendars.VISIBLE, 1); put(Calendars.SYNC_EVENTS, 1) }
             restoreVisibility?.let { put(Calendars.VISIBLE,it); putNull(Calendars.CAL_SYNC2); putNull(Calendars.CAL_SYNC3) }
+            restoreSyncing?.let { put(Calendars.SYNC_EVENTS,it); putNull(Calendars.CAL_SYNC6) }
         }
         calendars[calendar.id] = if (id == null) ContentUris.parseId(requireNotNull(provider.insert(sync(Calendars.CONTENT_URI), values)))
             else { check(provider.update(sync(Calendars.CONTENT_URI), values, selection, args) == 1); id }

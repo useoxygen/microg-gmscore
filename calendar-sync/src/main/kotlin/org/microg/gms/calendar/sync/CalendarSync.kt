@@ -24,6 +24,7 @@ interface CalendarApi {
     fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?): EventPage
 }
 interface CalendarStore {
+    fun shouldSync(calendar: RemoteCalendar): Boolean = true
     fun calendar(calendar: RemoteCalendar)
     fun checkpoint(calendar: String): String?
     /** Return false when a locally changed row is retained rather than overwritten. */
@@ -53,6 +54,10 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
         var conflicts = 0
         for (calendar in calendars.distinctBy { it.id }.filterNot { it.deleted }) {
             consent()
+            if (!store.shouldSync(calendar)) {
+                store.calendar(calendar)
+                continue
+            }
             var checkpoint = store.checkpoint(calendar.id)
             var reset = false
             var events: List<RemoteEvent>
