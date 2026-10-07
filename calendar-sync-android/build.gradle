@@ -1,0 +1,19 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+dependencies {
+    api project(':calendar-sync')
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+android {
+    namespace 'org.microg.gms.calendar.sync.android'
+    compileSdk androidCompileSdk
+    defaultConfig {
+        minSdk androidMinSdk
+        targetSdk androidTargetSdk
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+    kotlinOptions { jvmTarget = '1.8' }
+}

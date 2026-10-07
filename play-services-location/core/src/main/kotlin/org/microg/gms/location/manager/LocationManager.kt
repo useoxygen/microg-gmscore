@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Geofence registration, lifecycle and cache routing.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -63,6 +64,7 @@ class LocationManager(private val context: Context, override val lifecycle: Life
     private var currentNetworkInterval: Long = -1
 
     val deviceOrientationManager = DeviceOrientationManager(context, lifecycle) { updateLocationRequests() }
+    internal val geofenceManager = GeofenceManager(context, this, lifecycle)
 
     var started: Boolean = false
         private set
@@ -162,6 +164,7 @@ class LocationManager(private val context: Context, override val lifecycle: Life
         coarsePendingIntent = PendingIntentCompat.getService(context, 0, intent, FLAG_UPDATE_CURRENT, true)
         lastLocationCapsule.start()
         requestManager.start()
+        geofenceManager.start()
     }
 
     fun stop() {
@@ -170,6 +173,7 @@ class LocationManager(private val context: Context, override val lifecycle: Life
             started = false
         }
         requestManager.stop()
+        geofenceManager.stop()
         lastLocationCapsule.stop()
         deviceOrientationManager.stop()
 
@@ -371,6 +375,7 @@ class LocationManager(private val context: Context, override val lifecycle: Life
 
     fun handleCacheIntent(intent: Intent) {
         when (IntentCacheManager.getType(intent)) {
+            GeofenceManager.CACHE_TYPE -> geofenceManager.handleCacheIntent(intent)
             LocationRequestManager.CACHE_TYPE -> {
                 requestManager.handleCacheIntent(intent)
             }

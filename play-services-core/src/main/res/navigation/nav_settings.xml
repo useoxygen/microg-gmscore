@@ -46,6 +46,11 @@
         android:name="org.microg.gms.cyclon.CyclonHealthFragment"
         android:label="@string/cyclon_health_title" />
 
+    <fragment android:id="@+id/cyclonAppTroubleshootingFragment"
+        android:name="org.microg.gms.cyclon.AppTroubleshootingFragment" android:label="@string/cyclon_apps_title">
+        <argument android:name="package" app:argType="string" app:nullable="true" android:defaultValue="@null" />
+    </fragment>
+
     <!-- Self-Check -->
 
     <fragment
