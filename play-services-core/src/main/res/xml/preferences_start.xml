@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modified by Cyclon in 2026: Cyclon Services About label. --><!--
+<!-- Modified by Cyclon in 2026: Cyclon Services health and About labels. --><!--
   ~ Copyright (C) 2013-2017 microG Project Team
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,11 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <PreferenceCategory android:layout="@layout/preference_category_no_label" android:key="prefcat_header">
+        <Preference
+            android:key="pref_cyclon_health"
+            android:icon="@drawable/ic_check_list"
+            android:title="@string/cyclon_health_title"
+            android:summary="@string/cyclon_health_summary" />
         <Preference
             android:icon="@drawable/ic_check_list"
             android:summary="@string/self_check_desc"
