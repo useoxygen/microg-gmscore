@@ -92,7 +92,8 @@ private fun CyclonAbout() {
     val colors = lightColorScheme(
         primary = ink, onPrimary = paper, background = paper, onBackground = ink,
         surface = paper, onSurface = ink, surfaceVariant = colorResource(R.color.cyclon_panel),
-        onSurfaceVariant = muted, outline = colorResource(R.color.cyclon_line)
+        onSurfaceVariant = muted, outline = colorResource(R.color.cyclon_line),
+        outlineVariant = colorResource(R.color.cyclon_line)
     )
     val defaults = Typography()
     MaterialTheme(colorScheme = colors, typography = Typography(
