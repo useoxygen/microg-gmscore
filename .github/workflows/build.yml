@@ -65,5 +65,11 @@ jobs:
         run: "./gradlew :vending-app:testDefaultDebugUnitTest"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
+      - name: "Test legacy DroidGuard callback lifecycle"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :play-services-droidguard-core:testDebugUnitTest"
+      - name: "Test current-location request deadlines"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :play-services-location-core:testDefaultDebugUnitTest"
       - name: "Execute Gradle lint"
         run: "./gradlew lint${{ matrix.target }}"

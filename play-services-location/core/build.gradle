@@ -7,6 +7,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 dependencies {
+    testImplementation "junit:junit:4.13.2"
     api project(':play-services-location')
     implementation project(':play-services-base-core')
     implementation project(':play-services-location-core-base')

@@ -47,9 +47,11 @@ public class DroidGuardClientImpl extends GoogleApi<DroidGuardClientImpl.Options
         DroidGuardResultsRequest finalRequest = request != null ? request : new DroidGuardResultsRequest();
         return scheduleTask((ReturningGoogleApiCall<String, DroidGuardApiClient>) client -> {
             DroidGuardHandle handle = client.openHandle(flow, finalRequest);
-            String results = handle.snapshot(data);
-            handle.close();
-            return results;
+            try {
+                return handle.snapshot(data);
+            } finally {
+                handle.close();
+            }
         });
     }
 

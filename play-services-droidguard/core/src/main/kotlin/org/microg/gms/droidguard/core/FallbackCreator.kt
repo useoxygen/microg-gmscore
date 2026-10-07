@@ -20,14 +20,16 @@ object FallbackCreator {
             try {
                 create(map, null, flow, context, e)
             } catch (e: Throwable) {
-                Log.w("DGFallback", e)
-                "ERROR : $e".encodeToByteArray()
+                Log.w("DGFallback", "Fallback unavailable")
+                guardFailure("fallback unavailable")
             }
         }
     }
 
     @JvmStatic
     fun create(map: Map<Any?, Any?>, bytes: ByteArray?, flow: String?, context: Context, e: Throwable): ByteArray {
-        TODO("Not yet implemented")
+        // No supported implementation exists for generating a substitute result.
+        // Keep an explicit, stable error and never serialize exception payloads.
+        return guardFailure("unsupported fallback")
     }
 }
