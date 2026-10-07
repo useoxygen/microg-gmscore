@@ -1,4 +1,4 @@
-# Cyclon location build configuration
+# Cyclon release build configuration
 
 The official microG APK includes Positon (suggested), BeaconDB, and Custom. Its
 source-only default has BeaconDB and Custom: the official release supplies the
@@ -25,7 +25,7 @@ Verify the extraction and byte-pin checks without configuring Android modules:
 
 ```sh
 JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./gradlew -p cyclon/tests \
-  testLocationSources -PupstreamApk=/absolute/path/upstream.apk
+  testLocationSources testVersionAllocation -PupstreamApk=/absolute/path/upstream.apk
 ```
 
 Then generate the actual location module configuration:
@@ -35,6 +35,14 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME=~/Library/Android/sdk \
   ./gradlew :play-services-location-core-base:generateReleaseBuildConfig \
   -Pcyclon.locationSourceApk=/absolute/path/upstream.apk
 ```
+
+`version.json` allocates GmsCore and Companion version codes for this delivery.
+Upstream's Git-based formula gives every commit after a tag the same code, which
+would leave the fixed APK unable to advance Cyclon's currently shipped versions.
+The checked-in allocation is identical in CI and a clean delivery build. Bump
+both codes for each subsequent delivery, and update the tag/allocation when
+rebasing to a new upstream release. The product activation gate also requires
+both codes to exceed the versions in the existing signed APK lock.
 
 This source change requires a new product source pin, rebuilt/signed APKs, and
 normal delivery acceptance before it changes an installed Cyclon image.

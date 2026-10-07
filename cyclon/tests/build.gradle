@@ -5,6 +5,32 @@
 import groovy.json.JsonSlurper
 
 apply from: file('../location-sources.gradle')
+apply from: file('../version.gradle')
+
+tasks.register('testVersionAllocation') {
+    doLast {
+        def release = new JsonSlurper().parse(file('../version.json'))
+        def allocated = cyclonValidateVersion(release, 252432, 40226)
+        assert allocated.gmsVersionCode > 252432035
+        assert allocated.vendingVersionCode > 84022635
+        [
+            [gmsVersionCode: 252432034],
+            [vendingVersionCode: 84022634],
+            [gmsVersionCode: 252433000],
+            [vendingVersionCode: 84022700],
+            [gmsVersionCode: '252432036'],
+            [upstreamTag: 'v0.3.17.252433']
+        ].each { change ->
+            try {
+                cyclonValidateVersion(release + change, 252432, 40226)
+                throw new AssertionError('An invalid APK version allocation was accepted')
+            } catch (GradleException expected) {
+                assert expected.message.contains('allocation')
+            }
+        }
+        println('Verified upgrade from both shipped APK versions and rejection of invalid allocations.')
+    }
+}
 
 tasks.register('testLocationSources') {
     doLast {
