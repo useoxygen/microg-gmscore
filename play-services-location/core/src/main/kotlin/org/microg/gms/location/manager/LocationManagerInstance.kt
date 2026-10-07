@@ -41,6 +41,7 @@ import kotlinx.coroutines.*
 import org.microg.gms.location.hasNetworkLocationServiceBuiltIn
 import org.microg.gms.location.settings.*
 import org.microg.gms.utils.warnOnTransactionIssues
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationManagerInstance(
     private val context: Context,
@@ -156,8 +157,11 @@ class LocationManagerInstance(
     override fun getCurrentLocationWithReceiver(request: CurrentLocationRequest, receiver: LocationReceiver): ICancelToken {
         Log.d(TAG, "getCurrentLocationWithReceiver by ${getClientIdentity().packageName}")
         checkHasAnyLocationPermission()
-        var returned = false
+        val returned = AtomicBoolean(false)
         val callback = receiver.statusCallback
+        fun complete(status: Status, location: Location?) {
+            if (returned.compareAndSet(false, true)) runCatching { callback.onLocationStatus(status, location) }
+        }
         val clientIdentity = getClientIdentity()
         val binderIdentity = Binder()
         val job = lifecycleScope.launchWhenStarted {
@@ -165,8 +169,7 @@ class LocationManagerInstance(
                 val scope = this
                 val callbackForRequest = object : ILocationCallback.Stub() {
                     override fun onLocationResult(result: LocationResult?) {
-                        if (!returned) runCatching { callback.onLocationStatus(Status.SUCCESS, result?.lastLocation) }
-                        returned = true
+                        complete(Status.SUCCESS, result?.lastLocation)
                         scope.cancel()
                     }
 
@@ -175,8 +178,7 @@ class LocationManagerInstance(
                     }
 
                     override fun cancel() {
-                        if (!returned) runCatching { callback.onLocationStatus(Status.SUCCESS, null) }
-                        returned = true
+                        complete(Status.SUCCESS, null)
                         scope.cancel()
                     }
                 }
@@ -188,26 +190,25 @@ class LocationManagerInstance(
                     .setWorkSource(request.workSource)
                     .setThrottleBehavior(request.throttleBehavior)
                     .build()
-                locationManager.addBinderRequest(clientIdentity, binderIdentity, callbackForRequest, currentLocationRequest)
-                awaitCancellation()
+                awaitCurrentLocationDeadline(request.durationMillis, { complete(Status.SUCCESS, null) }) {
+                    locationManager.addBinderRequest(clientIdentity, binderIdentity, callbackForRequest, currentLocationRequest)
+                }
             } catch (e: CancellationException) {
                 // Don't send result. Either this was cancelled from the CancelToken or because a location was retrieved.
                 // Both cases send the result themselves.
             } catch (e: Exception) {
                 try {
-                    if (!returned) callback.onLocationStatus(Status(CommonStatusCodes.ERROR, e.message), null)
-                    returned = true
+                    complete(Status(CommonStatusCodes.ERROR), null)
                 } catch (e2: Exception) {
                     Log.w(TAG, "Failed", e)
                 }
             } finally {
-                runCatching { locationManager.removeBinderRequest(binderIdentity) }
+                withContext(NonCancellable) { runCatching { locationManager.removeBinderRequest(binderIdentity) } }
             }
         }
         return object : ICancelToken.Stub() {
             override fun cancel() {
-                if (!returned) runCatching { callback.onLocationStatus(Status.CANCELED, null) }
-                returned = true
+                complete(Status.CANCELED, null)
                 job.cancel()
             }
         }

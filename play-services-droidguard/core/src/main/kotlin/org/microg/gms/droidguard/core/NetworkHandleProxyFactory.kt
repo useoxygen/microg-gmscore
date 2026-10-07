@@ -19,6 +19,7 @@ import org.microg.gms.profile.ProfileManager
 import org.microg.gms.utils.singleInstanceOf
 import java.io.File
 import java.util.*
+import java.util.concurrent.TimeUnit
 import com.android.volley.Request as VolleyRequest
 import com.android.volley.Response as VolleyResponse
 
@@ -110,7 +111,7 @@ class NetworkHandleProxyFactory(private val context: Context) : HandleProxyFacto
     fun fetchFromServer(flow: String?, request: Request): Triple<String, ByteArray, ByteArray> {
         ProfileManager.ensureInitialized(context)
         val future = RequestFuture.newFuture<SignedResponse>()
-        queue.add(object : VolleyRequest<SignedResponse>(Method.POST, SERVER_URL, future) {
+        val pendingRequest = object : VolleyRequest<SignedResponse>(Method.POST, SERVER_URL, future) {
             override fun parseNetworkResponse(response: NetworkResponse): VolleyResponse<SignedResponse> {
                 return try {
                     VolleyResponse.success(SignedResponse.ADAPTER.decode(response.data), null)
@@ -132,8 +133,14 @@ class NetworkHandleProxyFactory(private val context: Context) : HandleProxyFacto
                     "User-Agent" to "DroidGuard/${version.versionCode}"
                 )
             }
-        })
-        val signed: SignedResponse = future.get()
+        }
+        future.setRequest(pendingRequest)
+        queue.add(pendingRequest)
+        val signed: SignedResponse = try {
+            future.get(60, TimeUnit.SECONDS)
+        } finally {
+            future.cancel(true)
+        }
         val response = signed.unpack()
         val vmKey = response.vmChecksum!!.hex()
         if (!isValidCache(vmKey)) {
