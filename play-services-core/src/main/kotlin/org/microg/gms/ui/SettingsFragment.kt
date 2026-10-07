@@ -6,6 +6,7 @@
 package org.microg.gms.ui
 
 import android.os.Bundle
+import android.os.Build
 import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.lifecycleScope
@@ -27,16 +28,18 @@ class SettingsFragment : ResourceSettingsFragment() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         super.onCreatePreferences(savedInstanceState, rootKey)
 
-        val enrollment = Preference(requireContext()).apply {
-            title = getString(R.string.cyclon_enrollment_title)
-            summary = getString(R.string.cyclon_enrollment_settings_summary)
-            isPersistent = false
-            setOnPreferenceClickListener {
-                startActivity(Intent(requireContext(), org.microg.gms.cyclon.EnrollmentActivity::class.java))
-                true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val enrollment = Preference(requireContext()).apply {
+                title = getString(R.string.cyclon_enrollment_title)
+                summary = getString(R.string.cyclon_enrollment_settings_summary)
+                isPersistent = false
+                setOnPreferenceClickListener {
+                    startActivity(Intent(requireContext(), org.microg.gms.cyclon.EnrollmentActivity::class.java))
+                    true
+                }
             }
+            findPreference<PreferenceCategory>("prefcat_google_services")?.addPreference(enrollment)
         }
-        findPreference<PreferenceCategory>("prefcat_google_services")?.addPreference(enrollment)
 
         findPreference<Preference>(PREF_ACCOUNTS)!!.onPreferenceClickListener = Preference.OnPreferenceClickListener {
             findNavController().navigate(requireContext(), R.id.accountManagerFragment)

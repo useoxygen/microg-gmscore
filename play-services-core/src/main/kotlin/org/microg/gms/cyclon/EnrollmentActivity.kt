@@ -12,6 +12,7 @@ import java.security.MessageDigest
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -19,6 +20,7 @@ import android.view.WindowManager
 import android.webkit.*
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,6 +44,7 @@ import org.microg.gms.gcm.GcmPrefs
 import java.net.URLEncoder
 
 /** Lineage's DeviceSpecificActivity launches this and owns the wizard's NEXT/result contract. */
+@RequiresApi(Build.VERSION_CODES.M)
 class EnrollmentActivity : ComponentActivity() {
     private var status by mutableStateOf(R.string.cyclon_enrollment_intro)
     private var busy by mutableStateOf(false)

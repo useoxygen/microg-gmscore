@@ -1,4 +1,6 @@
 <resources>
+    <!-- Enrollment needs modern WebView main-frame error handling. Keep legacy microG available. -->
+    <bool name="cyclon_enrollment_supported">false</bool>
     <string name="cyclon_enrollment_title">Connect Google</string>
     <string name="cyclon_enrollment_settings_summary">Finish account and phone registration</string>
     <string name="cyclon_enrollment_intro">Connect your Google account for apps and notifications. Cyclon will prepare Google services and register this phone with Google. You can do this later.</string>

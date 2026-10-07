@@ -5,9 +5,11 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
 import android.os.Binder
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.RequiresApi
 import java.lang.ref.WeakReference
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -17,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Core-only, foreground, puzzle-only bridge. No sign-in, arbitrary scripts, URLs or Register
  * action.
  */
+@RequiresApi(Build.VERSION_CODES.M)
 class EnrollmentChallengeProvider : ContentProvider() {
     override fun onCreate() = true
 

@@ -535,12 +535,14 @@
 
         <activity
             android:name="org.microg.gms.cyclon.EnrollmentActivity"
+            android:enabled="@bool/cyclon_enrollment_supported"
             android:exported="false"
             android:process=":ui"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
         <activity-alias
             android:name="org.microg.gms.cyclon.SetupEnrollment"
+            android:enabled="@bool/cyclon_enrollment_supported"
             android:targetActivity="org.microg.gms.cyclon.EnrollmentActivity"
             android:exported="true"
             android:permission="android.permission.WRITE_SECURE_SETTINGS">
@@ -549,6 +551,7 @@
         <!-- Shares LoginActivity's WebView and the foreground enrollment activity reference. -->
         <provider
             android:name="org.microg.gms.cyclon.EnrollmentChallengeProvider"
+            android:enabled="@bool/cyclon_enrollment_supported"
             android:authorities="com.google.android.gms.cyclon.enrollment"
             android:exported="true"
             android:process=":ui"
