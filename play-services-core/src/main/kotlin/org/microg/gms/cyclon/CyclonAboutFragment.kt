@@ -76,13 +76,13 @@ private fun CyclonAbout() {
     val paper = colorResource(R.color.cyclon_paper)
     val ink = colorResource(R.color.cyclon_ink)
     val muted = colorResource(R.color.cyclon_muted)
-    CyclonTheme {
+    CyclonMaterialTheme {
         // The settings host owns vertical scrolling; a nested lazy/scroll container gets
         // unbounded height here. Keep this column wrap-content and bound each text page.
         Column(Modifier.fillMaxWidth().background(paper).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             when {
                 selected != null -> {
-                    TextButton(onClick = { selectedTitle = null }) { Text(stringResource(R.string.cyclon_back)) }
+                    CyclonTextButton(onClick = { selectedTitle = null }) { Text(stringResource(R.string.cyclon_back)) }
                     Text(selected.title, style = MaterialTheme.typography.titleMedium)
                     Text(selected.license, color = muted)
                     NoticePageNavigation(page, pages.size) { selectedPage = it }
@@ -90,7 +90,7 @@ private fun CyclonAbout() {
                     NoticePageNavigation(page, pages.size) { selectedPage = it }
                 }
                 showingLicenses -> {
-                    TextButton(onClick = { showingLicenses = false }) { Text(stringResource(R.string.cyclon_back)) }
+                    CyclonTextButton(onClick = { showingLicenses = false }) { Text(stringResource(R.string.cyclon_back)) }
                     Text(stringResource(R.string.cyclon_notices), style = MaterialTheme.typography.headlineSmall)
                     OutlinedTextField(
                         value = query, onValueChange = { query = it }, singleLine = true,
@@ -120,8 +120,7 @@ private fun CyclonAbout() {
                     Text(stringResource(R.string.cyclon_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), color = muted)
                     HorizontalDivider()
                     Text(stringResource(R.string.cyclon_credits), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = { showingLicenses = true }, modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp)) {
+                    CyclonOutlinedButton(onClick = { showingLicenses = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.cyclon_notices))
                     }
                 }
@@ -136,10 +135,10 @@ private fun NoticePageNavigation(page: Int, count: Int, onPage: (Int) -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         Text(stringResource(R.string.cyclon_notice_page, page + 1, count), style = MaterialTheme.typography.bodyMedium)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            TextButton(onClick = { onPage(page - 1) }, enabled = page > 0) {
+            CyclonTextButton(onClick = { onPage(page - 1) }, enabled = page > 0) {
                 Text(stringResource(R.string.cyclon_previous_page))
             }
-            TextButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) {
+            CyclonTextButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) {
                 Text(stringResource(R.string.cyclon_next_page))
             }
         }

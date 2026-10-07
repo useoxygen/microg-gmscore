@@ -3,19 +3,29 @@
 package org.microg.gms.cyclon
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.unit.dp
 import com.google.android.gms.R
 
 /**
  * Compose counterpart of Theme.Cyclon: paper/black surfaces and ink text from the day/night
  * cyclon_* colours, the owner's highlight as primary for on/selected states and progress only.
- * Text uses the system sans-serif (Manrope on Cyclon OS).
+ * Text uses the system sans-serif (Manrope on Cyclon OS). Content without a Surface (Cyclon
+ * Services screens draw their own paper) still gets ink, and cards and fields have 8dp corners.
  */
 @Composable
 fun CyclonMaterialTheme(content: @Composable () -> Unit) {
@@ -41,8 +51,13 @@ fun CyclonMaterialTheme(content: @Composable () -> Unit) {
         surfaceContainerLow = paper, surfaceContainer = paper, surfaceContainerHigh = raised,
         surfaceContainerHighest = cell
     )
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(colorScheme = colors, shapes = CyclonShapes) {
+        CompositionLocalProvider(LocalContentColor provides ink, content = content)
+    }
 }
+
+private val CyclonShapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(8.dp))
+private val CyclonButtonShape = RoundedCornerShape(8.dp)
 
 /** Primary button: filled ink with paper text. */
 @Composable
@@ -50,3 +65,17 @@ fun cyclonPrimaryButtonColors(): ButtonColors = ButtonDefaults.buttonColors(
     containerColor = MaterialTheme.colorScheme.onSurface,
     contentColor = MaterialTheme.colorScheme.surface
 )
+
+/** Text button: ink text, 8dp corners. */
+@Composable
+fun CyclonTextButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+                     content: @Composable RowScope.() -> Unit) = TextButton(onClick, modifier, enabled,
+    shape = CyclonButtonShape, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+    content = content)
+
+/** Outlined button: ink text on a hairline, 8dp corners. */
+@Composable
+fun CyclonOutlinedButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
+                         content: @Composable RowScope.() -> Unit) = OutlinedButton(onClick, modifier, enabled,
+    shape = CyclonButtonShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+    content = content)

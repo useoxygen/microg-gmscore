@@ -41,7 +41,7 @@ class CyclonHealthFragment : Fragment() {
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, state: Bundle?): View =
         ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-            setContent { CyclonTheme { HealthScreen(snapshot, ::navigate, ::share) } }
+            setContent { CyclonMaterialTheme { HealthScreen(snapshot, ::navigate, ::share) } }
         }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -92,11 +92,11 @@ private fun HealthScreen(snapshot: ServiceHealthSnapshot?, navigate: (Int) -> Un
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (report != null) {
-            TextButton(onClick = { report = null }) { Text(stringResource(R.string.cyclon_back)) }
+            CyclonTextButton(onClick = { report = null }) { Text(stringResource(R.string.cyclon_back)) }
             Text(stringResource(R.string.cyclon_health_report), style = MaterialTheme.typography.headlineSmall)
             Text(stringResource(R.string.cyclon_health_report_privacy))
             SelectionContainer { Text(report!!, style = MaterialTheme.typography.bodyMedium) }
-            OutlinedButton(onClick = { share(report!!) }) { Text(stringResource(R.string.cyclon_health_share)) }
+            CyclonOutlinedButton(onClick = { share(report!!) }) { Text(stringResource(R.string.cyclon_health_share)) }
         } else {
             Text(stringResource(R.string.cyclon_health_intro))
             Text(stringResource(R.string.cyclon_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
@@ -113,13 +113,13 @@ private fun HealthScreen(snapshot: ServiceHealthSnapshot?, navigate: (Int) -> Un
                 Text(stringResource(R.string.cyclon_health_observed, time(snapshot.observedAt)),
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             }
-            OutlinedButton(onClick = { navigate(R.id.selfcheckFragment) }, modifier = Modifier.fillMaxWidth()) {
+            CyclonOutlinedButton(onClick = { navigate(R.id.selfcheckFragment) }, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(org.microg.tools.ui.R.string.self_check_title))
             }
-            OutlinedButton(onClick = { navigate(R.id.cyclonAppTroubleshootingFragment) }, modifier = Modifier.fillMaxWidth()) {
+            CyclonOutlinedButton(onClick = { navigate(R.id.cyclonAppTroubleshootingFragment) }, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.cyclon_apps_title))
             }
-            OutlinedButton(onClick = { report = snapshot?.diagnosticReport() }, enabled = snapshot != null, modifier = Modifier.fillMaxWidth()) {
+            CyclonOutlinedButton(onClick = { report = snapshot?.diagnosticReport() }, enabled = snapshot != null, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.cyclon_health_report))
             }
         }
@@ -141,7 +141,7 @@ private fun HealthCard(title: Int, reading: HealthReading, action: Int, destinat
             }), style = MaterialTheme.typography.labelLarge)
             Text(stringResource(reasonText(reading.reason)), style = MaterialTheme.typography.bodyMedium)
             reading.lastSuccessAt?.let { Text(stringResource(R.string.cyclon_health_last_success, time(it)), style = MaterialTheme.typography.bodyMedium) }
-            TextButton(onClick = { navigate(destination) }) { Text(stringResource(action)) }
+            CyclonTextButton(onClick = { navigate(destination) }) { Text(stringResource(action)) }
         }
     }
 }
