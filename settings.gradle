@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Native Calendar synchronization modules.
 def sublude(name) {
   def projectName = ':' + name.substring(1).replace(':', '-')
   include projectName
@@ -126,5 +127,7 @@ include ':play-services-core:microg-ui-tools' // Legacy
 include ':play-services-core'
 include ':people-sync'
 include ':people-sync-android'
+include ':calendar-sync'
+include ':calendar-sync-android'
 // Optional, development-only OAuth/People API acceptance app; never shipped in GmsCore.
 if (hasModule("contactsLab", false)) include ':people-sync-lab'

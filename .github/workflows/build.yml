@@ -64,6 +64,8 @@ jobs:
         run: "./gradlew :people-sync:test"
       - name: "Test Cyclon health and license text pagination"
         run: "./gradlew :play-services-core:testMapboxDefaultDebugUnitTest"
+      - name: "Test calendar sync and geofence transitions"
+        run: "./gradlew :calendar-sync:test :play-services-location-core:testDefaultDebugUnitTest"
       - name: "Test Cyclon release inputs and notices"
         run: "./gradlew -p cyclon/tests testVersionAllocation testNotices"
       - name: "Execute Gradle lint"

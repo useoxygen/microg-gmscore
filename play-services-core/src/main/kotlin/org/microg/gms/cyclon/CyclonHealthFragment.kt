@@ -60,6 +60,7 @@ class CyclonHealthFragment : Fragment() {
 
     private fun navigate(destination: Int) {
         if (destination == R.id.cyclon_contacts_health_action) startActivity(Intent(requireContext(), ContactsSyncActivity::class.java))
+        else if (destination == R.id.cyclon_calendar_health_action) startActivity(Intent(requireContext(), org.microg.gms.calendar.CalendarSyncActivity::class.java))
         else findNavController().navigate(destination)
     }
 
@@ -106,6 +107,7 @@ private fun HealthScreen(snapshot: ServiceHealthSnapshot?, navigate: (Int) -> Un
             } else {
                 HealthCard(R.string.service_name_mcs, snapshot.push, R.string.cyclon_health_push_action, R.id.gcmFragment, navigate)
                 HealthCard(R.string.contacts_sync_title, snapshot.contacts, R.string.cyclon_health_contacts_action, R.id.cyclon_contacts_health_action, navigate)
+                HealthCard(R.string.cyclon_calendar_title, snapshot.calendar, R.string.cyclon_calendar_title, R.id.cyclon_calendar_health_action, navigate)
                 HealthCard(R.string.cyclon_health_location, snapshot.location, R.string.cyclon_health_location_action, R.id.nav_location, navigate)
                 HealthCard(R.string.service_name_checkin, snapshot.registration, R.string.cyclon_health_registration_action, R.id.checkinFragment, navigate)
                 Text(stringResource(R.string.cyclon_health_observed, time(snapshot.observedAt)),
@@ -113,6 +115,9 @@ private fun HealthScreen(snapshot: ServiceHealthSnapshot?, navigate: (Int) -> Un
             }
             OutlinedButton(onClick = { navigate(R.id.selfcheckFragment) }, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(org.microg.tools.ui.R.string.self_check_title))
+            }
+            OutlinedButton(onClick = { navigate(R.id.cyclonAppTroubleshootingFragment) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.cyclon_apps_title))
             }
             OutlinedButton(onClick = { report = snapshot?.diagnosticReport() }, enabled = snapshot != null, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.cyclon_health_report))
@@ -161,4 +166,5 @@ private fun reasonText(reason: HealthReason): Int = when (reason) {
     HealthReason.LOCATION_PERMISSION -> R.string.cyclon_health_location_permission
     HealthReason.REGISTRATION_PENDING -> R.string.cyclon_health_registration_pending
     HealthReason.REGISTRATION_RECORDED -> R.string.cyclon_health_registration_recorded
+    HealthReason.CALENDAR_PERMISSION -> R.string.cyclon_calendar_permissions
 }

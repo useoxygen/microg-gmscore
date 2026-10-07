@@ -12,6 +12,8 @@
         tools:title="@tools:sample/lorem"
         app:allowDividerBelow="false" />
 
+    <Preference android:key="cyclon_troubleshoot_app" android:title="@string/cyclon_apps_title" app:iconSpaceReserved="false" />
+
     <PreferenceCategory
         android:key="prefcat_push_app_settings"
         android:layout="@layout/preference_category_no_label"

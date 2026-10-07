@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Per-app troubleshooting navigation.
 /*
  * SPDX-FileCopyrightText: 2020, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -7,6 +8,8 @@ package org.microg.gms.ui
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import androidx.core.os.bundleOf
+import androidx.navigation.fragment.findNavController
 import android.text.format.DateUtils
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
@@ -49,6 +52,10 @@ class PushNotificationAppFragment : PreferenceFragmentCompat() {
         unregister = preferenceScreen.findPreference("pref_push_app_unregister") ?: unregister
         unregisterCat = preferenceScreen.findPreference("prefcat_push_app_unregister") ?: unregisterCat
         status = preferenceScreen.findPreference("pref_push_app_status") ?: status
+        findPreference<Preference>("cyclon_troubleshoot_app")?.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+            findNavController().navigate(R.id.cyclonAppTroubleshootingFragment, bundleOf("package" to packageName))
+            true
+        }
         wakeForDelivery.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
             database.setAppWakeForDelivery(packageName, newValue as Boolean)
             database.close()

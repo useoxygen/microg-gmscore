@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.microg.gms.location.LocationSettings
 import org.microg.gms.people.ContactSyncPreferences
+import org.microg.gms.calendar.CalendarSyncPreferences
 import org.microg.gms.people.sync.SyncMode
 import org.microg.gms.settings.SettingsContract
 
@@ -46,6 +47,22 @@ internal class ServiceHealthReader(private val context: Context) {
             }
         }
         val masterSync = observe { ContentResolver.getMasterSyncAutomatically() }
+        val calendars = observe {
+            val accounts = AccountManager.get(context).getAccountsByType("com.google")
+            check(accounts.size <= 100)
+            accounts.map { account ->
+                val prefs = CalendarSyncPreferences(context, account)
+                ContactHealthObservation(prefs.enabled, observe {
+                    ContentResolver.getSyncAutomatically(account, CalendarSyncPreferences.AUTHORITY) &&
+                        ContentResolver.getIsSyncable(account, CalendarSyncPreferences.AUTHORITY) > 0
+                }, if (prefs.status == "permission") HealthReason.SYNC_PENDING else contactHealthReason(prefs.status), prefs.lastSuccess)
+            }
+        }
+        val calendarPermission = observe {
+            listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR).all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        }
         val contactsPermission = observe {
             listOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS).all {
                 ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
@@ -77,7 +94,7 @@ internal class ServiceHealthReader(private val context: Context) {
                 @Suppress("DEPRECATION")
                 val info = context.packageManager.getPackageInfo("com.android.vending", 0)
                 if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-            }, Build.VERSION.SDK_INT
+            }, Build.VERSION.SDK_INT, calendarHealth(calendars, masterSync, calendarPermission)
         )
     }
 

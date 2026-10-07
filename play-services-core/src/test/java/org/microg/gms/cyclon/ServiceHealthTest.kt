@@ -69,4 +69,11 @@ class ServiceHealthTest {
     }
     private fun account(enabled: Boolean, status: String, success: Long) =
         ContactHealthObservation(enabled, true, contactHealthReason(status), success)
+    @Test fun optionalCalendarHasSeparatePermissionAndPrivateReport() {
+        assertEquals(HealthState.OFF, calendarHealth(emptyList(),true,false).state)
+        assertEquals(HealthReason.CALENDAR_PERMISSION, calendarHealth(listOf(account(true,"success",123)),true,false).reason)
+        assertEquals(HealthState.PAUSED, calendarHealth(listOf(account(true,"success",123)),false,true).state)
+        assertTrue(ServiceHealthSnapshot(servicesVersionCode=252432039,androidApi=36,
+            calendar=calendarHealth(listOf(account(true,"success",123)),true,true)).diagnosticReport().contains("calendar=ready; code=sync_success"))
+    }
 }

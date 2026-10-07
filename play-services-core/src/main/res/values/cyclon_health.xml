@@ -4,7 +4,7 @@
 <resources>
     <item name="cyclon_contacts_health_action" type="id" />
     <string name="cyclon_health_title">Service health</string>
-    <string name="cyclon_health_summary">Push connection, Contacts sync and location readiness</string>
+    <string name="cyclon_health_summary">Push connection, Contacts and Calendar sync, and location readiness</string>
     <string name="cyclon_health_intro">Local observations refresh while this screen is open. Services you have turned off stay off.</string>
     <string name="cyclon_health_loading">Reading service state…</string>
     <string name="cyclon_health_off">Off</string>
