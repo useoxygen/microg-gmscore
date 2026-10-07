@@ -23,6 +23,7 @@ import android.webkit.WebViewClient
 import android.widget.ProgressBar
 import androidx.core.os.bundleOf
 import com.google.android.gms.R
+import org.microg.gms.cyclon.followSystemDarkTheme
 import org.microg.gms.profile.Build.generateWebViewUserAgentString
 import org.microg.gms.profile.ProfileManager
 
@@ -84,6 +85,7 @@ class ConsentSignInActivity : Activity() {
             useWideViewPort = false
             setSupportZoom(false)
             javaScriptCanOpenWindowsAutomatically = false
+            followSystemDarkTheme(this@ConsentSignInActivity)
         }
         webView?.addJavascriptInterface(OAuthConsentInterface(), "OAuthConsent")
         webView?.webViewClient = object : WebViewClient() {
