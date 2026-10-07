@@ -101,11 +101,11 @@ class ExpressIntegrityService : LifecycleService() {
 
 private class ExpressIntegrityServiceImpl(private val context: Context, override val lifecycle: Lifecycle) : IExpressIntegrityService.Stub(), LifecycleOwner {
 
-    private var visitData: PlayIntegrityData? = null
 
     override fun warmUpIntegrityToken(bundle: Bundle, callback: IExpressIntegrityServiceCallback?) {
         val callingPackageName = PackageUtils.getAndCheckCallingPackage(context, bundle.getString(KEY_PACKAGE_NAME))
         lifecycleScope.launchWhenCreated {
+            var visitData: PlayIntegrityData? = null
             runCatching {
                 if (callingPackageName == null) {
                     throw StandardIntegrityException(IntegrityErrorCode.INTERNAL_ERROR, "Null packageName.")
@@ -132,7 +132,7 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                     null,
                     webViewRequestMode = bundle.getInt(KEY_REQUEST_MODE, 0)
                 )
-                Log.d(TAG, "warmUpIntegrityToken session:$expressIntegritySession}")
+                Log.d(TAG, "Preparing standard integrity session")
 
                 updateExpressSessionTime(context, expressIntegritySession, refreshWarmUpMethodTime = true, refreshRequestMethodTime = false)
 
@@ -142,7 +142,7 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                 if (TextUtils.isEmpty(authToken)) {
                     Log.w(TAG, "warmUpIntegrityToken: Got null auth token for type: $AUTH_TOKEN_SCOPE")
                 }
-                Log.d(TAG, "warmUpIntegrityToken authToken: $authToken")
+                Log.d(TAG, "Standard integrity authentication available: ${authToken.isNotEmpty()}")
 
                 val expressFilePB = updateExpressAuthTokenWrapper(context, expressIntegritySession, authToken, clientKey)
 
@@ -198,12 +198,12 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                     }
                 }.build()
 
-                Log.d(TAG, "intermediateIntegrityRequest: $intermediateIntegrityRequest")
+                Log.d(TAG, "Sending intermediate integrity request")
 
                 val intermediateIntegrityResponse = requestIntermediateIntegrity(context, authToken, intermediateIntegrityRequest).intermediateIntegrityResponseWrapper?.intermediateIntegrityResponse
                     ?: IntermediateIntegrityResponse()
 
-                Log.d(TAG, "requestIntermediateIntegrity response: ${intermediateIntegrityResponse.encode().encodeBase64(true)}")
+                Log.d(TAG, "Received intermediate integrity response")
 
                 val errorCode = intermediateIntegrityResponse.errorInfo?.let { error ->
                     if (error.errorCode == null) {
@@ -256,17 +256,18 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                 callback?.onWarmResult(bundleOf(KEY_WARM_UP_SID to expressIntegritySession.sessionId))
             }.onFailure {
                 val exception = it as? StandardIntegrityException ?: StandardIntegrityException(it.message)
-                Log.w(TAG, "warm up has failed: code=${exception.code}, message=${exception.message}", exception)
-                visitData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "$TAG visited failed. ${exception.message}")
+                Log.w(TAG, "warm up has failed: code=${exception.code}")
+                visitData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "$TAG visited failed: code=${exception.code}")
                 callback?.onWarmResult(bundleOf(KEY_ERROR to exception.code))
             }
         }
     }
 
     override fun requestExpressIntegrityToken(bundle: Bundle, callback: IExpressIntegrityServiceCallback?) {
-        Log.d(TAG, "requestExpressIntegrityToken bundle:$bundle")
+        Log.d(TAG, "requestExpressIntegrityToken")
         val callingPackageName = PackageUtils.getAndCheckCallingPackage(context, bundle.getString(KEY_PACKAGE_NAME))
         lifecycleScope.launchWhenCreated {
+            var visitData: PlayIntegrityData? = null
             runCatching {
                 if (callingPackageName == null) {
                     throw StandardIntegrityException(IntegrityErrorCode.INTERNAL_ERROR, "Null packageName.")
@@ -290,7 +291,7 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                     webViewRequestMode = bundle.getInt(KEY_REQUEST_MODE, 0)
                 )
 
-                Log.d(TAG, "requestExpressIntegrityToken session:$expressIntegritySession}")
+                Log.d(TAG, "Requesting standard integrity token")
 
                 if (TextUtils.isEmpty(expressIntegritySession.packageName)) {
                     Log.w(TAG, "packageName is empty.")
@@ -353,7 +354,7 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                     expressIntegrityResponse.encode(), Base64.NO_PADDING or Base64.NO_WRAP or Base64.URL_SAFE
                 )
 
-                Log.d(TAG, "requestExpressIntegrityToken token: $token, sid: ${expressIntegritySession.sessionId}, mode: ${expressIntegritySession.webViewRequestMode}")
+                Log.d(TAG, "Standard integrity token delivered")
                 visitData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "$TAG visited success.", true)
                 callback?.onRequestResult(
                     bundleOf(
@@ -364,16 +365,16 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
                 )
             }.onFailure {
                 val exception = it as? StandardIntegrityException ?: StandardIntegrityException(it.message)
-                Log.w(TAG, "requesting token has failed: code=${exception.code}, message=${exception.message}", exception)
-                visitData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "$TAG visited failed. ${exception.message}")
+                Log.w(TAG, "requesting token has failed: code=${exception.code}")
+                visitData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "$TAG visited failed: code=${exception.code}")
                 callback?.onRequestResult(bundleOf(KEY_ERROR to exception.code))
             }
         }
     }
 
     override fun requestAndShowDialog(bundle: Bundle?, callback: IRequestDialogCallback?) {
-        Log.d(TAG, "requestAndShowDialog bundle:$bundle")
-        callback?.onRequestDialog(bundleOf(KEY_ERROR to IntegrityErrorCode.INTERNAL_ERROR))
+        Log.d(TAG, "requestAndShowDialog")
+        callback?.onRequestDialog(bundleOf(KEY_ERROR to IntegrityErrorCode.API_NOT_AVAILABLE))
     }
 
 }
@@ -383,7 +384,7 @@ private fun IExpressIntegrityServiceCallback.onWarmResult(result: Bundle) {
         Log.e(TAG, "onWarmResult IExpressIntegrityServiceCallback Binder died")
         return
     }
-    Log.d(TAG, "IExpressIntegrityServiceCallback onWarmResult success: $result")
+    Log.d(TAG, "IExpressIntegrityServiceCallback onWarmResult success")
     try {
         onWarmUpExpressIntegrityToken(result)
     } catch (e: Exception) {
@@ -396,7 +397,7 @@ private fun IExpressIntegrityServiceCallback.onRequestResult(result: Bundle) {
         Log.e(TAG, "onRequestResult IExpressIntegrityServiceCallback Binder died")
         return
     }
-    Log.d(TAG, "IExpressIntegrityServiceCallback onRequestResult success: $result")
+    Log.d(TAG, "IExpressIntegrityServiceCallback onRequestResult success")
     try {
         onRequestExpressIntegrityToken(result)
     } catch (e: Exception) {

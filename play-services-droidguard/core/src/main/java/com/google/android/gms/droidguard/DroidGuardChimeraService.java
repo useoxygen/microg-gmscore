@@ -67,7 +67,7 @@ public class DroidGuardChimeraService extends TracingIntentService {
     private final void c(byte[] data) {
         PingData ping = null;
         if (data != null) {
-            Log.d("GmsGuardChimera", "c(" + Base64.encodeToString(data, Base64.NO_WRAP) + ")", new RuntimeException().fillInStackTrace());
+            Log.d("GmsGuardChimera", "DroidGuard ping received");
             try {
                 ping = PingData.ADAPTER.decode(data);
             } catch (Exception e) {
@@ -78,7 +78,7 @@ public class DroidGuardChimeraService extends TracingIntentService {
         }
         try {
             byte[] bytes = b.createPingHandle(getPackageName(), "full", b(""), ping).run(Collections.emptyMap());
-            Log.d("GmsGuardChimera", "c.bytes = " + Base64.encodeToString(bytes, Base64.NO_WRAP));
+            Log.d("GmsGuardChimera", "DroidGuard ping completed");
             Request fastRequest = b.createRequest("fast", getPackageName(), null, bytes);
             b.fetchFromServer("fast", fastRequest);
         } catch (Exception e) {

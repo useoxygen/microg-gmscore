@@ -60,6 +60,9 @@ jobs:
           done
       - name: "Build Cyclon service artifacts"
         run: "./gradlew :play-services-core:assembleMapboxDefault${{ matrix.target }} :vending-app:assembleDefault${{ matrix.target }}"
+      - name: "Test integrity cache and error handling"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :vending-app:testDefaultDebugUnitTest"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
       - name: "Test Cyclon health and license text pagination"
