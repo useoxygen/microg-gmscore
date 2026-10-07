@@ -10,6 +10,8 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
+import android.os.Binder
+import android.os.Process
 import org.microg.gms.gcm.GcmDatabase
 import org.microg.gms.gcm.McsService
 
@@ -35,7 +37,11 @@ class PushStateProvider : ContentProvider() {
     override fun onCreate(): Boolean = true
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        context!!.enforceCallingPermission(PERMISSION, "Reading microG's push state needs $PERMISSION")
+        // The settings UI shares this app's UID, but runs outside :persistent. External callers
+        // still require the signature/privileged permission, including calls to call().
+        if (Binder.getCallingUid() != Process.myUid()) {
+            context!!.enforceCallingPermission(PERMISSION, "Reading microG's push state needs $PERMISSION")
+        }
         return when (method) {
             METHOD_STATE -> state()
             METHOD_APPS -> apps(arg, extras)

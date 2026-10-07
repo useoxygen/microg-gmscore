@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: passive Cyclon Services health navigation and Google enrollment entry.
 /*
  * SPDX-FileCopyrightText: 2020, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -27,6 +28,11 @@ class SettingsFragment : ResourceSettingsFragment() {
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         super.onCreatePreferences(savedInstanceState, rootKey)
+
+        findPreference<Preference>("pref_cyclon_health")!!.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+            findNavController().navigate(R.id.cyclonHealthFragment)
+            true
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val enrollment = Preference(requireContext()).apply {

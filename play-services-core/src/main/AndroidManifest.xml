@@ -1,4 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?><!--
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Modified by Cyclon in 2026: Cyclon Services identity and About screen. -->
+<!--
   ~ Copyright (C) 2013-2019 microG Project Team
   ~
   ~ Licensed under the Apache License, Version 2.0 (the "License");
@@ -208,8 +210,8 @@
         android:allowBackup="true"
         android:forceQueryable="true"
         android:fullBackupOnly="true"
-        android:icon="@mipmap/ic_app"
-        android:roundIcon="@mipmap/ic_app"
+        android:icon="@mipmap/ic_cyclon_services"
+        android:roundIcon="@mipmap/ic_cyclon_services"
         android:label="${appLabel}"
         android:multiArch="true"
         android:networkSecurityConfig="@xml/network_security_config"
@@ -448,6 +450,11 @@
         <!-- People -->
 
         <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false" />
+        <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
+            <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
+            <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/calendar_syncadapter" />
+        </service>
 
         <service android:name="org.microg.gms.people.PeopleService">
             <intent-filter>
@@ -893,11 +900,12 @@
         <!-- microG Settings activity -->
         <activity
             android:name="org.microg.gms.ui.MainSettingsActivity"
+            android:theme="@style/Theme.CyclonServices"
             android:exported="true"
-            android:icon="@mipmap/ic_app_settings"
-            android:label="@string/gms_settings_name"
+            android:icon="@mipmap/ic_cyclon_services"
+            android:label="@string/cyclon_services_name"
             android:process=":ui"
-            android:roundIcon="@mipmap/ic_app_settings"
+            android:roundIcon="@mipmap/ic_cyclon_services"
             android:taskAffinity="org.microg.gms.settings">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -930,9 +938,9 @@
         <!-- microG Settings activity-alias shown in Launcher -->
         <activity-alias
             android:name="org.microg.gms.ui.SettingsActivity"
-            android:icon="@mipmap/ic_app_settings"
-            android:label="@string/gms_settings_name"
-            android:roundIcon="@mipmap/ic_app_settings"
+            android:icon="@mipmap/ic_cyclon_services"
+            android:label="@string/cyclon_services_name"
+            android:roundIcon="@mipmap/ic_cyclon_services"
             android:process=":ui"
             android:targetActivity="org.microg.gms.ui.MainSettingsActivity"
             android:taskAffinity="org.microg.gms.settings">
@@ -945,17 +953,17 @@
 
         <activity
             android:name="org.microg.gms.ui.SettingsDashboardActivity"
-            android:icon="@mipmap/ic_app_settings"
-            android:label="Legacy microG Settings"
+            android:icon="@mipmap/ic_cyclon_services"
+            android:label="Cyclon Services (legacy)"
             android:process=":ui"
-            android:roundIcon="@mipmap/ic_app_settings"
+            android:roundIcon="@mipmap/ic_cyclon_services"
             android:taskAffinity="org.microg.gms.settings" />
 
         <!-- microG Settings embedded in System Settings on SDK 23 and newer -->
         <activity-alias
             android:name="org.microg.gms.ui.SettingsActivityLink"
-            android:icon="@mipmap/ic_app_settings"
-            android:label="@string/gms_settings_name"
+            android:icon="@mipmap/ic_cyclon_services"
+            android:label="@string/cyclon_services_name"
             android:process=":ui"
             android:targetActivity="org.microg.gms.ui.MainSettingsActivity"
             android:taskAffinity="org.microg.gms.settings">
@@ -968,10 +976,10 @@
                 android:value="com.android.settings.category.device" />
             <meta-data
                 android:name="com.android.settings.icon"
-                android:resource="@drawable/ic_app_settings_system" />
+                android:resource="@drawable/ic_cyclon_services_system" />
             <meta-data
                 android:name="com.android.settings.summary"
-                android:resource="@string/gms_settings_summary" />
+                android:resource="@string/cyclon_services_summary" />
         </activity-alias>
 
         <!-- microG Settings activity-alias for Google settings compatibility -->
@@ -999,7 +1007,7 @@
 
         <activity
             android:name="org.microg.gms.ui.GoogleMoreFragment$AsActivity"
-            android:label="@string/gms_settings_name"
+            android:label="@string/cyclon_services_name"
             android:process=":ui"
             android:taskAffinity="org.microg.gms.settings" />
 

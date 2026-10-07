@@ -1,0 +1,31 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Cyclon
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import groovy.json.JsonSlurper
+
+// Upstream gives every commit after a tag the same versionCode. Allocate each
+// Cyclon delivery explicitly so Android can replace the previous signed APKs.
+ext.cyclonValidateVersion = { Map release, int gmsCode, int vendingCode ->
+    def tag = (release.upstreamTag ?: '') =~ /^v0\.\d+\.(\d+)\.(\d+)$/
+    if (release.format != 1 || !tag.matches() || Integer.parseInt(tag.group(2)) != gmsCode) {
+        throw new GradleException('Cyclon version allocation does not match the upstream GMS version')
+    }
+    int upstreamMinor = Integer.parseInt(tag.group(1))
+    def allocations = [
+        [name: 'gmsVersionCode', base: gmsCode * 1000, width: 1000],
+        [name: 'vendingVersionCode', base: 80000000 + vendingCode * 100, width: 100]
+    ]
+    allocations.each { allocation ->
+        def value = release[allocation.name]
+        if (!(value instanceof Integer) || value <= allocation.base + upstreamMinor * 2 ||
+                value >= allocation.base + allocation.width) {
+            throw new GradleException("Invalid Cyclon ${allocation.name} allocation for the pinned upstream release")
+        }
+    }
+    return release
+}
+
+ext.cyclonVersion = { int gmsCode, int vendingCode ->
+    cyclonValidateVersion(new JsonSlurper().parse(rootProject.file('cyclon/version.json')), gmsCode, vendingCode)
+}

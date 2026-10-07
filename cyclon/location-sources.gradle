@@ -1,0 +1,109 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Cyclon
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+
+// Official microG releases add Positon via local.properties, outside the source
+// tree. Recover that public client configuration from a declared, immutable input
+// without checking API tokens into Git or allowing untracked release overrides.
+ext.cyclonLocationSourcesFromApk = { File apk, Map pin ->
+    if (apk.length() != pin.sizeBytes) {
+        throw new GradleException('Upstream location configuration APK size differs from its pin')
+    }
+    def digest = MessageDigest.getInstance('SHA-256')
+    apk.withInputStream { stream ->
+        byte[] buffer = new byte[1024 * 1024]
+        int count
+        while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+    }
+    if (digest.digest().encodeHex().toString() != pin.sha256) {
+        throw new GradleException('Upstream location configuration APK hash differs from its pin')
+    }
+    def configurations = []
+    new ZipFile(apk).withCloseable { zip ->
+        zip.entries().each { entry ->
+            if (!(entry.name ==~ /classes\d*\.dex/)) return
+            byte[] bytes = zip.getInputStream(entry).withCloseable { it.bytes }
+            if (bytes.length < 112 || new String(bytes, 0, 4, StandardCharsets.US_ASCII) != 'dex\n') {
+                throw new GradleException('Invalid DEX in upstream location configuration APK')
+            }
+            def dex = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            int count = dex.getInt(56)
+            int table = dex.getInt(60)
+            if (count < 0 || table < 0 || table + 4L * count > bytes.length) {
+                throw new GradleException('Invalid DEX string table')
+            }
+            for (int i = 0; i < count; i++) {
+                int start = dex.getInt(table + 4 * i)
+                int lengthBytes = 0
+                while (start >= 0 && start < bytes.length && (bytes[start++] & 0x80) != 0) {
+                    if (++lengthBytes >= 5) throw new GradleException('Invalid DEX string length')
+                }
+                if (start <= 0 || start >= bytes.length) throw new GradleException('Invalid DEX string offset')
+                // Only the JSON configuration strings need decoding. Never log
+                // their contents: the upstream endpoint contains a client token.
+                if (bytes[start] != 91 || start + 1 >= bytes.length || bytes[start + 1] != 123) continue
+                int end = start
+                while (end < bytes.length && bytes[end] != 0) end++
+                if (end == bytes.length) throw new GradleException('Unterminated DEX string')
+                def text = new String(bytes, start, end - start, StandardCharsets.UTF_8)
+                if (!text.contains('positon.xyz') || !text.contains('beacondb.net')) continue
+                def rows = new JsonSlurper().parseText(text)
+                if (rows instanceof List && rows.collect { it.id } == ['positon', 'beacondb', 'custom'] &&
+                        rows[0].suggested == true && rows[1].allowContribute == true) {
+                    configurations.add(JsonOutput.toJson(rows))
+                }
+            }
+        }
+    }
+    if (configurations.size() != 1) {
+        throw new GradleException('Expected exactly one upstream Positon/BeaconDB/Custom configuration')
+    }
+    return configurations[0]
+}
+
+ext.cyclonOnlineSources = {
+    def pin = new JsonSlurper().parse(rootProject.file('cyclon/location-sources.json'))
+    def provided = providers.gradleProperty('cyclon.locationSourceApk').orNull
+    File apk = provided != null ? rootProject.file(provided) :
+            rootProject.layout.buildDirectory.file("cyclon/location-sources/${pin.sha256}.apk").get().asFile
+    if (provided == null && !apk.exists()) {
+        if (gradle.startParameter.offline) {
+            throw new GradleException('Pinned upstream location APK is unavailable offline; use -Pcyclon.locationSourceApk=FILE')
+        }
+        apk.parentFile.mkdirs()
+        def temp = File.createTempFile('upstream-location-', '.apk', apk.parentFile)
+        try {
+            def connection = new URL(pin.url).openConnection()
+            connection.connectTimeout = 30000
+            connection.readTimeout = 30000
+            connection.inputStream.withCloseable { stream ->
+                temp.withOutputStream { out ->
+                    byte[] buffer = new byte[1024 * 1024]
+                    long total = 0
+                    int count
+                    while ((count = stream.read(buffer)) != -1) {
+                        total += count
+                        if (total > pin.sizeBytes) {
+                            throw new GradleException('Upstream location configuration download exceeds its pinned size')
+                        }
+                        out.write(buffer, 0, count)
+                    }
+                }
+            }
+            // Validate before admitting a downloaded file to the cache.
+            cyclonLocationSourcesFromApk(temp, pin)
+            java.nio.file.Files.move(temp.toPath(), apk.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            temp.delete()
+        }
+    }
+    return cyclonLocationSourcesFromApk(apk, pin)
+}

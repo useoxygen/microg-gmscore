@@ -158,3 +158,6 @@ android.applicationVariants.all { variant ->
         output.outputFileName = variant.applicationId + "-" + variant.versionCode + variant.versionName.substring(vendingAppVersionName.length()) + ".apk"
     }
 }
+
+// Modified by Cyclon in 2026: bundle resolved runtime license notices.
+apply from: rootProject.file('cyclon/notices.gradle')

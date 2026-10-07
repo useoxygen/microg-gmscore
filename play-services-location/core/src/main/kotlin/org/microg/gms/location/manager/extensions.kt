@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Advertise only implemented location capabilities.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -27,19 +28,12 @@ const val TAG = "LocationManager"
 internal val FEATURES = arrayOf(
     Feature("name_ulr_private", 1),
     Feature("driving_mode", 6),
-    Feature("name_sleep_segment_request", 1),
     Feature("support_context_feature_id", 1),
     Feature("get_current_location", 2),
-    Feature("get_last_activity_feature_id", 1),
     Feature("get_last_location_with_request", 1),
-    Feature("set_mock_mode_with_callback", 1),
-    Feature("set_mock_location_with_callback", 1),
-    Feature("inject_location_with_callback", 1),
     Feature("location_updates_with_callback", 1),
     Feature("user_service_developer_features", 1),
-    Feature("user_service_location_accuracy", 1),
     Feature("user_service_safety_and_emergency", 1),
-    Feature("google_location_accuracy_enabled", 1),
     Feature("geofences_with_callback", 1),
     Feature("use_safe_parcelable_in_intents", 1)
 )
