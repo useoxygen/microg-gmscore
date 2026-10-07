@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Cyclon Services identity and About screen.
 package org.microg.gms.ui;
 
 import android.content.Intent;
@@ -38,7 +39,7 @@ public class MainSettingsActivity extends AppCompatActivity {
                 prefs.getBoolean(FIRST_RUN_PREF, true)) {
             buildAlertDialog(this)
                     .setMessage(R.string.limited_services_dialog_information)
-                    .setTitle(R.string.limited_services_app_name)
+                    .setTitle(R.string.cyclon_services_name)
                     .setPositiveButton(R.string.limited_services_dialog_information_ack, (dialog, id) -> {
                         prefs.edit().putBoolean(FIRST_RUN_PREF, false).apply();
                     })

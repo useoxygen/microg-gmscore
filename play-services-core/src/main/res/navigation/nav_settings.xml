@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified by Cyclon in 2026: Cyclon Services identity and About screen. -->
 <navigation xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -10,7 +11,7 @@
     <fragment
         android:id="@+id/settingsFragment"
         android:name="org.microg.gms.ui.SettingsFragment"
-        android:label="@string/gms_settings_name">
+        android:label="@string/cyclon_services_name">
         <action
             android:id="@+id/openSelfcheck"
             app:destination="@id/selfcheckFragment" />
@@ -201,13 +202,13 @@
     <fragment
         android:id="@+id/googleMoreFragment"
         android:name="org.microg.gms.ui.GoogleMoreFragment"
-        android:label="@string/gms_settings_name" />
+        android:label="@string/cyclon_services_name" />
 
     <!-- About -->
 
     <fragment
         android:id="@+id/aboutFragment"
-        android:name="org.microg.gms.ui.AboutFragment"
+        android:name="org.microg.gms.cyclon.CyclonAboutFragment"
         android:label="@string/prefcat_about"
         tools:layout="@layout/about_root" />
 

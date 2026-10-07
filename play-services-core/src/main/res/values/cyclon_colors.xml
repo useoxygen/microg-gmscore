@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <color name="cyclon_paper">#FAFAF9</color>
+    <color name="cyclon_ink">#171719</color>
+    <color name="cyclon_muted">#5B5B63</color>
+    <color name="cyclon_panel">#E6E6EA</color>
+    <color name="cyclon_line">#DEDEE3</color>
+</resources>

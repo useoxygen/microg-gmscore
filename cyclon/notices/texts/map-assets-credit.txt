@@ -1,0 +1,10 @@
+Bundled microG normal/satellite map styles derive from Mapbox Basic / Mapbox Open Styles, with changes by larma and /e/ foundation. The Stadia variants incorporate OSM Bright snippets, and the bundled Stadia Outdoors style adds microG metadata.
+
+Mapbox Open Styles: Copyright (c) 2014 Mapbox. Style code: BSD-3-Clause; design: CC-BY-3.0; original SVG sprites: CC0-1.0.
+Stadia OSM Bright and Outdoors: style code BSD-3-Clause; design CC-BY-4.0. Attribution: Stadia Maps, Mapbox, larma, /e/ foundation and microG contributors.
+
+https://github.com/mapbox/mapbox-gl-styles/blob/master/LICENSE.md
+https://stadiamaps.com/attribution/
+https://github.com/microg/GmsCore/tree/master/artwork/styles
+
+These credits describe the open styles and original sprites. They do not license Mapbox Outdoors v12, remote vector tiles, satellite imagery, or provider API usage. Those inputs retain their own terms and map-interface attribution.
