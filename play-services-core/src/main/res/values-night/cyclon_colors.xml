@@ -7,4 +7,7 @@
     <color name="cyclon_muted">#8E8E96</color>
     <color name="cyclon_panel">#1C1C20</color>
     <color name="cyclon_line">#242427</color>
+    <!-- Dialogs, sheets and popups. -->
+    <color name="cyclon_raised">#121214</color>
+    <color name="cyclon_error">#D9453D</color>
 </resources>

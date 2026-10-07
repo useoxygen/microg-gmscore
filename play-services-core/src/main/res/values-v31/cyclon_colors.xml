@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- Follows the system theme setting written by the launcher's highlight picker. -->
+    <color name="cyclon_highlight">@android:color/system_accent1_600</color>
+</resources>

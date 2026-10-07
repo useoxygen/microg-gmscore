@@ -6,4 +6,13 @@
         <item name="android:fontFamily">@font/cyclon_manrope_family</item>
         <item name="fontFamily">@font/cyclon_manrope_family</item>
     </style>
+    <style name="TextAppearance.CyclonServices.Title" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="android:fontFamily">@font/cyclon_manrope_family</item>
+        <item name="fontFamily">@font/cyclon_manrope_family</item>
+        <item name="android:textColor">@color/cyclon_ink</item>
+    </style>
+    <style name="TextAppearance.CyclonServices.Toolbar" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:fontFamily">@font/cyclon_manrope_family</item>
+        <item name="fontFamily">@font/cyclon_manrope_family</item>
+    </style>
 </resources>
