@@ -27,7 +27,7 @@
         android:gravity="center_horizontal"
         android:paddingTop="10dp"
         android:text="@string/games_title"
-        android:textColor="?attr/colorPrimary"/>
+        android:textColor="?android:attr/textColorSecondary"/>
 
     <View
         android:id="@+id/no_progress_bar"
@@ -80,7 +80,7 @@
         android:gravity="center_horizontal"
         android:padding="15dp"
         android:text="@string/games_info_title"
-        android:textColor="?attr/colorAccent"
+        android:textColor="?android:attr/textColorPrimary"
         android:textSize="18sp"/>
 
     <TextView
@@ -98,9 +98,9 @@
         android:paddingLeft="10dp"
         android:paddingRight="10dp">
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@android:id/button1"
-            style="?attr/buttonBarButtonStyle"
+            style="@style/Widget.Cyclon.Button.Text.Dialog"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@android:string/ok"/>

@@ -16,7 +16,7 @@
 
 <resources>
 
-    <color name="dialog_border_color">#88CCCCCC</color>
+    <color name="dialog_border_color">@color/cyclon_line</color>
     <color name="material_error">#fff44336</color>
 
     <color name="gm3_ref_palette_error10">#ff410e0b</color>
