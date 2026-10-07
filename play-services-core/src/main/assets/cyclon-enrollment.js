@@ -33,6 +33,12 @@
     input.dispatchEvent(new Event('input', {bubbles: true}));
     input.dispatchEvent(new Event('change', {bubbles: true}));
   }
+  // Google can place the form inside a scrolling page below its overview. Bring
+  // the bound input into view before activating its verification checkbox.
+  if (!window.__cyclonEnrollmentFormVisible) {
+    input.scrollIntoView({block: 'center', inline: 'nearest'});
+    window.__cyclonEnrollmentFormVisible = true;
+  }
   // Google owns the challenge. Try the checkbox once; image challenges stay in place.
   let challenge = false;
   for (const frame of document.querySelectorAll('iframe')) {

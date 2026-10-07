@@ -19,4 +19,7 @@
     <string name="cyclon_enrollment_web_error">Could not open Google registration. Try again or continue setup.</string>
     <string name="cyclon_enrollment_needs_help">Google verification needs attention below. You can continue setup and finish later.</string>
     <string name="cyclon_enrollment_uncertain">Registration was already submitted. Check Google’s result below before trying again.</string>
+    <string name="cyclon_enrollment_assisting">Cyclon is completing Google verification…</string>
+    <string name="cyclon_enrollment_manual">I’ll do this myself</string>
+    <string name="cyclon_enrollment_retry">Try again</string>
 </resources>

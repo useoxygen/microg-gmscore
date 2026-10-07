@@ -9,11 +9,12 @@ const id = '8123456789012345678';
 const account = 'fixture@example.com';
 function fixture() {
   class Input {
-    constructor() { this._value = ''; this.events = []; this.maxLength = 19; }
+    constructor() { this._value = ''; this.events = []; this.maxLength = 19; this.scrolls = 0; }
     get value() { return this._value; } set value(v) { this._value = v; }
     getAttribute() { return '\\d*'; }
     getClientRects() { return [1]; }
     dispatchEvent(e) { this.events.push(e.type); }
+    scrollIntoView() { this.scrolls++; }
   }
   const input = new Input(), response = {value:''};
   const visible = text => ({innerText:text, getClientRects:()=>[1]});
@@ -33,6 +34,7 @@ function fixture() {
 }
 test('preserves 64-bit decimal ID and fills without submitting before verification',()=>{
   const f=fixture(); assert.equal(f.run(),'verification'); assert.equal(f.input.value,id);
+  assert.equal(f.input.scrolls,1); f.run(); assert.equal(f.input.scrolls,1);
   assert.equal(f.input.readOnly,true); assert.equal(f.clicks,0); assert.deepEqual(f.input.events,['input','change']);
 });
 test('explicit admission submits once; repeated polls cannot register twice',()=>{
@@ -55,7 +57,7 @@ test('saved IDs can omit input padding without losing any 64-bit precision',()=>
 test('different account, lookalike origin and invalid IDs cannot write',()=>{
   const f=fixture(); f.label='Google Account: Other (other@example.com)'; assert.equal(f.run(true),'account_mismatch');
   f.location.origin='https://www.google.com.attacker.example'; assert.equal(f.run(true),'outside');
-  f.location.origin='https://www.google.com'; assert.equal(f.run(true,'0'.repeat(19)),'invalid_id'); assert.equal(f.clicks,0);
+  f.location.origin='https://www.google.com'; assert.equal(f.run(true,'0'.repeat(19)),'invalid_id'); assert.equal(f.clicks,0); assert.equal(f.input.scrolls,0);
 });
 test('checkbox is attempted once and failures stay interactive',()=>{
   const f=fixture(); let clicked=0;

@@ -6,6 +6,11 @@ import android.accounts.AccountManager
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
+import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicBoolean
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -40,6 +46,7 @@ class EnrollmentActivity : ComponentActivity() {
     private var status by mutableStateOf(R.string.cyclon_enrollment_intro)
     private var busy by mutableStateOf(false)
     private var browser by mutableStateOf<WebView?>(null)
+    private var registrationPage by mutableStateOf(false)
     private var accounts by mutableStateOf<List<Account>>(emptyList())
     private var completed by mutableStateOf(false)
     private var job: Job? = null
@@ -49,6 +56,13 @@ class EnrollmentActivity : ComponentActivity() {
     private var canSubmit = true
     private var pollStarted = 0L
     private var script = ""
+    private var challengeScript = ""
+    private var helper by mutableStateOf(false)
+    private var resumed = false
+    private var challengeSince = 0L
+    private var revision = ""
+    private var revisionAt = 0L
+    private var challengeFingerprint = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,29 +71,40 @@ class EnrollmentActivity : ComponentActivity() {
             Settings.Secure.getInt(contentResolver, "user_setup_complete", 0) != 0 &&
             applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) { finish(); return }
         script = assets.open("cyclon-enrollment.js").bufferedReader().use { it.readText() }
+        challengeScript = assets.open("cyclon-challenge.js").bufferedReader().use { it.readText() }
+        val fromCore = callingPackage == "ai.cyclon.core" && intent.component?.className == "org.microg.gms.cyclon.SetupEnrollment"
+        helper = intent.getBooleanExtra("cyclon.assist_verification", false) && fromCore
         setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF202020), onPrimary = Color.White,
+                surface = Color.White, background = Color.White)) {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text(stringResource(R.string.cyclon_enrollment_title), style = MaterialTheme.typography.headlineMedium)
-                        Text(stringResource(status))
-                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (browser == null || registrationPage || !busy && status != R.string.cyclon_enrollment_signin) Text(stringResource(status))
+                        if (busy && (browser == null || registrationPage)) LinearProgressIndicator(Modifier.fillMaxWidth())
                         browser?.let { view -> AndroidView(factory = { view }, modifier = Modifier.fillMaxWidth().weight(1f)) }
                         if (accounts.isNotEmpty() && browser == null) {
                             for (account in accounts) Button(onClick = { openRegistration(account) }, enabled = !busy) { Text(account.name) }
                         } else if (browser == null && !completed) {
                             Button(onClick = { prepare() }, enabled = !busy) { Text(stringResource(R.string.cyclon_enrollment_connect)) }
                         }
-                        if (browser != null && !completed && !busy) TextButton(onClick = { resumeRegistration() }) {
-                            Text(stringResource(R.string.cyclon_enrollment_check))
-                        }
-                        TextButton(onClick = { finishSetup() }) {
-                            Text(stringResource(if (completed) R.string.cyclon_enrollment_continue else R.string.cyclon_enrollment_later))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            if (browser != null && status == R.string.cyclon_enrollment_web_error) TextButton(onClick = { retryRegistration() }) {
+                                Text(stringResource(R.string.cyclon_enrollment_retry))
+                            } else if (helper && browser != null && registrationPage && !completed) TextButton(onClick = { helper = false; revision = ""; status = R.string.cyclon_enrollment_challenge }) {
+                                Text(stringResource(R.string.cyclon_enrollment_manual))
+                            } else if (browser != null && registrationPage && !completed && !busy) TextButton(onClick = { resumeRegistration() }) {
+                                Text(stringResource(R.string.cyclon_enrollment_check))
+                            }
+                            TextButton(onClick = { finishSetup() }) {
+                                Text(stringResource(if (completed) R.string.cyclon_enrollment_continue else R.string.cyclon_enrollment_later))
+                            }
                         }
                     }
                 }
             }
         }
+        if (fromCore && intent.getBooleanExtra("cyclon.start_connection", false)) prepare()
     }
 
     private fun prepare() {
@@ -169,7 +194,14 @@ class EnrollmentActivity : ComponentActivity() {
         view.webViewClient = object : WebViewClient() {
             private fun blocks(uri: Uri, mainFrame: Boolean): Boolean {
                 val blocked = !allowed(uri)
-                if (blocked && mainFrame) { busy = false; status = R.string.cyclon_enrollment_web_error }
+                if (blocked && mainFrame) {
+                    failBrowser()
+                    if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                        val host = uri.host?.takeIf { it in setOf("www.google.com", "gds.google.com", "myaccount.google.com", "accounts.youtube.com") } ?: "other"
+                        val path = uri.path?.takeIf { it in setOf("/accounts/SetSID", "/accounts/SetOSID", "/web/homeaddress", "/web/workaddress", "/web/recoveryoptions", "/web/landing", "/web/finish") } ?: "other"
+                        Log.w("CyclonEnrollment", "Blocked sign-in navigation: $host $path")
+                    }
+                }
                 return blocked
             }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
@@ -177,20 +209,24 @@ class EnrollmentActivity : ComponentActivity() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = blocks(Uri.parse(url), true)
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 busy = true
+                registrationPage = isRegistration(url)
+                status = if (registrationPage) R.string.cyclon_enrollment_verifying else R.string.cyclon_enrollment_signin
                 secureWindow(!isRegistration(url))
             }
             override fun onPageFinished(view: WebView, url: String?) {
                 busy = false
+                registrationPage = isRegistration(url)
                 if (isRegistration(url)) {
                     secureWindow(false)
                 }
-                status = if (isRegistration(url)) R.string.cyclon_enrollment_verifying else R.string.cyclon_enrollment_signin
+                if (status != R.string.cyclon_enrollment_web_error)
+                    status = if (isRegistration(url)) R.string.cyclon_enrollment_verifying else R.string.cyclon_enrollment_signin
             }
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
-                handler.cancel(); busy = false; status = R.string.cyclon_enrollment_web_error
+                handler.cancel(); failBrowser()
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) { busy = false; status = R.string.cyclon_enrollment_web_error }
+                if (request.isForMainFrame) failBrowser()
             }
         }
         // Do not clear all microG cookies: other account flows can use the same cookie store.
@@ -199,6 +235,19 @@ class EnrollmentActivity : ComponentActivity() {
         browser = view
         view.loadUrl(authUrl)
         resumeRegistration()
+    }
+
+    private fun failBrowser() {
+        helper = false; revision = ""; busy = false; status = R.string.cyclon_enrollment_web_error
+        job?.cancel()
+    }
+
+    private fun retryRegistration() {
+        job?.cancel(); helper = false; revision = ""
+        browser?.destroy(); browser = null
+        val account = AccountManager.get(this).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+            .singleOrNull { it.name == accountName }
+        if (account != null) openRegistration(account) else prepare()
     }
 
     private fun resumeRegistration() {
@@ -234,11 +283,78 @@ class EnrollmentActivity : ComponentActivity() {
                     completed = true; busy = false; status = R.string.cyclon_enrollment_done
                     job?.cancel(); view.stopLoading(); browser = null; view.destroy()
                 }
-                "challenge" -> { busy = false; status = R.string.cyclon_enrollment_challenge }
+                "challenge" -> {
+                    if (challengeSince == 0L) challengeSince = android.os.SystemClock.elapsedRealtime()
+                    if (android.os.SystemClock.elapsedRealtime() - challengeSince > 120_000) helper = false
+                    busy = helper
+                    status = if (helper) R.string.cyclon_enrollment_assisting else R.string.cyclon_enrollment_challenge
+                }
                 "verification" -> { busy = false; status = R.string.cyclon_enrollment_verifying }
                 "rejected" -> { busy = false; status = R.string.cyclon_enrollment_needs_help; job?.cancel() }
                 "account_mismatch" -> { busy = false; status = R.string.cyclon_enrollment_choose_web; job?.cancel() }
             }
+        }
+    }
+
+    override fun onResume() { super.onResume(); resumed = true; EnrollmentChallengeProvider.current = WeakReference(this) }
+    override fun onPause() { resumed = false; revision = ""; super.onPause() }
+
+    internal fun challengeRequest(method: String, extras: Bundle?, active: AtomicBoolean, reply: (Bundle) -> Unit) {
+        fun result(phase: String) = reply(Bundle().apply { putString("state", JSONObject().put("phase", phase).toString()) })
+        val view = browser
+        fun eligible() = active.get() && helper && resumed && !isFinishing && !isDestroyed && !completed &&
+            browser === view && view != null && isRegistration(view.url) && window.decorView.hasWindowFocus() &&
+            window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0
+        if (!eligible() || view == null) { result("inactive"); return }
+        if (method == "stop") {
+            helper = false; revision = ""; busy = false; status = R.string.cyclon_enrollment_challenge
+            result("inactive"); return
+        }
+        val observation = challengeScript.replace("__ACTION__", "null").replace("__TILES__", "[]").replace("__EXPECTED__", "null").replace("__ACCOUNT__", JSONObject.quote(accountName))
+        view.evaluateJavascript(observation) { raw ->
+            if (!eligible()) { result("inactive"); return@evaluateJavascript }
+            val state = runCatching { JSONObject(raw) }.getOrNull()
+            if (state?.optString("phase") != "challenge") { result("waiting"); return@evaluateJavascript }
+            try {
+                val bounds = state.getJSONArray("bounds"); val viewport = state.getJSONArray("viewport")
+                val scale = view.width.toDouble() / viewport.getDouble(0)
+                val rawLeft = (bounds.getDouble(0) * scale).toInt(); val rawTop = (bounds.getDouble(1) * scale).toInt()
+                val rawRight = (bounds.getDouble(2) * scale).toInt(); val rawBottom = (bounds.getDouble(3) * scale).toInt()
+                // Google's iframe border can extend one CSS pixel beyond its viewport. Permit only
+                // that rounding/border margin; a clipped puzzle still cannot leave this process.
+                val border = kotlin.math.ceil(2 * scale).toInt()
+                require(rawLeft >= -border && rawTop >= -border && rawRight <= view.width + border && rawBottom <= view.height + border)
+                val left = rawLeft.coerceAtLeast(0); val top = rawTop.coerceAtLeast(0)
+                val width = rawRight.coerceAtMost(view.width) - left
+                val height = rawBottom.coerceAtMost(view.height) - top
+                require(width in 100..1600 && height in 100..2000)
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap); canvas.translate(-left.toFloat(), -top.toFloat()); view.draw(canvas)
+                val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray(); bitmap.recycle()
+                require(bytes.size in 1..512*1024)
+                val fingerprint = state.getString("fingerprint")
+                val fresh = MessageDigest.getInstance("SHA-256").digest(bytes + fingerprint.toByteArray()).joinToString("") { "%02x".format(it) }
+                if (method == "observe") {
+                    revision = fresh; revisionAt = android.os.SystemClock.elapsedRealtime(); challengeFingerprint = fingerprint
+                    reply(Bundle().apply {
+                        putString("state", JSONObject().put("phase", "challenge").put("revision", fresh).put("tileCount", state.getInt("tileCount")).put("selected", state.getJSONArray("selected")).toString())
+                        putByteArray("image", bytes)
+                    })
+                } else {
+                    val tiles = extras?.getIntArray("tiles") ?: intArrayOf()
+                    val action = extras?.getString("action")
+                    if (extras?.getString("revision") != revision || fresh != revision || fingerprint != challengeFingerprint ||
+                        android.os.SystemClock.elapsedRealtime() - revisionAt > 30_000 || !eligible()) { result("stale"); return@evaluateJavascript }
+                    require(action in setOf("tiles", "verify") && tiles.size <= 16)
+                    // Consume before the effect. An ambiguous Binder response cannot replay this observation.
+                    revision = ""
+                    val command = challengeScript.replace("__ACTION__", JSONObject.quote(action)).replace("__TILES__", org.json.JSONArray(tiles.toList()).toString()).replace("__EXPECTED__", JSONObject.quote(fingerprint)).replace("__ACCOUNT__", JSONObject.quote(accountName))
+                    view.evaluateJavascript(command) { actionResult ->
+                        val phase = runCatching { JSONObject(actionResult).getString("phase") }.getOrDefault("unknown")
+                        result(phase.takeIf { it in setOf("acted", "stale", "refused") } ?: "unknown")
+                    }
+                }
+            } catch (_: Exception) { result("unavailable") }
         }
     }
 
@@ -253,7 +369,7 @@ class EnrollmentActivity : ComponentActivity() {
         if ((window.attributes.flags and flag != 0) == secure) return
         if (secure) window.addFlags(flag) else window.clearFlags(flag)
     }
-    override fun onDestroy() { job?.cancel(); browser?.destroy(); browser = null; super.onDestroy() }
+    override fun onDestroy() { helper = false; revision = ""; job?.cancel(); browser?.destroy(); browser = null; super.onDestroy() }
 
     companion object {
         private const val REGISTRATION = "https://www.google.com/android/uncertified/?hl=en"
