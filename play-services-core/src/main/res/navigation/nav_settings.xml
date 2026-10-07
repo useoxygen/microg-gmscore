@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modified by Cyclon in 2026: Cyclon Services identity and About screen. -->
+<!-- Modified by Cyclon in 2026: Cyclon Services identity, health and About screens. -->
 <navigation xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -40,6 +40,11 @@
             android:id="@+id/openAbout"
             app:destination="@id/aboutFragment" />
     </fragment>
+
+    <fragment
+        android:id="@+id/cyclonHealthFragment"
+        android:name="org.microg.gms.cyclon.CyclonHealthFragment"
+        android:label="@string/cyclon_health_title" />
 
     <!-- Self-Check -->
 
