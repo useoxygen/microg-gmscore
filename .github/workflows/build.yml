@@ -58,9 +58,11 @@ jobs:
               echo "Matcher configured: ${NAME:?}"
             fi
           done
-      - name: "Execute Gradle assemble"
-        run: "./gradlew assemble${{ matrix.target }}"
+      - name: "Build Cyclon service artifacts"
+        run: "./gradlew :play-services-core:assembleMapboxDefault${{ matrix.target }} :vending-app:assembleDefault${{ matrix.target }}"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
+      - name: "Test Cyclon release inputs and notices"
+        run: "./gradlew -p cyclon/tests testVersionAllocation testNotices"
       - name: "Execute Gradle lint"
-        run: "./gradlew lint${{ matrix.target }}"
+        run: "./gradlew :play-services-core:lintMapboxDefault${{ matrix.target }} :vending-app:lintDefault${{ matrix.target }}"

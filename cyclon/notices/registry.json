@@ -1,0 +1,2382 @@
+{
+  "format": 1,
+  "method": "Reviewed Maven POM and parent declarations; Jackson uses its own artifact LICENSE. Native dependency and map asset review is tracked separately in README.md.",
+  "bundled": [
+    {
+      "title": "microG and Cyclon",
+      "license": "Apache-2.0",
+      "texts": [
+        "microg-cyclon-copyright.txt",
+        "Apache-2.0.txt"
+      ]
+    },
+    {
+      "title": "Manrope",
+      "license": "OFL-1.1",
+      "texts": [
+        "manrope-LICENSE.txt"
+      ]
+    },
+    {
+      "title": "Space Mono",
+      "license": "OFL-1.1",
+      "texts": [
+        "space_mono-LICENSE.txt"
+      ]
+    },
+    {
+      "title": "Original microG icon resources",
+      "license": "CC-BY-SA-4.0",
+      "texts": [
+        "microg-icon-credit.txt",
+        "CC-BY-SA-4.0.txt"
+      ]
+    }
+  ],
+  "dependencies": {
+    "androidx.activity:activity-compose:1.8.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.activity:activity-compose:1.8.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.activity:activity-ktx:1.8.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.activity:activity-ktx:1.8.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.activity:activity:1.8.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.activity:activity:1.8.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.annotation:annotation-experimental:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.annotation:annotation-experimental:1.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.annotation:annotation-jvm:1.9.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.appcompat:appcompat-resources:1.6.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.appcompat:appcompat:1.6.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.arch.core:core-common:2.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.arch.core:core-runtime:2.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.autofill:autofill:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.biometric:biometric:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.browser:browser:1.8.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.camera:camera-camera2:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.camera:camera-core:1.3.0": {
+      "licenses": [
+        "Apache-2.0",
+        "BSD-3-Clause"
+      ],
+      "texts": [
+        "Apache-2.0.txt",
+        "libyuv.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt",
+        "https://chromium.googlesource.com/libyuv/libyuv/+/refs/heads/main/README.chromium"
+      ]
+    },
+    "androidx.camera:camera-lifecycle:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.camera:camera-video:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.camera:camera-view:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.cardview:cardview:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.collection:collection-jvm:1.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.collection:collection-ktx:1.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.animation:animation-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.animation:animation-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.animation:animation-core-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.animation:animation-core-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.animation:animation-graphics-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.foundation:foundation-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.foundation:foundation-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.foundation:foundation-layout-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.foundation:foundation-layout-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material3:material3-android:1.2.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material3:material3:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material:material-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material:material-icons-core-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material:material-icons-core:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material:material-ripple-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.material:material-ripple:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.runtime:runtime-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.runtime:runtime-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.runtime:runtime-saveable-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.runtime:runtime-saveable-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-geometry-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-geometry-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-graphics-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-graphics-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-text-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-text-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-tooling-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-tooling-data-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-tooling-preview-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-tooling-preview-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-unit-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-unit-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-util-android:1.6.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.compose.ui:ui-util-android:1.6.8": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.concurrent:concurrent-futures:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.constraintlayout:constraintlayout-solver:2.0.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.constraintlayout:constraintlayout:2.0.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.coordinatorlayout:coordinatorlayout:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.core:core-ktx:1.12.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.core:core:1.12.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.credentials:credentials:1.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.cursoradapter:cursoradapter:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.customview:customview-poolingcontainer:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.customview:customview:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.databinding:databinding-adapters:8.13.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.databinding:databinding-common:8.13.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.databinding:databinding-ktx:8.13.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.databinding:databinding-runtime:8.13.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.databinding:viewbinding:8.13.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.datastore:datastore-core:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.datastore:datastore:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.documentfile:documentfile:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.drawerlayout:drawerlayout:1.1.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.dynamicanimation:dynamicanimation:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.emoji2:emoji2-views-helper:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.emoji2:emoji2:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.exifinterface:exifinterface:1.3.6": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.exifinterface:exifinterface:1.3.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.fragment:fragment-ktx:1.6.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.fragment:fragment:1.6.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.interpolator:interpolator:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.legacy:legacy-support-core-utils:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-common-java8:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-common:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-livedata-core-ktx:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-livedata-core:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-livedata-ktx:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-livedata:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-process:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-runtime:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-service:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.lifecycle:lifecycle-viewmodel:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.loader:loader:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.localbroadcastmanager:localbroadcastmanager:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.media:media:1.6.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.mediarouter:mediarouter:1.6.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.multidex:multidex:2.0.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-common-ktx:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-common:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-fragment-ktx:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-fragment:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-runtime-ktx:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-runtime:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-ui-ktx:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.navigation:navigation-ui:2.7.7": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.palette:palette:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.preference:preference-ktx:1.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.preference:preference:1.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.print:print:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.profileinstaller:profileinstaller:1.3.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.recyclerview:recyclerview:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.resourceinspection:resourceinspection-annotation:1.0.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.room:room-common:2.2.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.room:room-runtime:2.2.5": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.savedstate:savedstate-ktx:1.2.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.savedstate:savedstate:1.2.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.slidingpanelayout:slidingpanelayout:1.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.sqlite:sqlite-framework:2.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.sqlite:sqlite:2.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.startup:startup-runtime:1.2.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.tracing:tracing:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.transition:transition:1.4.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.vectordrawable:vectordrawable-animated:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.vectordrawable:vectordrawable:1.1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.versionedparcelable:versionedparcelable:1.1.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.viewpager2:viewpager2:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.viewpager:viewpager:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.webkit:webkit:1.10.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.window:window:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.work:work-runtime-ktx:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "androidx.work:work-runtime:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.android.volley:volley:1.2.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.caverock:androidsvg-aar:1.4": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.github.peteroupc:numbers:1.8.2": {
+      "licenses": [
+        "CC0-1.0"
+      ],
+      "texts": [
+        "CC0-1.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.creativecommons.org/publicdomain/zero/1.0/"
+      ]
+    },
+    "com.google.accompanist:accompanist-drawablepainter:0.30.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.accompanist:accompanist-drawablepainter:0.32.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.accompanist:accompanist-systemuicontroller:0.28.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.android.material:material:1.11.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.auto.value:auto-value-annotations:1.6.3": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.code.findbugs:jsr305:3.0.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.code.gson:gson:2.10.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.crypto.tink:tink-android:1.13.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.errorprone:error_prone_annotations:2.22.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.errorprone:error_prone_annotations:2.41.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.guava:failureaccess:1.0.3": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.guava:guava:33.5.0-android": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.guava:listenablefuture:1.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.j2objc:j2objc-annotations:3.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.google.protobuf:protobuf-java:2.6.0": {
+      "licenses": [
+        "BSD-3-Clause"
+      ],
+      "texts": [
+        "protobuf-2.6.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.opensource.org/licenses/bsd-license.php"
+      ]
+    },
+    "com.google.zxing:core:3.5.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.jakewharton.timber:timber:5.0.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.mapbox.mapboxsdk:mapbox-android-gestures:0.7.0": {
+      "licenses": [
+        "BSD-2-Clause"
+      ],
+      "texts": [
+        "mapbox-gestures-0.7.0.txt"
+      ],
+      "metadataSources": [
+        "https://opensource.org/licenses/BSD-2-Clause"
+      ]
+    },
+    "com.squareup.okhttp3:okhttp-android:5.3.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.squareup.okio:okio-jvm:3.17.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "com.squareup.wire:wire-grpc-client-jvm:6.4.6": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0"
+      ]
+    },
+    "com.squareup.wire:wire-runtime-jvm:6.4.6": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0"
+      ]
+    },
+    "com.upokecenter:cbor:4.5.2": {
+      "licenses": [
+        "CC0-1.0"
+      ],
+      "texts": [
+        "CC0-1.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.creativecommons.org/publicdomain/zero/1.0/"
+      ]
+    },
+    "de.hdodenhof:circleimageview:1.3.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "info.armills.chromecast-java-api-v2:api-v2-raw-request:0.10.4-raw-request-1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-base:2.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-base:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-compose-base:2.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-compose-base:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-compose:2.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-compose:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil-svg:2.2.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil:2.4.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.coil-kt:coil:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-client-core-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-client-okhttp-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-events-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-http-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-io-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-serialization-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-utils-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-websocket-serialization-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "io.ktor:ktor-websockets-jvm:2.3.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "javax.jmdns:jmdns:3.4.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.codehaus.jackson:jackson-core-asl:1.9.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "META-INF/LICENSE and META-INF/NOTICE in cached runtime JAR"
+      ]
+    },
+    "org.codehaus.jackson:jackson-mapper-asl:1.9.13": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "META-INF/LICENSE and META-INF/NOTICE in cached runtime JAR"
+      ]
+    },
+    "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlin:kotlin-stdlib:2.2.21": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.10.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains.kotlinx:kotlinx-coroutines-slf4j:1.10.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jetbrains:annotations:23.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.jspecify:jspecify:1.0.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.maplibre.gl:android-plugin-annotation-v9:2.0.1": {
+      "licenses": [
+        "BSD-2-Clause"
+      ],
+      "texts": [
+        "maplibre-annotation-2.0.1.txt"
+      ],
+      "metadataSources": [
+        "https://opensource.org/licenses/BSD-2-Clause"
+      ]
+    },
+    "org.maplibre.gl:android-sdk-geojson:5.9.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.maplibre.gl:android-sdk-turf:5.9.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.maplibre.gl:android-sdk:10.2.0": {
+      "licenses": [
+        "BSD-2-Clause"
+      ],
+      "texts": [
+        "maplibre-native-10.2.0.txt"
+      ],
+      "metadataSources": [
+        "https://opensource.org/licenses/BSD-2-Clause"
+      ]
+    },
+    "org.microg.gms:conscrypt-gmscore:2.5.2": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.microg:address-formatter:0.3.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.microg:cronet-common:102.5005.125": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.microg:cronet-native:102.5005.125": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.microg:wearable:0.1.1": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.opencv:opencv:4.11.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://github.com/opencv/opencv/blob/master/LICENSE"
+      ]
+    },
+    "org.slf4j:slf4j-api:1.7.36": {
+      "licenses": [
+        "MIT"
+      ],
+      "texts": [
+        "slf4j-1.7.36.txt"
+      ],
+      "metadataSources": [
+        "http://www.opensource.org/licenses/mit-license.php"
+      ]
+    },
+    "org.slf4j:slf4j-api:2.1.0-alpha1": {
+      "licenses": [
+        "MIT"
+      ],
+      "texts": [],
+      "metadataSources": [
+        "http://www.opensource.org/licenses/mit-license.php"
+      ]
+    },
+    "org.yaml:snakeyaml:1.33": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    }
+  }
+}

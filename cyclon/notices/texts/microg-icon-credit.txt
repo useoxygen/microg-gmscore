@@ -1,0 +1,6 @@
+Original microG icon resources
+Copyright 2023 microG Project Team
+CC-BY-SA-4.0
+Source: https://github.com/microg/GmsCore
+
+These unmodified upstream resources are retained in source; Cyclon launcher artwork is independently authored Cyclon artwork.

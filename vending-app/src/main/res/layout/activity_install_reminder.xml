@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified by Cyclon in 2026: Companion branding. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -33,7 +34,7 @@
         android:id="@+id/tv_description"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/app_install_allow_to_install_third_app"
+        android:text="@string/cyclon_companion_install_permission"
         android:textSize="16sp"
         android:textStyle="bold"
         android:layout_marginHorizontal="24dp" />
@@ -73,7 +74,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/app_install_refuse_permission_remind_sub"
+        android:text="@string/cyclon_companion_permission_hint"
         android:textSize="14sp"
         android:layout_marginHorizontal="24dp"
         android:layout_marginBottom="24dp" />
