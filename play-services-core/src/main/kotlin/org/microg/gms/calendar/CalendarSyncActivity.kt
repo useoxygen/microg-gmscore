@@ -22,7 +22,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.*
-import org.microg.gms.cyclon.CyclonTheme
+import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.CyclonOutlinedButton
+import org.microg.gms.cyclon.CyclonTextButton
 import java.util.concurrent.TimeUnit
 import java.text.DateFormat
 import java.util.Date
@@ -41,10 +43,10 @@ class CalendarSyncActivity : ComponentActivity() {
     }
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        setContent { CyclonTheme { Surface(Modifier.fillMaxSize()) {
+        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
             LaunchedEffect(Unit) { while (true) { delay(3_000); revision++ } }
             Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(onClick = { finish() }) { Text(stringResource(R.string.cyclon_back)) }
+                CyclonTextButton(onClick = { finish() }) { Text(stringResource(R.string.cyclon_back)) }
                 Text(stringResource(R.string.cyclon_calendar_title), style = MaterialTheme.typography.headlineSmall)
                 Text(stringResource(R.string.cyclon_calendar_description))
                 if (failed) Text(stringResource(R.string.cyclon_calendar_enable_failed))
@@ -79,8 +81,8 @@ class CalendarSyncActivity : ComponentActivity() {
                             else -> R.string.contacts_sync_ready
                         }))
                         if (prefs.lastSuccess > 0) Text(stringResource(R.string.cyclon_health_last_success, DateFormat.getDateTimeInstance().format(Date(prefs.lastSuccess))))
-                        OutlinedButton(onClick = { prefs.refresh(); revision++ }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_refresh)) }
-                        TextButton(onClick = {
+                        CyclonOutlinedButton(onClick = { prefs.refresh(); revision++ }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_refresh)) }
+                        CyclonTextButton(onClick = {
                             pending = account; busy = true; failed = false
                             if (permissions.all { ContextCompat.checkSelfPermission(this@CalendarSyncActivity, it) == PackageManager.PERMISSION_GRANTED }) authorize(account)
                             else permissionRequest.launch(permissions)
