@@ -19,6 +19,8 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     implementation project(':people-sync')
     implementation project(':people-sync-android')
+    implementation project(':calendar-sync')
+    implementation project(':calendar-sync-android')
     implementation "com.squareup.okhttp3:okhttp:$okHttpVersion"
     implementation "com.squareup.wire:wire-runtime:$wireVersion"
     implementation "de.hdodenhof:circleimageview:1.3.0"

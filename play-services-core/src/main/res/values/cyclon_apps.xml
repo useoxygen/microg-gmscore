@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="cyclon_apps_title">App troubleshooting</string>
+    <string name="cyclon_apps_description">Settings and recorded observations only. This screen does not send a test notification, sign in, reconnect, or request a position. Tap a finding to open its recovery settings.</string>
+    <string name="cyclon_apps_choose">Choose an app</string>
+    <string name="cyclon_apps_choose_description">Use the Android app picker to select an app to review.</string>
+    <string name="cyclon_apps_push_list">All cloud messaging apps</string>
+    <string name="cyclon_apps_push_list_description">Apps without a launcher can be reviewed from their cloud messaging settings.</string>
+    <string name="cyclon_apps_notifications">Notification permission</string>
+    <string name="cyclon_apps_signin">Google sign-in</string>
+    <string name="cyclon_apps_last_delivery">Last recorded push delivery</string>
+    <string name="cyclon_apps_open">Open app to test</string>
+    <string name="cyclon_apps_test_description">Opening the app does not prove it works. Complete the relevant action to check its result.</string>
+    <string name="cyclon_app_reason_unreadable">Could not verify this setting</string>
+    <string name="cyclon_app_reason_app_off">App is disabled or suspended</string>
+    <string name="cyclon_app_reason_push_off">Cloud messaging is off</string>
+    <string name="cyclon_app_reason_app_blocked">Registration is blocked for this app</string>
+    <string name="cyclon_app_reason_disconnected">Registration exists; push is disconnected</string>
+    <string name="cyclon_app_reason_authorization">Recorded registration authorization error</string>
+    <string name="cyclon_app_reason_network">Recorded registration transport error</string>
+    <string name="cyclon_app_reason_registration_error">Recorded app registration error</string>
+    <string name="cyclon_app_reason_registered">Registered and push connected; delivery is not tested</string>
+    <string name="cyclon_app_reason_no_registration">No recorded registration. Open the app if it uses cloud messaging.</string>
+    <string name="cyclon_app_reason_notification_allowed">Permission allowed. Channel settings and actual display are not tested.</string>
+    <string name="cyclon_app_reason_notification_denied">Permission denied. Review it if this app should show notifications.</string>
+    <string name="cyclon_app_reason_location_ready">Location is configured and app permission is allowed; no position was measured.</string>
+    <string name="cyclon_app_reason_location_permission">Location permission needs review if this app uses location.</string>
+    <string name="cyclon_app_reason_location_off">Network location or system location is off.</string>
+    <string name="cyclon_app_reason_not_tested">Not tested. An account in settings does not prove this app can sign in.</string>
+    <string name="cyclon_app_recovery_app_settings">Open Android app settings</string>
+    <string name="cyclon_app_recovery_push_settings">Open cloud messaging settings</string>
+    <string name="cyclon_app_recovery_push_app_settings">Open this app’s cloud messaging settings</string>
+    <string name="cyclon_app_recovery_location_settings">Open location settings</string>
+    <string name="cyclon_app_recovery_accounts">Open account settings</string>
+    <string name="cyclon_app_recovery_open_app">Open app to test</string>
+    <string name="cyclon_apps_unavailable">This app or settings screen is unavailable.</string>
+</resources>

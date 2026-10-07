@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Modified by Cyclon in 2026: Opt-in native Calendar sync entry. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
@@ -30,6 +31,10 @@
             app:iconSpaceReserved="false">
             <intent android:targetClass="org.microg.gms.people.ContactsSyncActivity"
                 android:targetPackage="@string/package_id" />
+        </Preference>
+        <Preference android:title="@string/cyclon_calendar_title"
+            android:summary="@string/cyclon_calendar_description" app:iconSpaceReserved="false">
+            <intent android:targetClass="org.microg.gms.calendar.CalendarSyncActivity" android:targetPackage="@string/package_id" />
         </Preference>
         <SwitchPreferenceCompat
             android:persistent="false"

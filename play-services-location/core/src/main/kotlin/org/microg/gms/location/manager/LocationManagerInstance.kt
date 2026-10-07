@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Geofencing and failed unsupported-API callbacks.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -40,6 +41,7 @@ import kotlinx.coroutines.*
 import org.microg.gms.location.hasNetworkLocationServiceBuiltIn
 import org.microg.gms.location.settings.*
 import org.microg.gms.utils.warnOnTransactionIssues
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LocationManagerInstance(
     private val context: Context,
@@ -52,15 +54,33 @@ class LocationManagerInstance(
     // region Geofences
 
     override fun addGeofences(geofencingRequest: GeofencingRequest?, pendingIntent: PendingIntent?, callbacks: IGeofencerCallbacks?) {
-        Log.d(TAG, "Not yet implemented: addGeofences by ${getClientIdentity().packageName}")
+        val owner = getClientIdentity()
+        lifecycleScope.launchWhenStarted {
+            val status = try { locationManager.geofenceManager.add(owner, geofencingRequest, pendingIntent) }
+                catch (_: Exception) { GeofenceStatusCodes.GEOFENCE_NOT_AVAILABLE }
+            runCatching { callbacks?.onAddGeofenceResult(status, geofencingRequest?.geofences?.map { it.requestId }?.toTypedArray()) }
+        }
     }
 
     override fun removeGeofences(request: RemoveGeofencingRequest?, callback: IGeofencerCallbacks?) {
-        Log.d(TAG, "Not yet implemented: removeGeofences by ${getClientIdentity().packageName}")
+        val owner = getClientIdentity()
+        lifecycleScope.launchWhenStarted {
+            val status = try { locationManager.geofenceManager.remove(owner, request) }
+                catch (_: Exception) { GeofenceStatusCodes.GEOFENCE_NOT_AVAILABLE }
+            runCatching {
+                if (request?.pendingIntent != null) callback?.onRemoveGeofencesByPendingIntentResult(status, request.pendingIntent)
+                else callback?.onRemoveGeofencesByRequestIdsResult(status, request?.geofenceIds?.toTypedArray())
+            }
+        }
     }
 
     override fun removeAllGeofences(callbacks: IGeofencerCallbacks?, packageName: String?) {
-        Log.d(TAG, "Not yet implemented: removeAllGeofences by ${getClientIdentity().packageName}")
+        val owner = getClientIdentity()
+        lifecycleScope.launchWhenStarted {
+            val status = try { locationManager.geofenceManager.removeAll(owner) }
+                catch (_: Exception) { GeofenceStatusCodes.GEOFENCE_NOT_AVAILABLE }
+            runCatching { callbacks?.onRemoveGeofencesByRequestIdsResult(status, emptyArray()) }
+        }
     }
 
     // endregion
@@ -74,17 +94,17 @@ class LocationManagerInstance(
 
     override fun requestActivityTransitionUpdates(request: ActivityTransitionRequest?, pendingIntent: PendingIntent?, callback: IStatusCallback?) {
         Log.d(TAG, "Not yet implemented: requestActivityTransitionUpdates by ${getClientIdentity().packageName}")
-        callback?.onResult(Status.SUCCESS)
+        callback?.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     override fun removeActivityTransitionUpdates(pendingIntent: PendingIntent?, callback: IStatusCallback?) {
         Log.d(TAG, "Not yet implemented: removeActivityTransitionUpdates by ${getClientIdentity().packageName}")
-        callback?.onResult(Status.SUCCESS)
+        callback?.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     override fun requestActivityUpdatesWithCallback(request: ActivityRecognitionRequest?, pendingIntent: PendingIntent?, callback: IStatusCallback?) {
         Log.d(TAG, "Not yet implemented: requestActivityUpdatesWithCallback by ${getClientIdentity().packageName}")
-        callback?.onResult(Status.SUCCESS)
+        callback?.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     override fun removeActivityUpdates(callbackIntent: PendingIntent?) {
@@ -97,12 +117,12 @@ class LocationManagerInstance(
 
     override fun removeSleepSegmentUpdates(pendingIntent: PendingIntent?, callback: IStatusCallback?) {
         Log.d(TAG, "Not yet implemented: removeSleepSegmentUpdates by ${getClientIdentity().packageName}")
-        callback?.onResult(Status.SUCCESS)
+        callback?.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     override fun requestSleepSegmentUpdates(pendingIntent: PendingIntent?, request: SleepSegmentRequest?, callback: IStatusCallback?) {
         Log.d(TAG, "Not yet implemented: requestSleepSegmentUpdates by ${getClientIdentity().packageName}")
-        callback?.onResult(Status.SUCCESS)
+        callback?.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     // endregion
@@ -112,7 +132,8 @@ class LocationManagerInstance(
     override fun flushLocations(callback: IFusedLocationProviderCallback?) {
         Log.d(TAG, "flushLocations by ${getClientIdentity().packageName}")
         checkHasAnyLocationPermission()
-        Log.d(TAG, "Not yet implemented: flushLocations")
+        // Locations are delivered immediately; there is no batch waiting to be flushed.
+        callback?.onFusedLocationProviderResult(FusedLocationProviderResult.SUCCESS)
     }
 
     override fun getLocationAvailabilityWithReceiver(request: LocationAvailabilityRequest, receiver: LocationReceiver) {
@@ -136,8 +157,11 @@ class LocationManagerInstance(
     override fun getCurrentLocationWithReceiver(request: CurrentLocationRequest, receiver: LocationReceiver): ICancelToken {
         Log.d(TAG, "getCurrentLocationWithReceiver by ${getClientIdentity().packageName}")
         checkHasAnyLocationPermission()
-        var returned = false
+        val returned = AtomicBoolean(false)
         val callback = receiver.statusCallback
+        fun complete(status: Status, location: Location?) {
+            if (returned.compareAndSet(false, true)) runCatching { callback.onLocationStatus(status, location) }
+        }
         val clientIdentity = getClientIdentity()
         val binderIdentity = Binder()
         val job = lifecycleScope.launchWhenStarted {
@@ -145,8 +169,7 @@ class LocationManagerInstance(
                 val scope = this
                 val callbackForRequest = object : ILocationCallback.Stub() {
                     override fun onLocationResult(result: LocationResult?) {
-                        if (!returned) runCatching { callback.onLocationStatus(Status.SUCCESS, result?.lastLocation) }
-                        returned = true
+                        complete(Status.SUCCESS, result?.lastLocation)
                         scope.cancel()
                     }
 
@@ -155,8 +178,7 @@ class LocationManagerInstance(
                     }
 
                     override fun cancel() {
-                        if (!returned) runCatching { callback.onLocationStatus(Status.SUCCESS, null) }
-                        returned = true
+                        complete(Status.SUCCESS, null)
                         scope.cancel()
                     }
                 }
@@ -168,26 +190,25 @@ class LocationManagerInstance(
                     .setWorkSource(request.workSource)
                     .setThrottleBehavior(request.throttleBehavior)
                     .build()
-                locationManager.addBinderRequest(clientIdentity, binderIdentity, callbackForRequest, currentLocationRequest)
-                awaitCancellation()
+                awaitCurrentLocationDeadline(request.durationMillis, { complete(Status.SUCCESS, null) }) {
+                    locationManager.addBinderRequest(clientIdentity, binderIdentity, callbackForRequest, currentLocationRequest)
+                }
             } catch (e: CancellationException) {
                 // Don't send result. Either this was cancelled from the CancelToken or because a location was retrieved.
                 // Both cases send the result themselves.
             } catch (e: Exception) {
                 try {
-                    if (!returned) callback.onLocationStatus(Status(CommonStatusCodes.ERROR, e.message), null)
-                    returned = true
+                    complete(Status(CommonStatusCodes.ERROR), null)
                 } catch (e2: Exception) {
                     Log.w(TAG, "Failed", e)
                 }
             } finally {
-                runCatching { locationManager.removeBinderRequest(binderIdentity) }
+                withContext(NonCancellable) { runCatching { locationManager.removeBinderRequest(binderIdentity) } }
             }
         }
         return object : ICancelToken.Stub() {
             override fun cancel() {
-                if (!returned) runCatching { callback.onLocationStatus(Status.CANCELED, null) }
-                returned = true
+                complete(Status.CANCELED, null)
                 job.cancel()
             }
         }
@@ -255,42 +276,22 @@ class LocationManagerInstance(
 
     override fun isGoogleLocationAccuracyEnabled(callback: IBooleanStatusCallback?) {
         Log.d(TAG, "isGoogleLocationAccuracyEnabled by ${getClientIdentity().packageName}")
-        callback?.onBooleanStatus(Status.SUCCESS, true)
+        callback?.onBooleanStatus(Status(CommonStatusCodes.ERROR, "This API is not implemented"), false)
     }
 
     override fun setGoogleLocationAccuracy(request: SetGoogleLocationAccuracyRequest?, callback: IStatusCallback?) {
         Log.d(TAG, "setGoogleLocationAccuracy by ${getClientIdentity().packageName}")
-        callback?.onResult(Status.SUCCESS)
+        callback?.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     // region Mock locations
 
     override fun setMockModeWithCallback(mockMode: Boolean, callback: IStatusCallback) {
-        Log.d(TAG, "setMockModeWithCallback by ${getClientIdentity().packageName}")
-        checkHasAnyLocationPermission()
-        val clientIdentity = getClientIdentity()
-        lifecycleScope.launchWhenStarted {
-            try {
-                Log.d(TAG, "Not yet implemented: setMockModeWithCallback")
-                callback.onResult(Status.SUCCESS)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed", e)
-            }
-        }
+        callback.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     override fun setMockLocationWithCallback(mockLocation: Location, callback: IStatusCallback) {
-        Log.d(TAG, "setMockLocationWithCallback by ${getClientIdentity().packageName}")
-        checkHasAnyLocationPermission()
-        val clientIdentity = getClientIdentity()
-        lifecycleScope.launchWhenStarted {
-            try {
-                Log.d(TAG, "Not yet implemented: setMockLocationWithCallback")
-                callback.onResult(Status.SUCCESS)
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed", e)
-            }
-        }
+        callback.onResult(Status(CommonStatusCodes.ERROR, "This API is not implemented"))
     }
 
     // endregion

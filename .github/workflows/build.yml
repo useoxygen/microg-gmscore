@@ -60,10 +60,18 @@ jobs:
           done
       - name: "Build Cyclon service artifacts"
         run: "./gradlew :play-services-core:assembleMapboxDefault${{ matrix.target }} :vending-app:assembleDefault${{ matrix.target }}"
+      - name: "Test integrity cache and error handling"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :vending-app:testDefaultDebugUnitTest"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
-      - name: "Test license text pagination"
+      - name: "Test legacy DroidGuard callback lifecycle"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :play-services-droidguard-core:testDebugUnitTest"
+      - name: "Test Cyclon health and license text pagination"
         run: "./gradlew :play-services-core:testMapboxDefaultDebugUnitTest"
+      - name: "Test calendar sync and geofence transitions"
+        run: "./gradlew :calendar-sync:test :play-services-location-core:testDefaultDebugUnitTest"
       - name: "Test Cyclon release inputs and notices"
         run: "./gradlew -p cyclon/tests testVersionAllocation testNotices"
       - name: "Execute Gradle lint"

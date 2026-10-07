@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: passive Cyclon Services health navigation.
 /*
  * SPDX-FileCopyrightText: 2020, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -26,6 +27,10 @@ class SettingsFragment : ResourceSettingsFragment() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         super.onCreatePreferences(savedInstanceState, rootKey)
 
+        findPreference<Preference>("pref_cyclon_health")!!.onPreferenceClickListener = Preference.OnPreferenceClickListener {
+            findNavController().navigate(R.id.cyclonHealthFragment)
+            true
+        }
         findPreference<Preference>(PREF_ACCOUNTS)!!.onPreferenceClickListener = Preference.OnPreferenceClickListener {
             findNavController().navigate(requireContext(), R.id.accountManagerFragment)
             true

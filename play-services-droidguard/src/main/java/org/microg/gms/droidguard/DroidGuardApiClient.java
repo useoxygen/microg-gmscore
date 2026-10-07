@@ -61,9 +61,6 @@ public class DroidGuardApiClient extends GmsClient<IDroidGuardService> {
                     Log.w(TAG, "DroidGuardInitReply suggests additional actions in main thread");
                     Bundle bundle = (Bundle) reply.object;
                     if (bundle != null) {
-                        for (String key : bundle.keySet()) {
-                            Log.d(TAG, "reply.object[" + key + "] = " + bundle.get(key));
-                        }
                         handleDroidGuardData(reply.pfd, (Bundle) reply.object);
                     }
                 }
