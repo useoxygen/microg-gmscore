@@ -97,7 +97,6 @@ private fun HealthScreen(snapshot: ServiceHealthSnapshot?, navigate: (Int) -> Un
             SelectionContainer { Text(report!!, style = MaterialTheme.typography.bodyMedium) }
             OutlinedButton(onClick = { share(report!!) }) { Text(stringResource(R.string.cyclon_health_share)) }
         } else {
-            Text(stringResource(R.string.cyclon_health_title), style = MaterialTheme.typography.headlineSmall)
             Text(stringResource(R.string.cyclon_health_intro))
             Text(stringResource(R.string.cyclon_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
                 color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
