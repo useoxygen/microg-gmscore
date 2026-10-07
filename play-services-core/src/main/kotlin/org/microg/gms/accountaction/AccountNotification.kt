@@ -21,6 +21,9 @@ import org.microg.gms.auth.login.LoginActivity
 
 private const val CHANNEL_ID = "AccountNotification"
 
+/** Channel for account notifications that need the user, registered by [registerAccountNotificationChannel]. */
+const val ACCOUNT_NOTIFICATION_CHANNEL_ID = CHANNEL_ID
+
 @RequiresApi(21)
 fun Context.sendAccountReAuthNotification(account: Account) {
     Log.d(TAG, "sendAccountReAuthNotification: account: ${account.name}")

@@ -15,13 +15,9 @@
   -->
 
 <resources>
-    <color name="login_blue_theme_primary">#ff4285f4</color>
-    <color name="login_blue_theme_primary_dark">#ff3367d6</color>
-    <color name="login_blue_theme_accent">#ffFFAB40</color>
 
-    <color name="dialog_border_color">#88CCCCCC</color>
+    <color name="dialog_border_color">@color/cyclon_line</color>
     <color name="material_error">#fff44336</color>
-    <color name="material_success">#34a853</color>
 
     <color name="gm3_ref_palette_error10">#ff410e0b</color>
     <color name="gm3_ref_palette_error100">#ffffffff</color>

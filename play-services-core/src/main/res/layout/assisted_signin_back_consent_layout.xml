@@ -97,7 +97,7 @@
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/sign_reloading_back"
-        style="@style/Widget.Material3.Button"
+        style="@style/Widget.Cyclon.Button"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="24dp"

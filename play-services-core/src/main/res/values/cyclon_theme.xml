@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-FileCopyrightText: 2026 Cyclon
      SPDX-License-Identifier: Apache-2.0 -->
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.CyclonServices" parent="Theme.CyclonServices.Base" />
     <style name="Theme.CyclonServices.Base" parent="Theme.App">
         <item name="android:fontFamily">sans-serif</item>
@@ -15,14 +15,171 @@
         <item name="colorOutline">@color/cyclon_line</item>
         <item name="android:textColorPrimary">@color/cyclon_ink</item>
         <item name="android:textColorSecondary">@color/cyclon_muted</item>
+        <item name="android:textColorLink">@color/cyclon_ink</item>
+        <item name="materialButtonStyle">@style/Widget.Cyclon.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.Cyclon.Button.Outlined</item>
+        <item name="borderlessButtonStyle">@style/Widget.Cyclon.Button.Text</item>
+        <item name="buttonBarButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Cyclon.Dialog.Alert</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Cyclon.MaterialAlertDialog</item>
     </style>
+    <!-- Titles use the UI font; Space Mono is reserved for the agent's voice and clock digits. -->
     <style name="TextAppearance.CyclonServices.Title" parent="TextAppearance.Material3.HeadlineLarge">
-        <item name="android:fontFamily">@font/cyclon_space_mono_regular</item>
-        <item name="fontFamily">@font/cyclon_space_mono_regular</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif</item>
         <item name="android:textColor">@color/cyclon_ink</item>
     </style>
     <style name="TextAppearance.CyclonServices.Toolbar" parent="TextAppearance.Material3.TitleLarge">
-        <item name="android:fontFamily">@font/cyclon_space_mono_regular</item>
-        <item name="fontFamily">@font/cyclon_space_mono_regular</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif</item>
+    </style>
+
+    <!-- Draft 4, "ink on paper, one highlight", for microG's own windows (sign-in, consent and
+         permission dialogs). Paper/black surfaces and ink text and buttons follow day/night through
+         the cyclon_* colours; the owner's highlight (colorPrimary) is left to on/selected states and
+         progress. The text font is the system sans-serif, which is Manrope on Cyclon OS. -->
+    <style name="Theme.Cyclon" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:colorBackground">@color/cyclon_paper</item>
+        <item name="colorOnBackground">@color/cyclon_ink</item>
+        <item name="colorSurface">@color/cyclon_paper</item>
+        <item name="colorOnSurface">@color/cyclon_ink</item>
+        <item name="colorSurfaceVariant">@color/cyclon_panel</item>
+        <item name="colorOnSurfaceVariant">@color/cyclon_muted</item>
+        <item name="colorSurfaceBright">@color/cyclon_paper</item>
+        <item name="colorSurfaceDim">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainerLowest">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainerLow">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainer">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainerHigh">@color/cyclon_raised</item>
+        <item name="colorSurfaceContainerHighest">@color/cyclon_panel</item>
+        <item name="colorSurfaceInverse">@color/cyclon_ink</item>
+        <item name="colorOnSurfaceInverse">@color/cyclon_paper</item>
+        <item name="colorOutline">@color/cyclon_line</item>
+        <item name="colorOutlineVariant">@color/cyclon_line</item>
+        <item name="colorPrimary">@color/cyclon_highlight</item>
+        <item name="colorOnPrimary">@color/cyclon_paper</item>
+        <item name="colorPrimaryContainer">@color/cyclon_panel</item>
+        <item name="colorOnPrimaryContainer">@color/cyclon_ink</item>
+        <item name="colorSecondary">@color/cyclon_ink</item>
+        <item name="colorOnSecondary">@color/cyclon_paper</item>
+        <item name="colorSecondaryContainer">@color/cyclon_panel</item>
+        <item name="colorOnSecondaryContainer">@color/cyclon_ink</item>
+        <item name="colorTertiary">@color/cyclon_highlight</item>
+        <item name="colorOnTertiary">@color/cyclon_paper</item>
+        <item name="colorTertiaryContainer">@color/cyclon_panel</item>
+        <item name="colorOnTertiaryContainer">@color/cyclon_ink</item>
+        <item name="colorError">@color/cyclon_error</item>
+        <item name="colorOnError">@android:color/white</item>
+        <item name="colorAccent">@color/cyclon_highlight</item>
+        <item name="android:textColorLink">@color/cyclon_ink</item>
+        <item name="elevationOverlayEnabled">false</item>
+        <item name="materialButtonStyle">@style/Widget.Cyclon.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.Cyclon.Button.Outlined</item>
+        <item name="borderlessButtonStyle">@style/Widget.Cyclon.Button.Text</item>
+        <item name="buttonBarButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Cyclon.Dialog.Alert</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Cyclon.MaterialAlertDialog</item>
+        <!-- Bars take the page colour; targetSdk 29 does not enforce edge-to-edge. -->
+        <item name="android:statusBarColor" tools:targetApi="21">@color/cyclon_paper</item>
+        <item name="android:navigationBarColor" tools:targetApi="21">@color/cyclon_paper</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="23">@bool/cyclon_light_system_bars</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">@bool/cyclon_light_system_bars</item>
+    </style>
+
+    <!-- Activity dialogs; Theme.Base.DayNight.Dialog.Alert (and with it the translucent and
+         AppCompat-named dialog themes of the other modules) derives from this. -->
+    <style name="Theme.Cyclon.Dialog" parent="Theme.Material3.DayNight.Dialog.Alert">
+        <item name="android:colorBackground">@color/cyclon_raised</item>
+        <item name="colorOnBackground">@color/cyclon_ink</item>
+        <item name="colorSurface">@color/cyclon_raised</item>
+        <item name="colorOnSurface">@color/cyclon_ink</item>
+        <item name="colorSurfaceVariant">@color/cyclon_panel</item>
+        <item name="colorOnSurfaceVariant">@color/cyclon_muted</item>
+        <item name="colorSurfaceBright">@color/cyclon_paper</item>
+        <item name="colorSurfaceDim">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainerLowest">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainerLow">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainer">@color/cyclon_paper</item>
+        <item name="colorSurfaceContainerHigh">@color/cyclon_raised</item>
+        <item name="colorSurfaceContainerHighest">@color/cyclon_panel</item>
+        <item name="colorSurfaceInverse">@color/cyclon_ink</item>
+        <item name="colorOnSurfaceInverse">@color/cyclon_paper</item>
+        <item name="colorOutline">@color/cyclon_line</item>
+        <item name="colorOutlineVariant">@color/cyclon_line</item>
+        <item name="colorPrimary">@color/cyclon_highlight</item>
+        <item name="colorOnPrimary">@color/cyclon_paper</item>
+        <item name="colorPrimaryContainer">@color/cyclon_panel</item>
+        <item name="colorOnPrimaryContainer">@color/cyclon_ink</item>
+        <item name="colorSecondary">@color/cyclon_ink</item>
+        <item name="colorOnSecondary">@color/cyclon_paper</item>
+        <item name="colorSecondaryContainer">@color/cyclon_panel</item>
+        <item name="colorOnSecondaryContainer">@color/cyclon_ink</item>
+        <item name="colorTertiary">@color/cyclon_highlight</item>
+        <item name="colorOnTertiary">@color/cyclon_paper</item>
+        <item name="colorTertiaryContainer">@color/cyclon_panel</item>
+        <item name="colorOnTertiaryContainer">@color/cyclon_ink</item>
+        <item name="colorError">@color/cyclon_error</item>
+        <item name="colorOnError">@android:color/white</item>
+        <item name="colorAccent">@color/cyclon_highlight</item>
+        <item name="android:textColorLink">@color/cyclon_ink</item>
+        <item name="elevationOverlayEnabled">false</item>
+        <item name="materialButtonStyle">@style/Widget.Cyclon.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.Cyclon.Button.Outlined</item>
+        <item name="borderlessButtonStyle">@style/Widget.Cyclon.Button.Text</item>
+        <item name="buttonBarButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.Cyclon.Dialog.Alert</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Cyclon.MaterialAlertDialog</item>
+        <item name="android:windowBackground">@drawable/cyclon_dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.Cyclon.Dialog.Alert" parent="ThemeOverlay.Material3.Dialog.Alert">
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+    </style>
+
+    <style name="ThemeOverlay.Cyclon.MaterialAlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
+    </style>
+
+    <!-- Primary: filled ink with paper text. Secondary/text: ink text. Outlined: hairline + ink. -->
+    <style name="Widget.Cyclon.Button" parent="Widget.Material3.Button">
+        <item name="backgroundTint">@color/cyclon_button_fill</item>
+        <item name="android:textColor">@color/cyclon_button_on_fill</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Cyclon.Button</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Cyclon.Button.Text" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">@color/cyclon_button_ink</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Cyclon.Button</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Cyclon.Button.Text.Dialog" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/cyclon_button_ink</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Cyclon.Button</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Cyclon.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textColor">@color/cyclon_button_ink</item>
+        <item name="strokeColor">@color/cyclon_line</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Cyclon.Button</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="ShapeAppearance.Cyclon.Button" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">8dp</item>
     </style>
 </resources>

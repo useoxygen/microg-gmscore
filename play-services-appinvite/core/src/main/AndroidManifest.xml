@@ -21,7 +21,7 @@
             android:excludeFromRecents="true"
             android:process=":ui"
             android:exported="true"
-            android:theme="@style/Theme.AppCompat.Light.Dialog.NoActionBar">
+            android:theme="@style/Theme.App.DayNight.Dialog.Alert.NoActionBar">
             <intent-filter
                 android:priority="900"
                 android:autoVerify="true">

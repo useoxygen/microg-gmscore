@@ -18,7 +18,7 @@
             android:icon="@drawable/ic_recaptcha"
             android:process=":ui"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.Dialog.NoActionBar">
+            android:theme="@style/Theme.App.DayNight.Dialog.Alert.NoActionBar">
             <intent-filter>
                 <action android:name="org.microg.gms.safetynet.RECAPTCHA_ACTIVITY" />
 

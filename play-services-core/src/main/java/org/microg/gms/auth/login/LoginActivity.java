@@ -60,6 +60,7 @@ import org.microg.gms.checkin.LastCheckinInfo;
 import org.microg.gms.common.Constants;
 import org.microg.gms.common.HttpFormClient;
 import org.microg.gms.common.Utils;
+import org.microg.gms.cyclon.CyclonWebViewsKt;
 import org.microg.gms.people.PeopleManager;
 import org.microg.gms.profile.Build;
 import org.microg.gms.profile.ProfileManager;
@@ -287,6 +288,7 @@ public class LoginActivity extends AssistantActivity {
         settings.setUseWideViewPort(false);
         settings.setSupportZoom(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        CyclonWebViewsKt.followSystemDarkTheme(settings, context);
     }
 
     private void start() {

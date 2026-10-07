@@ -10,7 +10,6 @@ import android.accounts.AccountManager
 import android.app.Dialog
 import android.content.DialogInterface
 import android.content.Intent
-import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -24,6 +23,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.collection.ArraySet
 import androidx.collection.arraySetOf
+import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
@@ -190,7 +190,7 @@ class AssistedSignInFragment : BottomSheetDialogFragment() {
                 } else {
                     accountView.findViewById<TextView>(R.id.account_description).apply {
                         text = getString(R.string.credentials_assisted_choose_account_error_tips)
-                        setTextColor(Color.RED)
+                        setTextColor(ContextCompat.getColor(requireContext(), R.color.cyclon_error))
                     }
                     accountView.setOnClickListener(null)
                 }

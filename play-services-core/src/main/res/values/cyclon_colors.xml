@@ -7,4 +7,10 @@
     <color name="cyclon_muted">#5B5B63</color>
     <color name="cyclon_panel">#E6E6EA</color>
     <color name="cyclon_line">#DEDEE3</color>
+    <!-- Dialogs, sheets and popups. -->
+    <color name="cyclon_raised">#F2F2F1</color>
+    <color name="cyclon_error">#D9453D</color>
+    <!-- The owner's highlight (values-v31 reads it from the system accent); only for on/selected
+         states and progress, never text, bars or button fills. -->
+    <color name="cyclon_highlight">@color/cyclon_ink</color>
 </resources>

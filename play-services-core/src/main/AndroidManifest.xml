@@ -574,7 +574,7 @@
             android:exported="true"
             android:process=":ui"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.LoginBlue">
+            android:theme="@style/Theme.Cyclon">
             <intent-filter>
                 <action android:name="com.google.android.gms.auth.login.LOGIN" />
 
@@ -587,7 +587,7 @@
             android:excludeFromRecents="true"
             android:exported="false"
             android:process=":ui"
-            android:theme="@style/Theme.AppCompat.DayNight.Dialog" />
+            android:theme="@style/Theme.App.DayNight.Dialog.Alert.NoActionBar" />
 
         <activity
             android:name="org.microg.gms.auth.AskPackageOverrideActivity"
@@ -728,7 +728,7 @@
             android:excludeFromRecents="true"/>
 
         <activity
-            android:theme="@style/Theme.AppCompat.Dialog.Alert"
+            android:theme="@style/ThemeTranslucentCommon"
             android:name="org.microg.gms.auth.signin.AssistedSignInActivity"
             android:enabled="true"
             android:exported="true"
@@ -748,12 +748,12 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:configChanges="keyboardHidden|keyboard|orientation|screenSize"
-            android:theme="@style/Theme.AppCompat.DayNight.Dialog"/>
+            android:theme="@style/Theme.App.DayNight.Dialog.Alert.NoActionBar"/>
 
         <activity
             android:name="org.microg.gms.accountaction.AccountActionActivity"
             android:exported="true"
-            android:theme="@style/Theme.LoginBlue"
+            android:theme="@style/Theme.Cyclon"
             tools:targetApi="21"/>
 
         <!-- Credential Provider Services -->
@@ -826,7 +826,7 @@
             android:name="org.microg.gms.games.ui.GamePlayDataActivity"
             android:process=":ui"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+            android:theme="@style/Theme.Cyclon"/>
 
         <activity
             android:name="org.microg.gms.games.ui.InGameUiActivity"
@@ -835,7 +835,7 @@
             android:excludeFromRecents="false"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.AppCompat.Dialog.Alert">
+            android:theme="@style/ThemeTranslucentCommon">
             <intent-filter>
                 <action android:name="com.google.android.gms.games.SHOW_SELECT_SNAPSHOT"/>
                 <action android:name="com.google.android.gms.games.VIEW_ACHIEVEMENTS" />
@@ -856,7 +856,7 @@
         <activity
             android:name="org.microg.gms.games.UpgradeActivity"
             android:process=":ui"
-            android:theme="@style/Theme.AppCompat.DayNight.Dialog">
+            android:theme="@style/Theme.App.DayNight.Dialog.Alert.NoActionBar">
             <intent-filter>
                 <action android:name="com.google.android.gms.games.PLAY_GAMES_UPGRADE" />
                 <category android:name="android.intent.category.DEFAULT" />

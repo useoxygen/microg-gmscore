@@ -23,9 +23,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -94,11 +93,9 @@ fun UserInterventionComponents(userActions: Map<Requirement, Boolean>) {
 fun UserInterventionCommonComponent(title: String, description: String, sequenceNumber: Int?, completed: Boolean, onClick: () -> Unit) {
     Surface(onClick = onClick, enabled = !completed) {
 
-        val color = if (completed) {
-            colorResource(id = R.color.material_success)
-        } else {
-            colorResource(id = R.color.login_blue_theme_primary)
-        }
+        // Done steps are an "on" state (highlight fill); open steps are an outlined ink circle.
+        val color = if (completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        val onColor = if (completed) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
 
         Column(
             Modifier
@@ -108,9 +105,11 @@ fun UserInterventionCommonComponent(title: String, description: String, sequence
             Row {
                 Box(Modifier.size(32.dp)) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawCircle(
-                            color = color
-                        )
+                        if (completed) {
+                            drawCircle(color = color)
+                        } else {
+                            drawCircle(color = color, radius = size.minDimension / 2 - 0.5.dp.toPx(), style = Stroke(1.dp.toPx()))
+                        }
                     }
 
                     if (completed) {
@@ -118,20 +117,20 @@ fun UserInterventionCommonComponent(title: String, description: String, sequence
                             imageVector = Icons.Default.Check,
                             contentDescription = stringResource(R.string.auth_action_step_completed_content_description),
                             modifier = Modifier.align(Alignment.Center),
-                            tint = Color.White
+                            tint = onColor
                         )
                     } else {
                         if (sequenceNumber == null) {
                             Canvas(modifier = Modifier.size(12.dp).align(Alignment.Center)) {
                                 drawCircle(
-                                    color = Color.White
+                                    color = onColor
                                 )
                             }
                         } else {
                             Text(
                                 text = sequenceNumber.toString(),
                                 modifier = Modifier.align(Alignment.Center),
-                                style = LocalTextStyle.current.copy(color = Color.White)
+                                style = LocalTextStyle.current.copy(color = onColor)
                             )
                         }
                     }

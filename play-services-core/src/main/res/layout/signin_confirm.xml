@@ -36,7 +36,6 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@android:color/white"
             android:orientation="vertical">
 
             <ImageView
@@ -50,7 +49,8 @@
                 tools:src="@mipmap/ic_app" />
 
             <TextView
-                style="@style/TextAppearance.AppCompat.Title"
+                android:textAppearance="?attr/textAppearanceTitleLarge"
+                android:textColor="?android:attr/textColorPrimary"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center_horizontal"
@@ -70,7 +70,8 @@
 
             <TextView
                 android:id="@+id/picker_subtext"
-                style="@style/TextAppearance.AppCompat.Small"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?android:attr/textColorSecondary"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_margin="24dp"
@@ -87,14 +88,14 @@
 
                 <Button
                     android:id="@android:id/button2"
-                    style="@style/Widget.AppCompat.Button.Borderless"
+                    style="@style/Widget.Cyclon.Button.Text"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@android:string/cancel" />
 
                 <Button
                     android:id="@android:id/button1"
-                    style="@style/Widget.AppCompat.Button.Colored"
+                    style="@style/Widget.Cyclon.Button"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"

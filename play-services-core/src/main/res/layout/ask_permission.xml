@@ -117,16 +117,16 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content">
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@android:id/button2"
-            style="?attr/buttonBarButtonStyle"
+            style="@style/Widget.Cyclon.Button.Text.Dialog"
             android:text="@string/deny"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@android:id/button1"
-            style="?attr/buttonBarButtonStyle"
+            style="@style/Widget.Cyclon.Button.Text.Dialog"
             android:text="@string/allow"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content" />

@@ -38,7 +38,7 @@
             android:layout_marginBottom="12dp"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_cloud_bell"
-            app:tint="?attr/colorAccent"></ImageView>
+            app:tint="?attr/colorOnSurface"></ImageView>
 
         <TextView
             android:id="@+id/permission_message"
