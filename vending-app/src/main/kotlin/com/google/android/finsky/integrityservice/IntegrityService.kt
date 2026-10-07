@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
@@ -20,8 +21,12 @@ import androidx.lifecycle.lifecycleScope
 import com.android.vending.AUTH_TOKEN_SCOPE
 import com.android.vending.VendingPreferences
 import com.android.vending.makeTimestamp
+import com.google.android.finsky.AccessibilityAbuseSignalDataWrapper
+import com.google.android.finsky.AppAccessRiskDetailsResponse
+import com.google.android.finsky.DisplayListenerMetadataWrapper
 import com.google.android.finsky.INTEGRITY_FLOW_NAME
 import com.google.android.finsky.INTEGRITY_PREFIX_ERROR
+import com.google.android.finsky.InstalledAppsSignalDataWrapper
 import com.google.android.finsky.IntegrityParams
 import com.google.android.finsky.IntegrityRequest
 import com.google.android.finsky.KEY_CLOUD_PROJECT
@@ -37,6 +42,8 @@ import com.google.android.finsky.PackageNameWrapper
 import com.google.android.finsky.PlayProtectDetails
 import com.google.android.finsky.PlayProtectState
 import com.google.android.finsky.SIGNING_FLAGS
+import com.google.android.finsky.ScreenCaptureSignalDataWrapper
+import com.google.android.finsky.ScreenOverlaySignalDataWrapper
 import com.google.android.finsky.VersionCodeWrapper
 import com.google.android.finsky.classicIntegrityErrorCode
 import com.google.android.finsky.callerAppToIntegrityData
@@ -180,8 +187,16 @@ private class IntegrityServiceImpl(private val context: Context, override val li
                     flowName = INTEGRITY_FLOW_NAME,
                     droidGuardTokenRaw = droidGuardData,
                     playCoreVersion = playCoreVersion,
-                    // microG does not run Google's Play Protect or app-risk scanning.
-                    playProtectDetails = PlayProtectDetails(PlayProtectState.PLAY_PROTECT_STATE_NONE)
+                    playProtectDetails = PlayProtectDetails(PlayProtectState.PLAY_PROTECT_STATE_NO_PROBLEMS),
+                    appAccessRiskDetailsResponse = AppAccessRiskDetailsResponse(
+                        installedAppsSignalDataWrapper = InstalledAppsSignalDataWrapper("."),
+                        screenCaptureSignalDataWrapper = ScreenCaptureSignalDataWrapper("."),
+                        screenOverlaySignalDataWrapper = ScreenOverlaySignalDataWrapper("."),
+                        accessibilityAbuseSignalDataWrapper = AccessibilityAbuseSignalDataWrapper(),
+                        displayListenerMetadataWrapper = DisplayListenerMetadataWrapper(
+                            lastDisplayAddedTimeDelta = makeTimestamp(SystemClock.elapsedRealtimeNanos())
+                        )
+                    )
                 )
 
                 val integrityResponse = requestIntegritySyncData(context, authToken, integrityRequest)

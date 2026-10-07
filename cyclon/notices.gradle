@@ -1,0 +1,49 @@
+/* SPDX-FileCopyrightText: 2026 Cyclon
+ * SPDX-License-Identifier: Apache-2.0 */
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
+
+abstract class CyclonGenerateNotices extends DefaultTask {
+    @Input abstract ListProperty<String> getArtifacts()
+    @Input abstract Property<String> getModuleName()
+    @InputFiles abstract ConfigurableFileCollection getRuntimeFiles()
+    @InputFile abstract RegularFileProperty getRegistry()
+    @InputFile abstract RegularFileProperty getGenerator()
+    @InputDirectory abstract DirectoryProperty getTexts()
+    @OutputDirectory abstract DirectoryProperty getAssetDirectory()
+    @Inject abstract ExecOperations getExecOperations()
+
+    @TaskAction void generate() {
+        File manifest = new File(temporaryDir, 'artifacts.json')
+        manifest.text = '[' + artifacts.get().join(',') + ']'
+        execOperations.exec {
+            commandLine 'python3', generator.get().asFile, '--artifacts', manifest,
+                    '--registry', registry.get().asFile, '--texts', texts.get().asFile,
+                    '--module', moduleName.get(),
+                    '--output', new File(assetDirectory.get().asFile, 'cyclon/notices.json')
+        }
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    def external = configurations.getByName("${variant.name}RuntimeClasspath").incoming.artifactView {
+        componentFilter { it instanceof ModuleComponentIdentifier }
+    }.artifacts
+    def output = layout.buildDirectory.dir("generated/cyclonNotices/${variant.name}")
+    def task = tasks.register("generate${variant.name.capitalize()}CyclonNotices", CyclonGenerateNotices) {
+        moduleName.set(project.name)
+        registry.set(rootProject.layout.projectDirectory.file('cyclon/notices/registry.json'))
+        generator.set(rootProject.layout.projectDirectory.file('cyclon/notices/generate.py'))
+        texts.set(rootProject.layout.projectDirectory.dir('cyclon/notices/texts'))
+        assetDirectory.set(output)
+        runtimeFiles.from(external.artifactFiles)
+        artifacts.set(external.resolvedArtifacts.map { entries ->
+            entries.collect { a ->
+                JsonOutput.toJson([coordinate: a.id.componentIdentifier.displayName, path: a.file.absolutePath])
+            }.sort()
+        })
+    }
+    variant.sources.assets.addGeneratedSourceDirectory(task) { it.assetDirectory }
+}

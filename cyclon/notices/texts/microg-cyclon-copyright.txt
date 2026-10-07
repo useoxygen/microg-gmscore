@@ -1,0 +1,7 @@
+Copyright microG Project Team and contributors.
+Copyright 2026 Cyclon for Cyclon branding and integration.
+
+Based on microG: https://microg.org
+Source: https://github.com/useoxygen/microg-gmscore
+
+Cyclon modifications include the app identity, About screen, contacts integration and release configuration.

@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Cyclon Services identity and About screen.
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -57,7 +58,7 @@ public class AboutFragment extends AbstractAboutFragment {
 
         @Override
         protected Fragment getFragment() {
-            return new AboutFragment();
+            return new org.microg.gms.cyclon.CyclonAboutFragment();
         }
     }
 }

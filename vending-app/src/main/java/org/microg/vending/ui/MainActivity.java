@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Companion branding.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -29,10 +30,10 @@ public class MainActivity extends Activity {
                 intent.setClassName(GMS_PACKAGE_NAME, getPackageManager().resolveActivity(intent, 0).activityInfo.name);
                 startActivity(intent);
             }
-            Toast.makeText(this, R.string.toast_installed, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.cyclon_companion_opened, Toast.LENGTH_LONG).show();
         } catch (Exception e) {
             Log.w(TAG, "Failed launching microG Settings", e);
-            Toast.makeText(this, R.string.toast_not_installed, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.cyclon_companion_missing, Toast.LENGTH_LONG).show();
         }
         finish();
     }

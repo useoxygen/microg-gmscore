@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <item name="cyclon_contacts_health_action" type="id" />
+    <string name="cyclon_health_title">Service health</string>
+    <string name="cyclon_health_summary">Push connection, Contacts and Calendar sync, and location readiness</string>
+    <string name="cyclon_health_intro">Local observations refresh while this screen is open. Services you have turned off stay off.</string>
+    <string name="cyclon_health_loading">Reading service state…</string>
+    <string name="cyclon_health_off">Off</string>
+    <string name="cyclon_health_paused">Paused</string>
+    <string name="cyclon_health_ready">Ready</string>
+    <string name="cyclon_health_connected">Connected</string>
+    <string name="cyclon_health_attention">Needs attention</string>
+    <string name="cyclon_health_unknown">Unknown</string>
+    <string name="cyclon_health_disabled">Disabled in settings. Enable it only if you want to use it.</string>
+    <string name="cyclon_health_unreadable">The current state could not be read. Open its settings to review it.</string>
+    <string name="cyclon_health_push_connected">The push service currently has a live connection. Individual app delivery is shown in Cloud Messaging settings.</string>
+    <string name="cyclon_health_push_disconnected">Enabled, but no live push connection was observed. Check network access and device registration in settings.</string>
+    <string name="cyclon_health_sync_paused">Android sync is paused for one or more accounts. Review sync settings if you want it to resume.</string>
+    <string name="cyclon_health_sync_pending">Sync is enabled. A successful sync has not yet been recorded for every enabled account.</string>
+    <string name="cyclon_health_sync_success">Sync is enabled. The time below is the oldest last success across enabled accounts.</string>
+    <string name="cyclon_health_contacts_permission">Contacts permission is missing. Open Contacts sync to review access.</string>
+    <string name="cyclon_health_location">Network location</string>
+    <string name="cyclon_health_location_ready">Android location and network location sources are enabled. This does not test a position or provider coverage.</string>
+    <string name="cyclon_health_location_permission">Network location is enabled, but location permission is missing. Review Self-Check.</string>
+    <string name="cyclon_health_registration_pending">Registration is enabled. A successful check-in has not yet been recorded.</string>
+    <string name="cyclon_health_registration_recorded">A successful check-in is recorded. This does not confirm Google certification or Play Integrity.</string>
+    <string name="cyclon_health_last_success">Last recorded success: %1$s</string>
+    <string name="cyclon_health_observed">Observed: %1$s</string>
+    <string name="cyclon_health_push_action">Review push settings</string>
+    <string name="cyclon_health_contacts_action">Review Contacts sync</string>
+    <string name="cyclon_health_location_action">Review location settings</string>
+    <string name="cyclon_health_registration_action">Review device registration</string>
+    <string name="cyclon_health_report">Preview diagnostic report</string>
+    <string name="cyclon_health_report_privacy">Includes service states, coarse codes, timestamps and version numbers. Excludes account names, tokens, messages, app lists and locations. Nothing is sent until you choose to share.</string>
+    <string name="cyclon_health_share">Share report</string>
+    <string name="cyclon_health_share_unavailable">No app is available to share this report. You can select and copy its text.</string>
+</resources>

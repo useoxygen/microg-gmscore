@@ -46,3 +46,7 @@ both codes to exceed the versions in the existing signed APK lock.
 
 This source change requires a new product source pin, rebuilt/signed APKs, and
 normal delivery acceptance before it changes an installed Cyclon image.
+
+The [extension acceptance guide](extensions-acceptance.md) covers app troubleshooting,
+location API callbacks, geofencing and native Calendar downloads, including the
+repeatable emulator fixture runner and the signed-device acceptance still required.
