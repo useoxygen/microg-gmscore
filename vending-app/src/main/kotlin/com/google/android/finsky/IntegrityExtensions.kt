@@ -414,9 +414,15 @@ suspend fun updateExpressAuthTokenWrapper(context: Context, expressIntegritySess
 
     val createTimeSeconds = expressFilePB.tokenWrapper?.deviceIntegrityWrapper?.creationTime?.seconds ?: 0
     val lastManualSoftRefreshTime = expressFilePB.tokenWrapper?.lastManualSoftRefreshTime?.seconds ?: 0
-    if (createTimeSeconds < System.currentTimeMillis() - DEVICE_INTEGRITY_HARD_EXPIRATION) {
-        expressFilePB = expressFilePB.newBuilder().tokenWrapper(regenerateToken(context, authToken, expressIntegritySession.packageName, clientKey)).build()
-    } else if (lastManualSoftRefreshTime <= System.currentTimeMillis() - DEVICE_INTEGRITY_SOFT_EXPIRATION_CHECK_PERIOD && createTimeSeconds < System.currentTimeMillis() - DEVICE_INTEGRITY_SOFT_EXPIRATION) {
+    if (shouldRefreshDeviceIntegrity(
+            nowSeconds = System.currentTimeMillis() / 1000,
+            createdSeconds = createTimeSeconds,
+            lastRefreshSeconds = lastManualSoftRefreshTime,
+            hardExpirationSeconds = DEVICE_INTEGRITY_HARD_EXPIRATION,
+            softExpirationSeconds = DEVICE_INTEGRITY_SOFT_EXPIRATION,
+            checkPeriodSeconds = DEVICE_INTEGRITY_SOFT_EXPIRATION_CHECK_PERIOD,
+            hasToken = (expressFilePB.tokenWrapper?.deviceIntegrityWrapper?.deviceIntegrityToken?.size ?: 0) > 0,
+        )) {
         expressFilePB = expressFilePB.newBuilder().tokenWrapper(regenerateToken(context, authToken, expressIntegritySession.packageName, clientKey)).build()
     }
 
@@ -428,7 +434,7 @@ suspend fun updateExpressAuthTokenWrapper(context: Context, expressIntegritySess
 private suspend fun regenerateToken(
     context: Context, authToken: String, packageName: String, clientKey: ClientKey
 ): AuthTokenWrapper {
-    Log.d(TAG, "regenerateToken authToken:$authToken, packageName:$packageName, clientKey:$clientKey")
+    Log.d(TAG, "Regenerating device integrity token")
     try {
         val prefs = context.getSharedPreferences("droid_guard_token_session_id", Context.MODE_PRIVATE)
         val droidGuardTokenSession = try {
@@ -448,7 +454,6 @@ private suspend fun regenerateToken(
             prefs.getString(packageName, null)
         }
 
-        Log.d(TAG, "regenerateToken: sessionId: $droidGuardTokenSession")
         if (droidGuardTokenSession.isNullOrEmpty()) {
             throw RuntimeException("regenerateToken droidGuardTokenSession is null")
         }
@@ -458,7 +463,7 @@ private suspend fun regenerateToken(
             val droidGuardResultsRequest = DroidGuardResultsRequest().apply {
                 bundle.putByteArray(PARAMS_PIA_EXPRESS_DEVICE_KEY, clientKey.keySetHandle?.toByteArray())
             }
-            Log.d(TAG, "Running DroidGuard (flow: $EXPRESS_INTEGRITY_FLOW_NAME, data: $data)")
+            Log.d(TAG, "Running DroidGuard (flow: $EXPRESS_INTEGRITY_FLOW_NAME)")
             DroidGuard.getClient(context).getResults(EXPRESS_INTEGRITY_FLOW_NAME, data, droidGuardResultsRequest).await().encode()
         }
 

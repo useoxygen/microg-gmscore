@@ -60,6 +60,9 @@ jobs:
           done
       - name: "Execute Gradle assemble"
         run: "./gradlew assemble${{ matrix.target }}"
+      - name: "Test integrity cache and error handling"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :vending-app:testDefaultDebugUnitTest"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
       - name: "Execute Gradle lint"

@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
-import android.os.SystemClock
 import android.text.TextUtils
 import android.util.Base64
 import android.util.Log
@@ -21,12 +20,8 @@ import androidx.lifecycle.lifecycleScope
 import com.android.vending.AUTH_TOKEN_SCOPE
 import com.android.vending.VendingPreferences
 import com.android.vending.makeTimestamp
-import com.google.android.finsky.AccessibilityAbuseSignalDataWrapper
-import com.google.android.finsky.AppAccessRiskDetailsResponse
-import com.google.android.finsky.DisplayListenerMetadataWrapper
 import com.google.android.finsky.INTEGRITY_FLOW_NAME
 import com.google.android.finsky.INTEGRITY_PREFIX_ERROR
-import com.google.android.finsky.InstalledAppsSignalDataWrapper
 import com.google.android.finsky.IntegrityParams
 import com.google.android.finsky.IntegrityRequest
 import com.google.android.finsky.KEY_CLOUD_PROJECT
@@ -42,9 +37,8 @@ import com.google.android.finsky.PackageNameWrapper
 import com.google.android.finsky.PlayProtectDetails
 import com.google.android.finsky.PlayProtectState
 import com.google.android.finsky.SIGNING_FLAGS
-import com.google.android.finsky.ScreenCaptureSignalDataWrapper
-import com.google.android.finsky.ScreenOverlaySignalDataWrapper
 import com.google.android.finsky.VersionCodeWrapper
+import com.google.android.finsky.classicIntegrityErrorCode
 import com.google.android.finsky.callerAppToIntegrityData
 import com.google.android.finsky.getPlayCoreVersion
 import com.google.android.finsky.encodeBase64
@@ -88,7 +82,6 @@ class IntegrityService : LifecycleService() {
 
 private class IntegrityServiceImpl(private val context: Context, override val lifecycle: Lifecycle) : IIntegrityService.Stub(), LifecycleOwner {
 
-    private var integrityData: PlayIntegrityData? = null
 
     override fun requestDialog(bundle: Bundle, callback: IRequestDialogCallback) {
         Log.d(TAG, "Method (requestDialog) called but not implemented ")
@@ -96,13 +89,14 @@ private class IntegrityServiceImpl(private val context: Context, override val li
     }
 
     override fun requestAndShowDialog(bundle: Bundle?, callback: IRequestDialogCallback?) {
-        Log.d(TAG, "Not yet implemented: requestAndShowDialog")
+        callback?.onRequestDialog(bundleOf("error" to IntegrityErrorCode.API_NOT_AVAILABLE))
     }
 
     override fun requestIntegrityToken(request: Bundle, callback: IIntegrityServiceCallback) {
         Log.d(TAG, "Method (requestIntegrityToken) called")
         val packageName = PackageUtils.getAndCheckCallingPackage(context, request.getString(KEY_PACKAGE_NAME))
         lifecycleScope.launchWhenCreated {
+            var integrityData: PlayIntegrityData? = null
             runCatching {
                 if (packageName == null) {
                     throw StandardIntegrityException(IntegrityErrorCode.INTERNAL_ERROR, "Null packageName.")
@@ -113,7 +107,7 @@ private class IntegrityServiceImpl(private val context: Context, override val li
                 }
                 val playIntegrityEnabled = VendingPreferences.isDeviceAttestationEnabled(context)
                 if (!playIntegrityEnabled) {
-                    throw StandardIntegrityException(IntegrityErrorCode.INTERNAL_ERROR, "API is disabled.")
+                    throw StandardIntegrityException(IntegrityErrorCode.API_NOT_AVAILABLE, "API is disabled.")
                 }
                 val nonceArr = request.getByteArray(KEY_NONCE)
                 if (nonceArr == null) {
@@ -127,7 +121,7 @@ private class IntegrityServiceImpl(private val context: Context, override val li
                 }
                 val cloudProjectNumber = request.getLong(KEY_CLOUD_PROJECT, 0L)
                 val playCoreVersion = request.getPlayCoreVersion()
-                Log.d(TAG, "requestIntegrityToken(packageName: $packageName, nonce: ${nonceArr.encodeBase64(false)}, cloudProjectNumber: $cloudProjectNumber, playCoreVersion: $playCoreVersion)")
+                Log.d(TAG, "requestIntegrityToken(packageName: $packageName, nonceBytes: ${nonceArr.size}, cloudProjectNumber: $cloudProjectNumber, playCoreVersion: $playCoreVersion)")
 
                 val packageInfo = context.packageManager.getPackageInfoCompat(packageName, SIGNING_FLAGS)
                 val timestamp = makeTimestamp(System.currentTimeMillis())
@@ -165,19 +159,19 @@ private class IntegrityServiceImpl(private val context: Context, override val li
                 if (TextUtils.isEmpty(authToken)) {
                     Log.w(TAG, "requestIntegrityToken: Got null auth token for type: $AUTH_TOKEN_SCOPE")
                 }
-                Log.d(TAG, "requestIntegrityToken authToken: $authToken")
+
 
                 val droidGuardData = withContext(Dispatchers.IO) {
                     val droidGuardResultsRequest = DroidGuardResultsRequest()
                     droidGuardResultsRequest.bundle.putString("thirdPartyCallerAppPackageName", packageName)
-                    Log.d(TAG, "Running DroidGuard (flow: $INTEGRITY_FLOW_NAME, data: $data)")
+                    Log.d(TAG, "Running DroidGuard (flow: $INTEGRITY_FLOW_NAME)")
                     val droidGuardToken = DroidGuard.getClient(context).getResults(INTEGRITY_FLOW_NAME, data, droidGuardResultsRequest).await()
-                    Log.d(TAG, "Running DroidGuard (flow: $INTEGRITY_FLOW_NAME, droidGuardToken: $droidGuardToken)")
+
                     Base64.decode(droidGuardToken, Base64.NO_PADDING or Base64.NO_WRAP or Base64.URL_SAFE).toByteString()
                 }
 
                 if (droidGuardData.utf8().startsWith(INTEGRITY_PREFIX_ERROR)) {
-                    Log.w(TAG, "droidGuardData: ${droidGuardData.utf8()}")
+                    Log.w(TAG, "DroidGuard returned an error")
                     throw StandardIntegrityException(IntegrityErrorCode.NETWORK_ERROR, "DroidGuard failed.")
                 }
 
@@ -186,20 +180,12 @@ private class IntegrityServiceImpl(private val context: Context, override val li
                     flowName = INTEGRITY_FLOW_NAME,
                     droidGuardTokenRaw = droidGuardData,
                     playCoreVersion = playCoreVersion,
-                    playProtectDetails = PlayProtectDetails(PlayProtectState.PLAY_PROTECT_STATE_NO_PROBLEMS),
-                    appAccessRiskDetailsResponse = AppAccessRiskDetailsResponse(
-                        installedAppsSignalDataWrapper = InstalledAppsSignalDataWrapper("."),
-                        screenCaptureSignalDataWrapper = ScreenCaptureSignalDataWrapper("."),
-                        screenOverlaySignalDataWrapper = ScreenOverlaySignalDataWrapper("."),
-                        accessibilityAbuseSignalDataWrapper = AccessibilityAbuseSignalDataWrapper(),
-                        displayListenerMetadataWrapper = DisplayListenerMetadataWrapper(
-                            lastDisplayAddedTimeDelta = makeTimestamp(SystemClock.elapsedRealtimeNanos())
-                        )
-                    )
+                    // microG does not run Google's Play Protect or app-risk scanning.
+                    playProtectDetails = PlayProtectDetails(PlayProtectState.PLAY_PROTECT_STATE_NONE)
                 )
-                Log.d(TAG, "requestIntegrityToken integrityRequest: $integrityRequest")
+
                 val integrityResponse = requestIntegritySyncData(context, authToken, integrityRequest)
-                Log.d(TAG, "requestIntegrityToken integrityResponse: $integrityResponse")
+
 
                 val integrityToken = integrityResponse.contentWrapper?.content?.token
                 if (integrityToken.isNullOrEmpty()) {
@@ -209,13 +195,13 @@ private class IntegrityServiceImpl(private val context: Context, override val li
                     throw StandardIntegrityException(IntegrityErrorCode.INTERNAL_ERROR, "No token in response.")
                 }
 
-                Log.d(TAG, "requestIntegrityToken integrityToken: $integrityToken")
+
                 integrityData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "Delivered encrypted integrity token.", true)
                 callback.onSuccess(packageName, integrityToken)
             }.onFailure {
-                Log.w(TAG, "requestIntegrityToken has exception: ", it)
-                integrityData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "Integrity check failed: ${it.message}")
-                callback.onError(integrityData?.packageName, IntegrityErrorCode.INTERNAL_ERROR, it.message ?: "Exception")
+                Log.w(TAG, "requestIntegrityToken failed: code=${it.classicIntegrityErrorCode()}")
+                integrityData?.updateAppIntegrityContent(context, System.currentTimeMillis(), "Integrity check failed: code=${it.classicIntegrityErrorCode()}")
+                callback.onError(packageName, it.classicIntegrityErrorCode(), "Integrity request failed")
             }
         }
     }
