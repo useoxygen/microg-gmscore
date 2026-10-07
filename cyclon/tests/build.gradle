@@ -1,0 +1,64 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Cyclon
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import groovy.json.JsonSlurper
+
+apply from: file('../location-sources.gradle')
+apply from: file('../version.gradle')
+
+tasks.register('testVersionAllocation') {
+    doLast {
+        def release = new JsonSlurper().parse(file('../version.json'))
+        def allocated = cyclonValidateVersion(release, 252432, 40226)
+        assert allocated.gmsVersionCode > 252432035
+        assert allocated.vendingVersionCode > 84022635
+        [
+            [gmsVersionCode: 252432034],
+            [vendingVersionCode: 84022634],
+            [gmsVersionCode: 252433000],
+            [vendingVersionCode: 84022700],
+            [gmsVersionCode: '252432036'],
+            [upstreamTag: 'v0.3.17.252433']
+        ].each { change ->
+            try {
+                cyclonValidateVersion(release + change, 252432, 40226)
+                throw new AssertionError('An invalid APK version allocation was accepted')
+            } catch (GradleException expected) {
+                assert expected.message.contains('allocation')
+            }
+        }
+        println('Verified upgrade from both shipped APK versions and rejection of invalid allocations.')
+    }
+}
+
+tasks.register('testLocationSources') {
+    doLast {
+        def pin = new JsonSlurper().parse(file('../location-sources.json'))
+        File apk = file(providers.gradleProperty('upstreamApk').get())
+        def rows = new JsonSlurper().parseText(cyclonLocationSourcesFromApk(apk, pin))
+        assert rows.collect { it.id } == ['positon', 'beacondb', 'custom']
+        assert rows[0].suggested
+        assert new URI(rows[0].url).host == 'api.positon.xyz'
+        assert new URI(rows[0].url).query.startsWith('key=')
+        assert rows[0].import && rows[1].import && rows[2].import
+        assert rows[1].allowContribute
+        def badPin = new LinkedHashMap(pin)
+        badPin.sha256 = '0' * 64
+        try {
+            cyclonLocationSourcesFromApk(apk, badPin)
+            throw new AssertionError('An incorrect APK hash was accepted')
+        } catch (GradleException expected) {
+            assert expected.message.contains('hash differs')
+        }
+        badPin = new LinkedHashMap(pin)
+        badPin.sizeBytes = pin.sizeBytes - 1
+        try {
+            cyclonLocationSourcesFromApk(apk, badPin)
+            throw new AssertionError('An incorrect APK size was accepted')
+        } catch (GradleException expected) {
+            assert expected.message.contains('size differs')
+        }
+        println('Verified official provider choices, suggested Positon, contribution flags, and rejection of changed inputs.')
+    }
+}
