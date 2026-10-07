@@ -43,6 +43,7 @@ import com.google.android.gms.auth.HasCapabilitiesRequest;
 import com.google.android.gms.auth.TokenData;
 import com.google.android.gms.common.api.Scope;
 
+import org.microg.gms.accountaction.AccountNotificationKt;
 import org.microg.gms.auth.capabilities.HasCapabilitiesHandler;
 import org.microg.gms.common.GooglePackagePermission;
 import org.microg.gms.common.PackageUtils;
@@ -177,11 +178,14 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
                 PendingIntent pi = PendingIntentCompat.getActivity(context, 0, i, 0, false);
                 if (notify) {
                     NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-                    nm.notify(packageName.hashCode(), new NotificationCompat.Builder(context)
+                    // Without a channel, Android 8+ drops the notification and the consent prompt is never shown.
+                    AccountNotificationKt.registerAccountNotificationChannel(context);
+                    nm.notify(packageName.hashCode(), new NotificationCompat.Builder(context, AccountNotificationKt.ACCOUNT_NOTIFICATION_CHANNEL_ID)
                             .setContentIntent(pi)
                             .setContentTitle(context.getString(R.string.auth_notification_title))
                             .setContentText(context.getString(R.string.auth_notification_content, getPackageLabel(packageName, context.getPackageManager())))
-                            .setSmallIcon(android.R.drawable.stat_notify_error)
+                            .setSmallIcon(R.drawable.ic_manage_accounts)
+                            .setAutoCancel(true)
                             .build());
                 }
                 if (pi != null) {
