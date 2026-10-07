@@ -2,9 +2,10 @@
 <!-- SPDX-FileCopyrightText: 2026 Cyclon
      SPDX-License-Identifier: Apache-2.0 -->
 <resources>
-    <style name="Theme.CyclonServices" parent="Theme.App">
-        <item name="android:fontFamily">@font/cyclon_manrope</item>
-        <item name="fontFamily">@font/cyclon_manrope</item>
+    <style name="Theme.CyclonServices" parent="Theme.CyclonServices.Base" />
+    <style name="Theme.CyclonServices.Base" parent="Theme.App">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif</item>
         <item name="android:colorBackground">@color/cyclon_paper</item>
         <item name="colorSurface">@color/cyclon_paper</item>
         <item name="colorSurfaceVariant">@color/cyclon_panel</item>

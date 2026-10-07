@@ -5,6 +5,7 @@
 package org.microg.gms.cyclon
 
 import android.os.Bundle
+import android.os.Build
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -23,10 +24,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.colorResource
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.font.FontVariation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import com.google.android.gms.BuildConfig
@@ -46,10 +49,12 @@ class CyclonAboutFragment : Fragment() {
 }
 
 @Composable
+@OptIn(ExperimentalTextApi::class)
 private fun CyclonAbout() {
     val context = LocalContext.current
-    val notices by produceState<List<Notice>?>(null, context) {
-        value = withContext(Dispatchers.IO) {
+    var notices by remember(context) { mutableStateOf<List<Notice>?>(null) }
+    LaunchedEffect(context) {
+        notices = withContext(Dispatchers.IO) {
             try {
                 val json = context.assets.open("cyclon/notices.json").bufferedReader().use { JSONArray(it.readText()) }
                 List(json.length()) { index ->
@@ -72,7 +77,14 @@ private fun CyclonAbout() {
     BackHandler(showingLicenses) {
         if (selectedTitle != null) selectedTitle = null else showingLicenses = false
     }
-    val body = FontFamily(Font(R.font.cyclon_manrope))
+    val body = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) FontFamily(
+        Font(R.font.cyclon_manrope, weight = FontWeight.Normal,
+            variationSettings = FontVariation.Settings(FontVariation.weight(400))),
+        Font(R.font.cyclon_manrope, weight = FontWeight.Medium,
+            variationSettings = FontVariation.Settings(FontVariation.weight(500))),
+        Font(R.font.cyclon_manrope, weight = FontWeight.SemiBold,
+            variationSettings = FontVariation.Settings(FontVariation.weight(600)))
+    ) else FontFamily.SansSerif
     val heading = FontFamily(Font(R.font.cyclon_space_mono_regular))
     val paper = colorResource(R.color.cyclon_paper)
     val ink = colorResource(R.color.cyclon_ink)
@@ -88,7 +100,7 @@ private fun CyclonAbout() {
         titleMedium = defaults.titleMedium.copy(fontFamily = heading),
         bodyLarge = defaults.bodyLarge.copy(fontFamily = body),
         bodyMedium = defaults.bodyMedium.copy(fontFamily = body),
-        labelLarge = defaults.labelLarge.copy(fontFamily = body)
+        labelLarge = defaults.labelLarge.copy(fontFamily = body, fontWeight = FontWeight.SemiBold)
     ), shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(8.dp))) {
         // The settings host owns vertical scrolling; a nested lazy/scroll container gets
         // unbounded height here. Keep this column wrap-content, including full license text.
@@ -124,15 +136,15 @@ private fun CyclonAbout() {
                     }
                 }
                 else -> {
-                    Icon(painterResource(R.drawable.ic_cyclon_services_system), contentDescription = null,
-                        tint = ink, modifier = Modifier.size(64.dp))
+                    CyclonSymbol(ink, Modifier.size(64.dp))
                     Text(stringResource(R.string.cyclon_services_name), style = MaterialTheme.typography.headlineSmall)
                     Text(stringResource(R.string.cyclon_based_on_microg), color = muted)
                     Text(stringResource(R.string.cyclon_about_description))
                     Text(stringResource(R.string.cyclon_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), color = muted)
                     HorizontalDivider()
                     Text(stringResource(R.string.cyclon_credits), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = { showingLicenses = true }, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { showingLicenses = true }, modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)) {
                         Text(stringResource(R.string.cyclon_notices))
                     }
                 }
