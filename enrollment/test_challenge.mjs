@@ -25,7 +25,13 @@ test('observes only a supported visible puzzle without acting',()=>{
   assert.equal(fixture(12).run(),null);
 });
 test('requires the exact account, origin and same-origin visible frame',()=>{
-  const f=fixture();f.state.identity='Google Account: Other (other@example.com)';assert.equal(f.run(),null);
+  const f=fixture(),snapshot=f.run();
+  for(const label of ['Google Account: Other (other@example.com)',
+    'Google Account: Name (fixture@example.com) (other@example.com)',
+    'Google Account: Name (fixture@example.com) extra text']) {
+    f.state.identity=label;assert.equal(f.run(),null);
+    assert.equal(f.run('tiles',[0],snapshot.fingerprint),null);assert.equal(f.state.clicks.length,0);
+  }
   f.state.identity='Google Account: Test (fixture@example.com)';f.state.location.origin='https://www.google.com.attacker.test';assert.equal(f.run(),null);
   f.state.location.origin='https://www.google.com';f.frame.src='https://www.google.com.attacker.test/recaptcha/api2/bframe';assert.equal(f.run(),null);
   f.frame.src='https://www.google.com/recaptcha/api2/bframe';f.frame.getClientRects=()=>[];assert.equal(f.run(),null);

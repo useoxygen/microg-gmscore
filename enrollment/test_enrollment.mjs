@@ -55,7 +55,13 @@ test('saved IDs can omit input padding without losing any 64-bit precision',()=>
   f.ids=['812345678901234567']; assert.equal(f.run(false,padded),'accepted');
 });
 test('different account, lookalike origin and invalid IDs cannot write',()=>{
-  const f=fixture(); f.label='Google Account: Other (other@example.com)'; assert.equal(f.run(true),'account_mismatch');
+  const f=fixture(); f.response.value='opaque';
+  for (const label of ['Google Account: Other (other@example.com)',
+    'Google Account: Name (fixture@example.com) (other@example.com)',
+    'Google Account: Name (fixture@example.com) extra text']) {
+    f.label=label; assert.equal(f.run(true),'account_mismatch');
+    assert.equal(f.input.value,''); assert.equal(f.clicks,0);
+  }
   f.location.origin='https://www.google.com.attacker.example'; assert.equal(f.run(true),'outside');
   f.location.origin='https://www.google.com'; assert.equal(f.run(true,'0'.repeat(19)),'invalid_id'); assert.equal(f.clicks,0); assert.equal(f.input.scrolls,0);
 });

@@ -8,7 +8,10 @@
   if (!/^[0-9]{19}$/.test(id) || /^0+$/.test(id)) return 'invalid_id';
   const visible = e => !!e && e.getClientRects().length > 0;
   const accountButton = document.querySelector('[aria-label^="Google Account:"]');
-  if (!accountButton || !accountButton.getAttribute('aria-label').includes('(' + account + ')'))
+  const accountLabel = accountButton && accountButton.getAttribute('aria-label');
+  // The last parenthesized field is Google's email; a display name can contain parentheses.
+  const signedIn = typeof accountLabel === 'string' && /\(([^()]*)\)\s*$/.exec(accountLabel);
+  if (!signedIn || signedIn[1] !== account)
     return 'account_mismatch';
   // Google's input needs 19 digits, but its saved list may omit padding zeros.
   // Compare decimal strings without converting either 64-bit value to Number.

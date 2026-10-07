@@ -3,7 +3,9 @@
   'use strict';
   if(location.origin !== 'https://www.google.com' || location.pathname !== '/android/uncertified/')return null;
   const identity=document.querySelector('[aria-label^="Google Account:"]');
-  if(!identity?.getAttribute('aria-label').includes('('+account+')'))return null;
+  const accountLabel=identity&&identity.getAttribute('aria-label');
+  const signedIn=typeof accountLabel==='string'&&/\(([^()]*)\)\s*$/.exec(accountLabel);
+  if(!signedIn||signedIn[1]!==account)return null;
   const visible=e=>!!e&&e.getClientRects().length>0;
   for(const frame of document.querySelectorAll('iframe')) {
     try {
