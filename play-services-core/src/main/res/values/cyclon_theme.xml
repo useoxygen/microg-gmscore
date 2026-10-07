@@ -83,8 +83,8 @@
         <item name="alertDialogTheme">@style/ThemeOverlay.Cyclon.Dialog.Alert</item>
         <item name="materialAlertDialogTheme">@style/ThemeOverlay.Cyclon.MaterialAlertDialog</item>
         <!-- Bars take the page colour; targetSdk 29 does not enforce edge-to-edge. -->
-        <item name="android:statusBarColor">@color/cyclon_paper</item>
-        <item name="android:navigationBarColor">@color/cyclon_paper</item>
+        <item name="android:statusBarColor" tools:targetApi="21">@color/cyclon_paper</item>
+        <item name="android:navigationBarColor" tools:targetApi="21">@color/cyclon_paper</item>
         <item name="android:windowLightStatusBar" tools:targetApi="23">@bool/cyclon_light_system_bars</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">@bool/cyclon_light_system_bars</item>
     </style>
