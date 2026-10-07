@@ -29,9 +29,11 @@ class ServiceHealthTest {
         val accounts = listOf(account(true, "success", 456), account(true, "success", 123))
         assertEquals(123L, contactsHealth(accounts, true).lastSuccessAt)
         assertEquals(HealthReason.AUTHORIZATION, contactsHealth(accounts + account(true, "authorization", 999), true).reason)
+        assertEquals(123L, contactsHealth(accounts + account(true, "authorization", 999), true).lastSuccessAt)
     }
     @Test fun pausedSchedulingIsNotAnAuthFailure() {
         assertEquals(HealthReason.SYNC_PAUSED, contactsHealth(listOf(account(true, "authorization", 123)), false).reason)
+        assertEquals(123L, contactsHealth(listOf(account(true, "authorization", 123)), false).lastSuccessAt)
         assertEquals(HealthState.PAUSED, contactsHealth(listOf(account(true, "success", 123).copy(scheduled = false)), true).state)
         assertEquals(unknownHealth, contactsHealth(listOf(account(true, "success", 123).copy(scheduled = null)), true))
     }

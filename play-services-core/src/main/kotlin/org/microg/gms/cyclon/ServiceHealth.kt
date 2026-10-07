@@ -25,15 +25,16 @@ internal fun contactsHealth(accounts: List<ContactHealthObservation>?, masterSyn
     if (accounts.isEmpty()) return HealthReading(HealthState.OFF, HealthReason.NO_ACCOUNTS)
     val active = accounts.filter { it.enabled }
     if (active.isEmpty()) return HealthReading(HealthState.OFF, HealthReason.DISABLED)
-    if (masterSync == false || active.any { it.scheduled == false }) return HealthReading(HealthState.PAUSED, HealthReason.SYNC_PAUSED)
+    // Retain a recorded success when scheduling pauses or a later attempt fails.
+    // One account's success must never hide another enabled account's first sync.
+    val success = active.map { it.lastSuccessAt }.takeIf { times -> times.all { it > 0 } }?.minOrNull()
+    if (masterSync == false || active.any { it.scheduled == false }) return HealthReading(HealthState.PAUSED, HealthReason.SYNC_PAUSED, success)
     if (masterSync == null || active.any { it.scheduled == null }) return unknownHealth
-    if (permitted == false) return HealthReading(HealthState.ATTENTION, HealthReason.CONTACT_PERMISSION)
+    if (permitted == false) return HealthReading(HealthState.ATTENTION, HealthReason.CONTACT_PERMISSION, success)
     if (permitted == null) return unknownHealth
     val errors = setOf(HealthReason.AUTHORIZATION, HealthReason.NETWORK, HealthReason.LOCAL, HealthReason.CONFLICT, HealthReason.UNCERTAIN)
-    active.firstOrNull { it.status in errors }?.let { return HealthReading(HealthState.ATTENTION, it.status) }
+    active.firstOrNull { it.status in errors }?.let { return HealthReading(HealthState.ATTENTION, it.status, success) }
     if (active.any { it.status == HealthReason.UNREADABLE }) return unknownHealth
-    // The oldest success among all enabled accounts, never one account's success hiding another's first sync.
-    val success = active.map { it.lastSuccessAt }.takeIf { times -> times.all { it > 0 } }?.minOrNull()
     return HealthReading(HealthState.READY, if (success == null) HealthReason.SYNC_PENDING else HealthReason.SYNC_SUCCESS, success)
 }
 
