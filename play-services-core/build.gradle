@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Cyclon Services identity and About screen.
 /*
  * SPDX-FileCopyrightText: 2013 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -15,8 +16,11 @@ configurations {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
     implementation project(':people-sync')
     implementation project(':people-sync-android')
+    implementation project(':calendar-sync')
+    implementation project(':calendar-sync-android')
     implementation "com.squareup.okhttp3:okhttp:$okHttpVersion"
     implementation "com.squareup.wire:wire-runtime:$wireVersion"
     implementation "de.hdodenhof:circleimageview:1.3.0"
@@ -138,7 +142,7 @@ android {
         multiDexEnabled true
         multiDexKeepProguard file('multidex-keep.pro')
 
-        manifestPlaceholders = [appLabel:"@string/gms_app_name"]
+        manifestPlaceholders = [appLabel:"@string/cyclon_services_name"]
         resValue "string", "package_id", "com.google.android.gms"
 
         buildConfigField "String", "SAFETYNET_KEY", "\"${localProperties.get("safetynet.key", "")}\""
@@ -185,7 +189,7 @@ android {
             dimension 'target'
             applicationId = "org.microg.gms"
             versionNameSuffix "-user"
-            manifestPlaceholders = [appLabel:"@string/limited_services_app_name"]
+            manifestPlaceholders = [appLabel:"@string/cyclon_services_name"]
             matchingFallbacks = ['default']
             resValue "string", "package_id", "org.microg.gms"
         }
@@ -226,3 +230,6 @@ android.applicationVariants.all { variant ->
         output.outputFileName = variant.applicationId + "-" + variant.versionCode + variant.versionName.substring(version.length()) + ".apk"
     }
 }
+
+// Modified by Cyclon in 2026: bundle resolved runtime license notices.
+apply from: rootProject.file('cyclon/notices.gradle')

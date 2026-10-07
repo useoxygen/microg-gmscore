@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <style name="Theme.CyclonServices" parent="Theme.CyclonServices.Base" />
+    <style name="Theme.CyclonServices.Base" parent="Theme.App">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="fontFamily">sans-serif</item>
+        <item name="android:colorBackground">@color/cyclon_paper</item>
+        <item name="colorSurface">@color/cyclon_paper</item>
+        <item name="colorSurfaceVariant">@color/cyclon_panel</item>
+        <item name="colorOnSurface">@color/cyclon_ink</item>
+        <item name="colorOnBackground">@color/cyclon_ink</item>
+        <item name="colorOnSurfaceVariant">@color/cyclon_muted</item>
+        <item name="colorOutline">@color/cyclon_line</item>
+        <item name="android:textColorPrimary">@color/cyclon_ink</item>
+        <item name="android:textColorSecondary">@color/cyclon_muted</item>
+    </style>
+    <style name="TextAppearance.CyclonServices.Title" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="android:fontFamily">@font/cyclon_space_mono_regular</item>
+        <item name="fontFamily">@font/cyclon_space_mono_regular</item>
+        <item name="android:textColor">@color/cyclon_ink</item>
+    </style>
+    <style name="TextAppearance.CyclonServices.Toolbar" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:fontFamily">@font/cyclon_space_mono_regular</item>
+        <item name="fontFamily">@font/cyclon_space_mono_regular</item>
+    </style>
+</resources>

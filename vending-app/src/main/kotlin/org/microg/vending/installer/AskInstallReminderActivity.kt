@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Companion branding.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -47,7 +48,7 @@ class AskInstallReminderActivity : AppCompatActivity() {
             ?: return finishWithReply(AllowType.REJECT_ONCE.value)
 
         permissionDesc = findViewById(R.id.tv_description)
-        permissionDesc.text = getString(R.string.app_install_allow_to_install_third_app, callerLabel)
+        permissionDesc.text = getString(R.string.cyclon_companion_install_permission, callerLabel)
         appIconView = findViewById(R.id.iv_app_icon)
         appIcon?.let { appIconView.setImageDrawable(it) }
         appNameView = findViewById(R.id.tv_app_name)

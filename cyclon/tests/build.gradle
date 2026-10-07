@@ -62,3 +62,7 @@ tasks.register('testLocationSources') {
         println('Verified official provider choices, suggested Positon, contribution flags, and rejection of changed inputs.')
     }
 }
+
+tasks.register('testNotices', Exec) {
+    commandLine 'python3', file('../notices/test_generate.py')
+}

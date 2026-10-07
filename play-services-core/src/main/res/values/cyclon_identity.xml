@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <color name="cyclon_icon_background">#FAFAF9</color>
+    <string name="cyclon_services_name" translatable="false">Cyclon Services</string>
+    <string name="cyclon_companion_name" translatable="false">Cyclon Services Companion</string>
+</resources>

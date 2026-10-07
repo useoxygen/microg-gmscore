@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <item name="cyclon_calendar_health_action" type="id" />
+    <string name="cyclon_calendar_title">Calendar sync</string>
+    <string name="cyclon_calendar_description">Download Google calendars and events to Android Calendar. Recurring events, exceptions and popup reminders are included. This is opt-in and download-only: local event changes are never uploaded or overwritten. Turning it off keeps downloaded events.</string>
+    <string name="cyclon_calendar_download">Download calendars</string>
+    <string name="cyclon_calendar_enable_failed">Calendar access could not be enabled. Check calendar permissions and reconnect your account.</string>
+    <string name="cyclon_calendar_success">Last sync completed</string>
+    <string name="cyclon_calendar_conflict">Local event changes were preserved. Sync will retry after those changes are resolved.</string>
+    <string name="cyclon_calendar_local">Calendar data could not be applied. Local data was retained; try again.</string>
+    <string name="cyclon_calendar_permissions">Calendar permission is missing. Review permissions in Calendar sync.</string>
+</resources>

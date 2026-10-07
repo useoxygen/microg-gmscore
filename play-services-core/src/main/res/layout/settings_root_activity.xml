@@ -1,4 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?><!--
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Modified by Cyclon in 2026: Cyclon Services identity and About screen. -->
+<!--
   ~ SPDX-FileCopyrightText: 2020, microG Project Team
   ~ SPDX-License-Identifier: Apache-2.0
   -->
@@ -16,6 +18,8 @@
 
         <com.google.android.material.appbar.CollapsingToolbarLayout
             android:id="@+id/collapsing_toolbar"
+            app:expandedTitleTextAppearance="@style/TextAppearance.CyclonServices.Title"
+            app:collapsedTitleTextAppearance="@style/TextAppearance.CyclonServices.Toolbar"
             style="?attr/collapsingToolbarLayoutLargeStyle"
             android:layout_width="match_parent"
             app:layout_scrollFlags="scroll|exitUntilCollapsed|snap"
