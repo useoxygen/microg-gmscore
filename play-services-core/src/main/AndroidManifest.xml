@@ -540,7 +540,7 @@
             android:exported="true"
             android:process=":ui"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.LoginBlue">
+            android:theme="@style/Theme.Cyclon">
             <intent-filter>
                 <action android:name="com.google.android.gms.auth.login.LOGIN" />
 
@@ -719,7 +719,7 @@
         <activity
             android:name="org.microg.gms.accountaction.AccountActionActivity"
             android:exported="true"
-            android:theme="@style/Theme.LoginBlue"
+            android:theme="@style/Theme.Cyclon"
             tools:targetApi="21"/>
 
         <!-- Credential Provider Services -->
@@ -792,7 +792,7 @@
             android:name="org.microg.gms.games.ui.GamePlayDataActivity"
             android:process=":ui"
             android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+            android:theme="@style/Theme.Cyclon"/>
 
         <activity
             android:name="org.microg.gms.games.ui.InGameUiActivity"

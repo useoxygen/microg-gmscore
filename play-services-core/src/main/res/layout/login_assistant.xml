@@ -28,8 +28,7 @@
         <RelativeLayout
             android:id="@+id/title_container"
             android:layout_width="match_parent"
-            android:layout_height="64dp"
-            android:background="?attr/colorPrimary">
+            android:layout_height="64dp">
 
             <TextView
                 android:id="@+id/title"
@@ -39,8 +38,8 @@
                 android:layout_marginLeft="20dp"
                 android:layout_marginRight="20dp"
                 android:text="@string/just_a_sec"
-                android:textColor="@color/primary_text_default_material_dark"
-                android:textSize="24sp"
+                android:textAppearance="?attr/textAppearanceHeadlineMedium"
+                android:textColor="?android:attr/textColorPrimary"
                 android:paddingLeft="18dp" />
         </RelativeLayout>
 
@@ -60,38 +59,38 @@
                 android:padding="20dp"/>
         </FrameLayout>
 
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/cyclon_line" />
+
         <RelativeLayout
             android:layout_width="match_parent"
-            android:layout_height="54dip"
-            android:background="#e4e7e9">
+            android:layout_height="64dip"
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp">
 
             <Button
                 android:id="@+id/back_button"
-                style="?attr/buttonBarNegativeButtonStyle"
+                style="@style/Widget.Cyclon.Button.Text"
                 android:layout_width="wrap_content"
                 android:layout_height="48dip"
                 android:layout_alignParentLeft="true"
                 android:layout_alignParentStart="true"
                 android:layout_centerVertical="true"
-                android:paddingLeft="38dp"
-                android:paddingRight="38dp"
-                android:textAllCaps="true"
-                android:textAppearance="@style/TextAppearance.AppCompat.Body1"
-                android:textSize="16sp"/>
+                android:paddingLeft="24dp"
+                android:paddingRight="24dp"/>
 
             <Button
                 android:id="@+id/next_button"
-                style="?attr/buttonBarPositiveButtonStyle"
+                style="@style/Widget.Cyclon.Button"
                 android:layout_width="wrap_content"
                 android:layout_height="48dip"
                 android:layout_alignParentEnd="true"
                 android:layout_alignParentRight="true"
                 android:layout_centerVertical="true"
-                android:paddingLeft="38dp"
-                android:paddingRight="38dp"
-                android:textAllCaps="true"
-                android:textAppearance="@style/TextAppearance.AppCompat.Body1"
-                android:textSize="16sp"/>
+                android:paddingLeft="24dp"
+                android:paddingRight="24dp"/>
         </RelativeLayout>
     </LinearLayout>
 
