@@ -62,6 +62,8 @@ jobs:
         run: "./gradlew :play-services-core:assembleMapboxDefault${{ matrix.target }} :vending-app:assembleDefault${{ matrix.target }}"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
+      - name: "Test license text pagination"
+        run: "./gradlew :play-services-core:testMapboxDefaultDebugUnitTest"
       - name: "Test Cyclon release inputs and notices"
         run: "./gradlew -p cyclon/tests testVersionAllocation testNotices"
       - name: "Execute Gradle lint"

@@ -68,8 +68,11 @@ private fun CyclonAbout() {
     var query by rememberSaveable { mutableStateOf("") }
     var selectedTitle by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = notices?.firstOrNull { it.title == selectedTitle }
+    var selectedPage by rememberSaveable(selectedTitle) { mutableStateOf(0) }
+    val pages = remember(selected) { selected?.let { noticePages(it.text) } ?: emptyList() }
+    val page = selectedPage.coerceIn(0, maxOf(0, pages.lastIndex))
     val view = LocalView.current
-    LaunchedEffect(showingLicenses, selectedTitle, query) {
+    LaunchedEffect(showingLicenses, selectedTitle, query, page) {
         val scroll = generateSequence(view.parent) { it.parent }
             .filterIsInstance<androidx.core.widget.NestedScrollView>().firstOrNull()
         scroll?.post { scroll.scrollTo(0, 0) }
@@ -105,14 +108,16 @@ private fun CyclonAbout() {
     ), shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(8.dp))) {
         CompositionLocalProvider(LocalContentColor provides ink) {
             // The settings host owns vertical scrolling; a nested lazy/scroll container gets
-            // unbounded height here. Keep this column wrap-content, including full license text.
+            // unbounded height here. Keep this column wrap-content and bound each text page.
             Column(Modifier.fillMaxWidth().background(paper).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 when {
                     selected != null -> {
                         TextButton(onClick = { selectedTitle = null }) { Text(stringResource(R.string.cyclon_back)) }
                         Text(selected.title, style = MaterialTheme.typography.titleMedium)
                         Text(selected.license, color = muted)
-                        SelectionContainer { Text(selected.text, style = MaterialTheme.typography.bodyMedium) }
+                        NoticePageNavigation(page, pages.size) { selectedPage = it }
+                        SelectionContainer { Text(pages[page], style = MaterialTheme.typography.bodyMedium) }
+                        NoticePageNavigation(page, pages.size) { selectedPage = it }
                     }
                     showingLicenses -> {
                         TextButton(onClick = { showingLicenses = false }) { Text(stringResource(R.string.cyclon_back)) }
@@ -151,6 +156,22 @@ private fun CyclonAbout() {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoticePageNavigation(page: Int, count: Int, onPage: (Int) -> Unit) {
+    if (count <= 1) return
+    Column(Modifier.fillMaxWidth()) {
+        Text(stringResource(R.string.cyclon_notice_page, page + 1, count), style = MaterialTheme.typography.bodyMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = { onPage(page - 1) }, enabled = page > 0) {
+                Text(stringResource(R.string.cyclon_previous_page))
+            }
+            TextButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) {
+                Text(stringResource(R.string.cyclon_next_page))
             }
         }
     }

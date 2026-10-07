@@ -14,4 +14,7 @@
     <string name="cyclon_licenses_unavailable">License notices could not be loaded.</string>
     <string name="cyclon_loading">Loading licenses…</string>
     <string name="cyclon_back">Back</string>
+    <string name="cyclon_notice_page">Page %1$d of %2$d</string>
+    <string name="cyclon_previous_page">Previous</string>
+    <string name="cyclon_next_page">Next</string>
 </resources>

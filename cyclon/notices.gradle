@@ -7,6 +7,7 @@ import javax.inject.Inject
 
 abstract class CyclonGenerateNotices extends DefaultTask {
     @Input abstract ListProperty<String> getArtifacts()
+    @Input abstract Property<String> getModuleName()
     @InputFiles abstract ConfigurableFileCollection getRuntimeFiles()
     @InputFile abstract RegularFileProperty getRegistry()
     @InputFile abstract RegularFileProperty getGenerator()
@@ -20,6 +21,7 @@ abstract class CyclonGenerateNotices extends DefaultTask {
         execOperations.exec {
             commandLine 'python3', generator.get().asFile, '--artifacts', manifest,
                     '--registry', registry.get().asFile, '--texts', texts.get().asFile,
+                    '--module', moduleName.get(),
                     '--output', new File(assetDirectory.get().asFile, 'cyclon/notices.json')
         }
     }
@@ -31,6 +33,7 @@ androidComponents.onVariants(androidComponents.selector().all()) { variant ->
     }.artifacts
     def output = layout.buildDirectory.dir("generated/cyclonNotices/${variant.name}")
     def task = tasks.register("generate${variant.name.capitalize()}CyclonNotices", CyclonGenerateNotices) {
+        moduleName.set(project.name)
         registry.set(rootProject.layout.projectDirectory.file('cyclon/notices/registry.json'))
         generator.set(rootProject.layout.projectDirectory.file('cyclon/notices/generate.py'))
         texts.set(rootProject.layout.projectDirectory.dir('cyclon/notices/texts'))
