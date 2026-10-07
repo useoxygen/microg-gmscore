@@ -65,6 +65,9 @@ jobs:
         run: "./gradlew :vending-app:testDefaultDebugUnitTest"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
+      - name: "Test legacy DroidGuard callback lifecycle"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :play-services-droidguard-core:testDebugUnitTest"
       - name: "Test Cyclon health and license text pagination"
         run: "./gradlew :play-services-core:testMapboxDefaultDebugUnitTest"
       - name: "Test calendar sync and geofence transitions"
