@@ -58,7 +58,8 @@ test('different account, lookalike origin and invalid IDs cannot write',()=>{
   const f=fixture(); f.response.value='opaque';
   for (const label of ['Google Account: Other (other@example.com)',
     'Google Account: Name (fixture@example.com) (other@example.com)',
-    'Google Account: Name (fixture@example.com) extra text']) {
+    'Google Account: Name (fixture@example.com) extra text',
+    'Google Account: Name (fixture@example.com), alert (other@example.com)']) {
     f.label=label; assert.equal(f.run(true),'account_mismatch');
     assert.equal(f.input.value,''); assert.equal(f.clicks,0);
   }
@@ -74,4 +75,8 @@ test('checkbox is attempted once and failures stay interactive',()=>{
 test('Google rejection is distinct from CAPTCHA completion',()=>{
   const f=fixture(); f.response.value='opaque'; f.messages=['Uh oh. Something went wrong. Please try again.'];
   assert.equal(f.run(true),'rejected'); assert.equal(f.clicks,0);
+});
+test('accepts the intended account when Google appends an account alert',()=>{
+  const f=fixture(); f.label='Google Account: Cora Liss  \n(' + account + '), Important account alert';
+  assert.equal(f.run(),'verification');
 });

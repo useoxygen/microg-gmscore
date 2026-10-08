@@ -60,7 +60,7 @@ import java.net.URLEncoder
 
 /** Lineage's DeviceSpecificActivity launches this and owns the wizard's NEXT/result contract. */
 @RequiresApi(Build.VERSION_CODES.M)
-class EnrollmentActivity : ComponentActivity() {
+class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
     private var status by mutableStateOf(R.string.cyclon_enrollment_intro)
     private var busy by mutableStateOf(false)
     private var browser by mutableStateOf<WebView?>(null)
@@ -78,9 +78,11 @@ class EnrollmentActivity : ComponentActivity() {
     private var helper by mutableStateOf(false)
     private var resumed = false
     private var challengeSince = 0L
-    private var revision = ""
-    private var revisionAt = 0L
-    private var challengeFingerprint = ""
+    private val puzzle by lazy { EnrollmentPuzzle(challengeScript, resources.displayMetrics.density, ::observeNote) }
+    private var transientRetries = 0
+    private var lastPhase: String? = null
+    private var lastObserve: String? = null
+    private fun observeNote(note: String) { if (note != lastObserve) { Log.i("CyclonEnrollment", "Observe $note"); lastObserve = note } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -162,7 +164,7 @@ class EnrollmentActivity : ComponentActivity() {
                             EnrollmentQuietButton(stringResource(R.string.cyclon_enrollment_later), Modifier.weight(1f, fill = false)) { finishSetup() }
                             if (status == R.string.cyclon_enrollment_web_error) Button(onClick = { retryRegistration() }, modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp), shape = EnrollmentShape) {
                                 Text(stringResource(R.string.cyclon_enrollment_retry))
-                            } else if (helper && registrationPage && !completed) OutlinedButton(onClick = { helper = false; revision = ""; status = R.string.cyclon_enrollment_challenge },
+                            } else if (helper && registrationPage && !completed) OutlinedButton(onClick = { helper = false; puzzle.reset(); status = R.string.cyclon_enrollment_challenge },
                                 modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp), shape = EnrollmentShape, border = BorderStroke(1.dp, colors.outline),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface)) {
                                 Text(stringResource(R.string.cyclon_enrollment_manual))
@@ -298,24 +300,40 @@ class EnrollmentActivity : ComponentActivity() {
                 handler.cancel(); failBrowser()
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) failBrowser()
+                if (!request.isForMainFrame) return
+                val uri = request.url
+                val known = allowed(uri)
+                Log.w("CyclonEnrollment", "Main-frame error ${error.errorCode} ${error.description} ${request.method} " +
+                    "${uri.host?.takeIf { known } ?: "other"} ${uri.path?.takeIf { known } ?: "other"}")
+                // Google's pages can drop a connection mid-load. Reloading a GET is safe; a failed POST may be the
+                // registration write, which is never replayed automatically.
+                if (error.errorCode in TRANSIENT_ERRORS && request.method == "GET" && known && transientRetries < 2) {
+                    val attempt = ++transientRetries
+                    lifecycleScope.launch {
+                        delay(1_500L * attempt)
+                        if (browser === view) view.loadUrl(uri.toString())
+                    }
+                    return
+                }
+                failBrowser()
             }
         }
         // Do not clear all microG cookies: other account flows can use the same cookie store.
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true)
         browser = view
+        transientRetries = 0
         view.loadUrl(authUrl)
         resumeRegistration()
     }
 
     private fun failBrowser() {
-        helper = false; revision = ""; busy = false; status = R.string.cyclon_enrollment_web_error
+        helper = false; puzzle.reset(); busy = false; status = R.string.cyclon_enrollment_web_error
         job?.cancel()
     }
 
     private fun retryRegistration() {
-        job?.cancel(); helper = false; revision = ""
+        job?.cancel(); helper = false; puzzle.reset()
         browser?.destroy(); browser = null
         val account = AccountManager.get(this).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
             .singleOrNull { it.name == accountName }
@@ -326,7 +344,7 @@ class EnrollmentActivity : ComponentActivity() {
         job?.cancel()
         pollStarted = System.currentTimeMillis()
         job = lifecycleScope.launch {
-            while (isActive && !completed && System.currentTimeMillis() - pollStarted < 600_000) {
+            while (isActive && !completed && System.currentTimeMillis() - pollStarted < POLL_WINDOW_MS) {
                 val view = browser ?: return@launch
                 if (isRegistration(view.url)) {
                     secureWindow(false)
@@ -345,6 +363,7 @@ class EnrollmentActivity : ComponentActivity() {
             .replace("__CYCLON_SUBMIT__", submit.toString())) { result ->
             if (isFinishing || isDestroyed || browser !== view || !isRegistration(view.url)) return@evaluateJavascript
             val phase = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
+            if (phase != lastPhase) { Log.i("CyclonEnrollment", "Registration phase $phase"); lastPhase = phase }
             when (phase) {
                 "ready" -> if (canSubmit && session?.admit() == true) {
                     canSubmit = false
@@ -357,77 +376,35 @@ class EnrollmentActivity : ComponentActivity() {
                 }
                 "challenge" -> {
                     if (challengeSince == 0L) challengeSince = android.os.SystemClock.elapsedRealtime()
-                    if (android.os.SystemClock.elapsedRealtime() - challengeSince > 120_000) helper = false
+                    if (android.os.SystemClock.elapsedRealtime() - challengeSince > ASSIST_WINDOW_MS) helper = false
                     busy = helper
                     status = if (helper) R.string.cyclon_enrollment_assisting else R.string.cyclon_enrollment_challenge
                 }
                 "verification" -> { busy = false; status = R.string.cyclon_enrollment_verifying }
                 "rejected" -> { busy = false; status = R.string.cyclon_enrollment_needs_help; job?.cancel() }
-                "account_mismatch" -> { busy = false; status = R.string.cyclon_enrollment_choose_web; job?.cancel() }
+                // Keep checking: the account label can be read mid-render. Nothing is filled or clicked until it matches.
+                "account_mismatch" -> { busy = false; status = R.string.cyclon_enrollment_choose_web }
             }
         }
     }
 
     override fun onResume() { super.onResume(); resumed = true; EnrollmentChallengeProvider.current = WeakReference(this) }
-    override fun onPause() { resumed = false; revision = ""; super.onPause() }
+    override fun onPause() { resumed = false; puzzle.reset(); super.onPause() }
 
-    internal fun challengeRequest(method: String, extras: Bundle?, active: AtomicBoolean, reply: (Bundle) -> Unit) {
-        fun result(phase: String) = reply(Bundle().apply { putString("state", JSONObject().put("phase", phase).toString()) })
+    override fun challengeRequest(method: String, extras: Bundle?, active: AtomicBoolean, reply: (Bundle) -> Unit) {
         val view = browser
         fun eligible() = active.get() && helper && resumed && !isFinishing && !isDestroyed && !completed &&
             browser === view && view != null && isRegistration(view.url) && window.decorView.hasWindowFocus() &&
             window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0
-        if (!eligible() || view == null) { result("inactive"); return }
+        if (!eligible() || view == null) {
+            observeNote("inactive helper=$helper resumed=$resumed focus=${window.decorView.hasWindowFocus()} secure=${window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0} registration=${isRegistration(view?.url)}")
+            reply(Bundle().apply { putString("state", JSONObject().put("phase", "inactive").toString()) }); return
+        }
         if (method == "stop") {
-            helper = false; revision = ""; busy = false; status = R.string.cyclon_enrollment_challenge
-            result("inactive"); return
+            helper = false; puzzle.reset(); busy = false; status = R.string.cyclon_enrollment_challenge
+            reply(Bundle().apply { putString("state", JSONObject().put("phase", "inactive").toString()) }); return
         }
-        val observation = challengeScript.replace("__ACTION__", "null").replace("__TILES__", "[]").replace("__EXPECTED__", "null").replace("__ACCOUNT__", JSONObject.quote(accountName))
-        view.evaluateJavascript(observation) { raw ->
-            if (!eligible()) { result("inactive"); return@evaluateJavascript }
-            val state = runCatching { JSONObject(raw) }.getOrNull()
-            if (state?.optString("phase") != "challenge") { result("waiting"); return@evaluateJavascript }
-            try {
-                val bounds = state.getJSONArray("bounds"); val viewport = state.getJSONArray("viewport")
-                val scale = view.width.toDouble() / viewport.getDouble(0)
-                val rawLeft = (bounds.getDouble(0) * scale).toInt(); val rawTop = (bounds.getDouble(1) * scale).toInt()
-                val rawRight = (bounds.getDouble(2) * scale).toInt(); val rawBottom = (bounds.getDouble(3) * scale).toInt()
-                // Google's iframe border can extend one CSS pixel beyond its viewport. Permit only
-                // that rounding/border margin; a clipped puzzle still cannot leave this process.
-                val border = kotlin.math.ceil(2 * scale).toInt()
-                require(rawLeft >= -border && rawTop >= -border && rawRight <= view.width + border && rawBottom <= view.height + border)
-                val left = rawLeft.coerceAtLeast(0); val top = rawTop.coerceAtLeast(0)
-                val width = rawRight.coerceAtMost(view.width) - left
-                val height = rawBottom.coerceAtMost(view.height) - top
-                require(width in 100..1600 && height in 100..2000)
-                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bitmap); canvas.translate(-left.toFloat(), -top.toFloat()); view.draw(canvas)
-                val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }.toByteArray(); bitmap.recycle()
-                require(bytes.size in 1..512*1024)
-                val fingerprint = state.getString("fingerprint")
-                val fresh = MessageDigest.getInstance("SHA-256").digest(bytes + fingerprint.toByteArray()).joinToString("") { "%02x".format(it) }
-                if (method == "observe") {
-                    revision = fresh; revisionAt = android.os.SystemClock.elapsedRealtime(); challengeFingerprint = fingerprint
-                    reply(Bundle().apply {
-                        putString("state", JSONObject().put("phase", "challenge").put("revision", fresh).put("tileCount", state.getInt("tileCount")).put("selected", state.getJSONArray("selected")).toString())
-                        putByteArray("image", bytes)
-                    })
-                } else {
-                    val tiles = extras?.getIntArray("tiles") ?: intArrayOf()
-                    val action = extras?.getString("action")
-                    if (extras?.getString("revision") != revision || fresh != revision || fingerprint != challengeFingerprint ||
-                        android.os.SystemClock.elapsedRealtime() - revisionAt > 30_000 || !eligible()) { result("stale"); return@evaluateJavascript }
-                    require(action in setOf("tiles", "verify") && tiles.size <= 16)
-                    // Consume before the effect. An ambiguous Binder response cannot replay this observation.
-                    revision = ""
-                    val command = challengeScript.replace("__ACTION__", JSONObject.quote(action)).replace("__TILES__", org.json.JSONArray(tiles.toList()).toString()).replace("__EXPECTED__", JSONObject.quote(fingerprint)).replace("__ACCOUNT__", JSONObject.quote(accountName))
-                    view.evaluateJavascript(command) { actionResult ->
-                        val phase = runCatching { JSONObject(actionResult).getString("phase") }.getOrDefault("unknown")
-                        result(phase.takeIf { it in setOf("acted", "stale", "refused") } ?: "unknown")
-                    }
-                }
-            } catch (_: Exception) { result("unavailable") }
-        }
+        puzzle.handle(method, extras, view, window, accountName, ::eligible, reply)
     }
 
     private fun finishSetup() {
@@ -441,21 +418,26 @@ class EnrollmentActivity : ComponentActivity() {
         if ((window.attributes.flags and flag != 0) == secure) return
         if (secure) window.addFlags(flag) else window.clearFlags(flag)
     }
-    override fun onDestroy() { helper = false; revision = ""; job?.cancel(); browser?.destroy(); browser = null; super.onDestroy() }
+    override fun onDestroy() { helper = false; puzzle.reset(); job?.cancel(); browser?.destroy(); browser = null; super.onDestroy() }
 
     companion object {
         /** Statuses that need the owner's action; the notice's words say so, its red rule only reinforces them. */
         private val PROBLEMS = setOf(R.string.cyclon_enrollment_network_error, R.string.cyclon_enrollment_web_error,
             R.string.cyclon_enrollment_signin_cancelled, R.string.cyclon_enrollment_needs_help,
             R.string.cyclon_enrollment_uncertain, R.string.cyclon_enrollment_choose_web)
-        private const val REGISTRATION = "https://www.google.com/android/uncertified/?hl=en"
-        private fun allowed(uri: Uri): Boolean = uri.scheme == "https" && uri.userInfo == null &&
+        internal const val REGISTRATION = "https://www.google.com/android/uncertified/?hl=en"
+        // Outlast Cyclon's own assistant bounds (twelve minutes, 30-second model calls) so normal solving never hits these.
+        internal const val POLL_WINDOW_MS = 20 * 60_000L
+        internal const val ASSIST_WINDOW_MS = 14 * 60_000L
+        internal val TRANSIENT_ERRORS = setOf(WebViewClient.ERROR_CONNECT, WebViewClient.ERROR_IO,
+            WebViewClient.ERROR_TIMEOUT, WebViewClient.ERROR_HOST_LOOKUP, WebViewClient.ERROR_UNKNOWN)
+        internal fun allowed(uri: Uri): Boolean = uri.scheme == "https" && uri.userInfo == null &&
             uri.port in setOf(-1, 443) && (uri.host == "accounts.google.com" ||
             // Google's account-session redirect, observed during the live enrollment test.
             uri.host == "gds.google.com" && uri.path == "/web/landing" ||
             uri.host == "myaccount.google.com" && uri.path == "/accounts/SetOSID" ||
             uri.host == "www.google.com" && (uri.path == "/android/uncertified/" || uri.path?.startsWith("/recaptcha/") == true))
-        private fun isRegistration(url: String?): Boolean = url?.let { Uri.parse(it) }?.let {
+        internal fun isRegistration(url: String?): Boolean = url?.let { Uri.parse(it) }?.let {
             allowed(it) && it.host == "www.google.com" && it.path == "/android/uncertified/"
         } == true
     }

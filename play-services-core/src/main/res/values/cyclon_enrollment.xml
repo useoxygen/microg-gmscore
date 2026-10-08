@@ -2,6 +2,8 @@
     <!-- Enrollment needs modern WebView main-frame error handling. Keep legacy microG available. -->
     <bool name="cyclon_enrollment_supported">false</bool>
     <string name="cyclon_enrollment_title">Connect Google</string>
+    <string name="cyclon_enrollment_background_running">Registering this phone with Google in the background.</string>
+    <string name="cyclon_enrollment_background_help">Finish registering this phone with Google. Tap to continue.</string>
     <!-- Names the step's purpose above the title; set in a monospace face, lowercase by design. -->
     <string name="cyclon_enrollment_eyebrow">google account</string>
     <string name="cyclon_enrollment_settings_summary">Finish account and phone registration</string>

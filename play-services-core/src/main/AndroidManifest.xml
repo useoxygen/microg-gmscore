@@ -559,6 +559,15 @@
             android:permission="android.permission.WRITE_SECURE_SETTINGS">
         </activity-alias>
 
+        <!-- Core starts background registration after the owner adds the account; same UI process and WebView data. -->
+        <service
+            android:name="org.microg.gms.cyclon.BackgroundEnrollmentService"
+            android:enabled="@bool/cyclon_enrollment_supported"
+            tools:targetApi="26"
+            android:exported="true"
+            android:process=":ui"
+            android:permission="android.permission.WRITE_SECURE_SETTINGS" />
+
         <!-- Shares LoginActivity's WebView and the foreground enrollment activity reference. -->
         <provider
             android:name="org.microg.gms.cyclon.EnrollmentChallengeProvider"
