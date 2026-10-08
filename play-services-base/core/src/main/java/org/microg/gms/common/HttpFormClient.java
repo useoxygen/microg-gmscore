@@ -80,7 +80,8 @@ public class HttpFormClient {
             }
         }
 
-        Log.d(TAG, "-- Request --\n" + content);
+        // Bodies carry account and session tokens; log them only when explicitly enabled (setprop log.tag.TAG VERBOSE).
+        if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Request --\n" + content);
         String replace = content.toString().trim().replace("\n", "");
         OutputStream os = connection.getOutputStream();
         os.write(replace.trim().getBytes());
@@ -97,7 +98,7 @@ public class HttpFormClient {
         }
 
         String result = new String(Utils.readStreamToEnd(connection.getInputStream()));
-        Log.d(TAG, "-- Response --\n" + result);
+        if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Response --\n" + result);
         return parseResponse(tClass, connection, result);
     }
 
