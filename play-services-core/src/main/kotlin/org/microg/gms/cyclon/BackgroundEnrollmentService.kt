@@ -248,9 +248,11 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
         reader?.close(); reader = null
         frames?.quitSafely(); frames = null
         // Losing the network mid-attempt (model calls and page loads fail) is not a failed puzzle: Core waits for one.
-        val outcome = when { completed -> "accepted"; reason !in PERMANENT && !online() -> "network"; else -> reason }
+        val offline = !online()
+        val outcome = when { completed -> "accepted"; reason !in PERMANENT && offline -> "network"; else -> reason }
         reportToCore(outcome)
-        if (!completed && outcome != "network" && (finalAttempt || reason in PERMANENT)) {
+        // Core stops after its final attempt, whatever the outcome; only a phone that is offline right now waits instead.
+        if (!completed && !offline && (finalAttempt || reason in PERMANENT)) {
             val open = PendingIntent.getActivity(this, 0, Intent(this, EnrollmentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             getSystemService(NotificationManager::class.java)
