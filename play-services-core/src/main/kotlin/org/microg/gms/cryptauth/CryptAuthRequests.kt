@@ -109,7 +109,8 @@ private suspend fun Context.cryptAuthQuery(url: String, authToken: String, reque
         setRequestProperty("Content-Type", "application/json")
     }
 
-    Log.d(TAG, "-- Request --\n$requestBody")
+    // Bodies carry authenticated device data; log them only when explicitly enabled.
+    if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Request --\n$requestBody")
     val os = connection.outputStream
     os.write(requestBody.toString().toByteArray())
     os.close()
@@ -125,7 +126,7 @@ private suspend fun Context.cryptAuthQuery(url: String, authToken: String, reque
     }
 
     val result = String(Utils.readStreamToEnd(connection.inputStream))
-    Log.d(TAG, "-- Response --\n$result")
+    if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Response --\n$result")
     try {
         JSONObject(result)
 
