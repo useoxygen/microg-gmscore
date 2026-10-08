@@ -18,17 +18,41 @@ the Google account, fills the ID without floating-point conversion, attempts
 the checkbox once and submits after verification. When Core starts the explicit
 setup alias with the owner's consent, the protected provider can observe only
 supported, visible image puzzles for the intended account and apply tile selection
-or Verify. Authentication, navigation and Register remain outside model actions.
-The paired Cyclon change owns consent, temporary authorization and bounded model
-inference. A recaptured image/DOM revision is consumed before each click; stale
-or uncertain effects cannot replay. Manual takeover stops assistance immediately.
+or Verify, or reload a different puzzle through reCAPTCHA's visible reload button.
+Authentication, navigation and Register remain outside model actions. The paired
+Cyclon change owns consent, temporary authorization and bounded model inference.
+Each observation token is consumed before a click and expires after a minute; the
+click requires the same puzzle (instruction, tile images and states, Verify), so
+Google's transient error text or frame movement no longer makes it stale, while a
+changed puzzle does. Stale or uncertain effects cannot replay. Manual takeover
+stops assistance immediately.
+
+`EnrollmentPuzzle` captures the puzzle from composited screen pixels (PixelCopy,
+API 26+): drawing the WebView into an offscreen canvas skipped unrasterized GPU
+tiles and sent blank columns. It prints each tile's index on the copy sent to
+Core, and reports `settling` while replacement photos or a new grid fade in.
+Account labels may end in a comma-separated status such as `, Important account
+alert`; the last parenthesized email still decides the account, and a mismatch
+keeps polling without filling or clicking anything.
+
+`BackgroundEnrollmentService` lets setup continue while registration runs. Core
+starts it (the service requires `WRITE_SECURE_SETTINGS`) after the owner added
+the account. It hosts the registration WebView in a `Presentation` on a private
+virtual display that only microG draws to and nobody sees, and uses the same
+page adapter and `EnrollmentPuzzle`. It never shows sign-in or account choice.
+Without a validated network it does nothing. It reports each outcome to Core's
+`ai.cyclon.core.google_enrollment` provider; an attempt that ends offline is
+reported as `network`. Only Core's final attempt, or a missing account, posts a
+notification that reopens enrollment on the owner's screen.
 
 Google can return `WILL_NOT_SIGN_IN` for silent web login; in that case the
 activity opens Google's normal registration/sign-in page. Authentication may
 need another password/MFA interaction. The navigation guard includes Google's
 specific `gds.google.com/web/landing` and `myaccount.google.com/accounts/SetOSID`
 session redirects, without admitting other subdomains or paths. Polling is
-bounded to ten minutes and can be resumed with Check registration. Browser/SSL
+bounded to twenty minutes and can be resumed with Check registration. Dropped
+GET loads retry twice; a failed POST may be the registration write and is never
+reloaded. Browser/SSL
 errors stop assistance and offer Try again. Retry retains submission admission
 and can reconcile a previous write without repeating it.
 

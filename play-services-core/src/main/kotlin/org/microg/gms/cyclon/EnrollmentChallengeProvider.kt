@@ -88,6 +88,6 @@ class EnrollmentChallengeProvider : ContentProvider() {
 
     companion object {
         const val PERMISSION = "ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE"
-        @Volatile internal var current = WeakReference<EnrollmentActivity>(null)
+        @Volatile internal var current = WeakReference<EnrollmentChallengeHost>(null)
     }
 }

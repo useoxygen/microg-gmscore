@@ -10,7 +10,8 @@
   const accountButton = document.querySelector('[aria-label^="Google Account:"]');
   const accountLabel = accountButton && accountButton.getAttribute('aria-label');
   // The last parenthesized field is Google's email; a display name can contain parentheses.
-  const signedIn = typeof accountLabel === 'string' && /\(([^()]*)\)\s*$/.exec(accountLabel);
+  // Google may append a comma-separated status, e.g. ", Important account alert" after a new sign-in.
+  const signedIn = typeof accountLabel === 'string' && /\(([^()]*)\)(?:,[^()]*)?\s*$/.exec(accountLabel);
   if (!signedIn || signedIn[1] !== account)
     return 'account_mismatch';
   // Google's input needs 19 digits, but its saved list may omit padding zeros.
