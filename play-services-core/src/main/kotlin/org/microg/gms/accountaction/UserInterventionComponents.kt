@@ -2,6 +2,7 @@
 package org.microg.gms.accountaction
 
 import android.app.Activity
+import android.os.Build.VERSION.SDK_INT
 import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -61,7 +62,8 @@ fun UserInterventionComponents(userActions: Map<Requirement, Boolean>) {
                 SettingsContract.setSettings(context, SettingsContract.Auth.getContentUri(context)) {
                     put(SettingsContract.Auth.INCLUDE_ANDROID_ID, true)
                 }
-                (context as? AccountActionActivity)?.refreshRequirements()
+                // This screen only exists on API 21+, where AccountActionActivity hosts it.
+                if (SDK_INT >= 21) (context as? AccountActionActivity)?.refreshRequirements()
             }
             ENABLE_GCM -> UserInterventionCommonComponent(
                 title = stringResource(id = R.string.auth_action_step_enable_gcm),
