@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: device registration authentication step.
 package org.microg.gms.accountaction
 
 import android.accounts.Account
@@ -61,7 +62,11 @@ class AccountActionActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshRequirements()
+    }
 
+    /** Re-checks every step, also after a step that changes a setting without leaving this screen. */
+    fun refreshRequirements() {
         for ((index, task) in taskMap.withIndex()) {
             taskMap[index] = task.component1() to checkRequirementSatisfied(task.component1())
         }

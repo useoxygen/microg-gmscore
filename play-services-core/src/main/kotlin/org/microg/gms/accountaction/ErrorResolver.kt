@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: bounded CryptAuth screen lock proof, clearer diagnosis, unsupported-management notice.
 package org.microg.gms.accountaction
 
 import android.accounts.Account
@@ -6,8 +7,10 @@ import android.content.Intent
 import android.os.Build.VERSION.SDK_INT
 import android.util.Log
 import kotlinx.coroutines.runBlocking
+import org.microg.gms.auth.AuthPrefs
 import org.microg.gms.auth.login.LoginActivity
 import org.microg.gms.common.Constants
+import org.microg.gms.cryptauth.CryptAuthHttpException
 import org.microg.gms.cryptauth.isLockscreenConfigured
 import org.microg.gms.cryptauth.sendDeviceScreenlockState
 import org.microg.gms.gcm.GcmDatabase
@@ -45,26 +48,10 @@ const val SERVER_ERROR = "Error 500"
 
 const val TAG = "GmsAccountErrorResolve"
 
-/**
- * Limits cryptauth sync keys calls, as apps keep requesting tokens while the server keeps
- * rejecting them, which would otherwise loop until the server rate limits us.
- */
-private object CryptAuthAttempts {
-    private const val MAX_ATTEMPTS = 3
-    private const val WINDOW_MILLIS = 60 * 60 * 1000L
+private val cryptAuthAttempts = CryptAuthAttempts()
 
-    private val attempts = mutableMapOf<String, MutableList<Long>>()
-
-    @Synchronized
-    fun tryAcquire(accountName: String): Boolean {
-        val now = System.currentTimeMillis()
-        val recent = attempts.getOrPut(accountName) { mutableListOf() }
-        recent.removeAll { now - it > WINDOW_MILLIS }
-        if (recent.size >= MAX_ATTEMPTS) return false
-        recent.add(now)
-        return true
-    }
-}
+/** Accounts already told in this process that their management mode is unsupported. */
+private val unsupportedNotified = HashSet<String>()
 
 /**
  * @return `null` if it is unknown how to resolve the problem, an
@@ -77,6 +64,7 @@ fun Context.resolveAuthErrorMessage(s: String): Resolution? = if (s.startsWith("
 } else when (s) {
     DEVICE_MANAGEMENT_SCREENLOCK_REQUIRED -> listOf(
         Requirement.ENABLE_CHECKIN,
+        Requirement.AUTH_WITH_DEVICE_REGISTRATION,
         Requirement.ENABLE_GCM,
         Requirement.ALLOW_MICROG_GCM,
         Requirement.ENABLE_LOCKSCREEN
@@ -98,10 +86,11 @@ fun Context.resolveAuthErrorMessage(s: String): Resolution? = if (s.startsWith("
     BAD_AUTHENTICATION -> Reauthenticate
 
     else -> null
-}.also { Log.d(TAG, "Error was: $s. Diagnosis: $it.") }
+}.also { Log.i(TAG, "Error was: $s. Diagnosis: ${it ?: "unknown, not resolved"}.") }
 
 fun Context.checkRequirementSatisfied(requirement: Requirement): Boolean = when (requirement) {
     Requirement.ENABLE_CHECKIN -> isCheckinEnabled()
+    Requirement.AUTH_WITH_DEVICE_REGISTRATION -> AuthPrefs.shouldIncludeAndroidId(this)
     Requirement.ENABLE_GCM -> isGcmEnabled()
     Requirement.ALLOW_MICROG_GCM -> isMicrogAppGcmAllowed()
     Requirement.ENABLE_LOCKSCREEN -> isLockscreenConfigured()
@@ -137,19 +126,9 @@ fun Context.isMicrogAppGcmAllowed(): Boolean {
 
 fun <T> Resolution.initiateFromBackgroundBlocking(context: Context, account: Account, retryFunction: RetryFunction<T>): T? {
     when (this) {
-        CryptAuthSyncKeys -> {
-            if (!CryptAuthAttempts.tryAcquire(account.name)) {
-                Log.w(TAG, "Not performing cryptauth sync keys call, too many attempts recently.")
-                return null
-            }
-            Log.d(TAG, "Resolving account error by performing cryptauth sync keys call.")
-            runBlocking {
-                context.sendDeviceScreenlockState(account)
-            }
-            return retryFunction.run()
-        }
+        CryptAuthSyncKeys -> return resolveWithCryptAuth(context, account, retryFunction)
         is NoResolution -> {
-            Log.w(TAG, "This account cannot be used with microG due to $reason")
+            context.reportNoResolution(account, this)
             return null
         }
         is UserSatisfyRequirements -> {
@@ -171,19 +150,9 @@ fun <T> Resolution.initiateFromBackgroundBlocking(context: Context, account: Acc
 
 fun <T> Resolution.initiateFromForegroundBlocking(context: Context, account: Account, retryFunction: RetryFunction<T>): T? {
     when (this) {
-        CryptAuthSyncKeys -> {
-            if (!CryptAuthAttempts.tryAcquire(account.name)) {
-                Log.w(TAG, "Not performing cryptauth sync keys call, too many attempts recently.")
-                return null
-            }
-            Log.d(TAG, "Resolving account error by performing cryptauth sync keys call.")
-            runBlocking {
-                context.sendDeviceScreenlockState(account)
-            }
-            return retryFunction.run()
-        }
+        CryptAuthSyncKeys -> return resolveWithCryptAuth(context, account, retryFunction)
         is NoResolution -> {
-            Log.w(TAG, "This account cannot be used with microG due to $reason")
+            context.reportNoResolution(account, this)
             return null
         }
         is UserSatisfyRequirements -> {
@@ -205,6 +174,67 @@ fun <T> Resolution.initiateFromForegroundBlocking(context: Context, account: Acc
             return null
         }
     }
+}
+
+/**
+ * Proves the secure screen lock to CryptAuth within [CryptAuthAttempts]' bounds, then retries the
+ * token request once.
+ *
+ * @return `null` without retrying when the proof is skipped or fails, so callers report the
+ * original error instead of a CryptAuth one
+ */
+private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFunction: RetryFunction<T>): T? {
+    when (val decision = cryptAuthAttempts.decide(account.name)) {
+        is CryptAuthAttempts.Decision.Wait -> {
+            val minutes = ((decision.untilMillis - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)
+            val cause = when (decision.reason) {
+                CryptAuthAttempts.WaitReason.RATE_LIMITED -> "CryptAuth rate limited this account"
+                CryptAuthAttempts.WaitReason.RECENT_FAILURE -> "the last attempt failed"
+                CryptAuthAttempts.WaitReason.ATTEMPTS_EXHAUSTED -> "recent attempts did not unlock this account"
+            }
+            Log.w(TAG, "Not proving the screen lock to Google: $cause. Next try in about $minutes min.")
+            return null
+        }
+        CryptAuthAttempts.Decision.InProgress -> {
+            Log.i(TAG, "Screen lock proof for this account is already running; not starting another.")
+            return null
+        }
+        CryptAuthAttempts.Decision.RetryTokenOnly -> {
+            Log.i(TAG, "Screen lock was just proven for this account; retrying the token only.")
+            return retryFunction.run()
+        }
+        CryptAuthAttempts.Decision.Run -> Unit
+    }
+    Log.i(TAG, "Resolving account error by proving the secure screen lock to Google (CryptAuth syncKeys/enrollKeys).")
+    var outcome = CryptAuthAttempts.Outcome.FAILED
+    try {
+        outcome = context.proveScreenlock(account)
+    } finally {
+        cryptAuthAttempts.record(account.name, outcome)
+    }
+    return if (outcome == CryptAuthAttempts.Outcome.SUCCEEDED) retryFunction.run() else null
+}
+
+private fun Context.proveScreenlock(account: Account): CryptAuthAttempts.Outcome = try {
+    if (runBlocking { sendDeviceScreenlockState(account) }) {
+        CryptAuthAttempts.Outcome.SUCCEEDED
+    } else {
+        Log.w(TAG, "Screen lock proof did not complete; see CryptAuthFlow logs.")
+        CryptAuthAttempts.Outcome.FAILED
+    }
+} catch (e: CryptAuthHttpException) {
+    Log.w(TAG, "CryptAuth refused the screen lock proof with HTTP ${e.code}.")
+    if (e.code == 429) CryptAuthAttempts.Outcome.RATE_LIMITED else CryptAuthAttempts.Outcome.FAILED
+} catch (e: Exception) {
+    Log.w(TAG, "Screen lock proof failed: ${e.javaClass.simpleName}: ${e.message}")
+    CryptAuthAttempts.Outcome.FAILED
+}
+
+private fun Context.reportNoResolution(account: Account, resolution: NoResolution) {
+    Log.w(TAG, "This account cannot be used with microG due to ${resolution.reason}: its organization requires " +
+            "advanced mobile management or admin approval, which microG does not support.")
+    val first = synchronized(unsupportedNotified) { unsupportedNotified.add(account.name) }
+    if (first && SDK_INT >= 21) sendAccountUnsupportedNotification(account)
 }
 
 interface RetryFunction<T> {

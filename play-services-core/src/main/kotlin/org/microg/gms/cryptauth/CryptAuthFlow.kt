@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: enroll the requested user key and log each step of the screen lock proof.
 package org.microg.gms.cryptauth
 
 import android.accounts.Account
@@ -83,14 +84,21 @@ suspend fun Context.sendDeviceScreenlockState(accountName: String): Boolean {
     }
 
     val session: String = cryptAuthSyncKeysResult.get(CRYPTAUTH_FIELD_SESSION_ID) as String
-    // Server asks for the user key to be created by answering with keyCreation ACTIVE
-    val newUserKey = if (cryptAuthSyncKeysResult.isUserKeyCreationRequested()) {
-        Log.d(TAG, "Server requested creation of user key, enrolling it")
-        getOrCreateCryptAuthUserKey(accountName)
-    } else null
+    val newUserKey = when (userKeyInstruction(cryptAuthSyncKeysResult)) {
+        UserKeyInstruction.NONE -> null
+        UserKeyInstruction.CREATE -> {
+            Log.i(TAG, "CryptAuth asked for the account's P256 user key; enrolling it.")
+            getOrCreateCryptAuthUserKey(accountName)
+        }
+        UserKeyInstruction.UNSUPPORTED -> {
+            Log.w(TAG, "CryptAuth asked for a user key microG cannot create. Cannot complete flow.")
+            return false
+        }
+    }
     val cryptAuthEnrollKeysResult = cryptAuthEnrollKeys(authToken, session, newUserKey)
 
     return if (cryptAuthEnrollKeysResult != null) {
+        Log.i(TAG, "CryptAuth enrollKeys accepted (${if (newUserKey != null) "user key enrolled" else "no new key"}).")
         /* Give Google server some time to process the new information.
          * This leads to higher success rate compared to sending
          * the next query immediately after this one. Tests show that it
@@ -99,15 +107,9 @@ suspend fun Context.sendDeviceScreenlockState(accountName: String): Boolean {
         delay(AFTER_REQUEST_DELAY)
         true
     } else {
+        Log.w(TAG, "CryptAuth enrollKeys returned no readable response.")
         false
     }
-}
-
-private fun JSONObject.isUserKeyCreationRequested(): Boolean {
-    val responses = optJSONArray(CRYPTAUTH_FIELD_SYNC_SINGLE_KEY_RESPONSES) ?: return false
-    // Responses are in the order of the sync requests, which only contain the user key
-    val keyCreation = responses.optJSONObject(0)?.optString(CRYPTAUTH_FIELD_KEY_CREATION)
-    return keyCreation == "ACTIVE" || keyCreation == "INACTIVE"
 }
 
 private suspend fun Context.registerForCryptAuth(checkinInfo: LastCheckinInfo, instanceId: String): Bundle = completeRegisterRequest(

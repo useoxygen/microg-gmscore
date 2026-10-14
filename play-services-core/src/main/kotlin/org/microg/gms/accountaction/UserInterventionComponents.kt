@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: device registration authentication step.
 package org.microg.gms.accountaction
 
 import android.app.Activity
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.google.android.gms.R
 import org.microg.gms.accountaction.Requirement.*
 import org.microg.gms.common.Constants
+import org.microg.gms.settings.SettingsContract
 import org.microg.gms.ui.AskPushPermission
 
 const val ACTION_CHECKIN = "org.microg.gms.settings.CHECKIN_SETTINGS"
@@ -49,6 +51,17 @@ fun UserInterventionComponents(userActions: Map<Requirement, Boolean>) {
                 completed = action.component2()
             ) {
                 Intent(ACTION_CHECKIN).let { context.startActivityForResult(it, 0) }
+            }
+            AUTH_WITH_DEVICE_REGISTRATION -> UserInterventionCommonComponent(
+                title = stringResource(id = R.string.auth_action_step_auth_with_device_registration),
+                description = stringResource(id = R.string.auth_action_step_auth_with_device_registration_description),
+                sequenceNumber = displayIndex,
+                completed = action.component2()
+            ) {
+                SettingsContract.setSettings(context, SettingsContract.Auth.getContentUri(context)) {
+                    put(SettingsContract.Auth.INCLUDE_ANDROID_ID, true)
+                }
+                (context as? AccountActionActivity)?.refreshRequirements()
             }
             ENABLE_GCM -> UserInterventionCommonComponent(
                 title = stringResource(id = R.string.auth_action_step_enable_gcm),

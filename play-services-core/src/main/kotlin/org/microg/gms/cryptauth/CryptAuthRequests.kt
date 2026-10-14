@@ -1,13 +1,14 @@
+// Modified by Cyclon in 2026: Workspace screen lock proof (enrolled user key, typed HTTP errors, host-testable requests).
 package org.microg.gms.cryptauth
 
 import android.content.Context
-import android.util.Base64
 import android.util.Log
 import com.google.android.gms.BuildConfig
 import cryptauthv2.ApplicationSpecificMetadata
 import cryptauthv2.ClientAppMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.toByteString
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,15 +27,79 @@ private const val CRYPTAUTH_BASE_URL = "https://cryptauthenrollment.googleapis.c
 private const val CRYPTAUTH_METHOD_SYNC_KEYS = "v1:syncKeys"
 private const val CRYPTAUTH_METHOD_ENROLL_KEYS = "v1:enrollKeys"
 
+private const val CRYPTAUTH_TIMEOUT_MILLIS = 30_000
+
 private const val API_KEY = "AIzaSyAP-gfH3qvi6vgHZbSYwQ_XHqV_mXHhzIk"
 internal const val CERTIFICATE = "58E1C4133F7441EC3D2C270270A14802DA47BA0E"
 
 internal const val CRYPTAUTH_FIELD_SESSION_ID = "randomSessionId"
 internal const val CRYPTAUTH_FIELD_SYNC_SINGLE_KEY_RESPONSES = "syncSingleKeyResponses"
 internal const val CRYPTAUTH_FIELD_KEY_CREATION = "keyCreation"
+internal const val CRYPTAUTH_FIELD_KEY_TYPE = "keyType"
 
 internal const val CRYPTAUTH_KEY_NAME_USER_KEY = "PublicKey"
 
+/**
+ * Handle sent for the user key bundle before this device enrolled a key of its own. The bytes are
+ * `device_key\n`; Chromium uses `device_key` as its fixed user key handle. The value is unchanged
+ * (the server answers it with a key creation request); like real handles it is now sent as the
+ * proto3 JSON array that the repeated `key_handles` field expects.
+ */
+private const val PLACEHOLDER_USER_KEY_HANDLE = "ZGV2aWNlX2tleQo="
+
+/** Thrown for a non-200 CryptAuth reply; [code] 429 means Google rate limits this account. */
+class CryptAuthHttpException(val code: Int, message: String?) : IOException("HTTP $code: $message")
+
+/** What the SyncKeys reply asks for the user key bundle. */
+internal enum class UserKeyInstruction { NONE, CREATE, UNSUPPORTED }
+
+/**
+ * Reads the user key bundle's `keyCreation` and `keyType`. Responses come in request order and
+ * the request only names the user key bundle. Proto3 JSON may render enums as names or numbers.
+ */
+internal fun userKeyInstruction(syncKeysResponse: JSONObject): UserKeyInstruction {
+    val response = syncKeysResponse.optJSONArray(CRYPTAUTH_FIELD_SYNC_SINGLE_KEY_RESPONSES)?.optJSONObject(0)
+        ?: return UserKeyInstruction.NONE
+    val creation = response.opt(CRYPTAUTH_FIELD_KEY_CREATION)?.toString()
+    if (creation == null || creation == "NONE" || creation == "0") return UserKeyInstruction.NONE
+    if (creation != "ACTIVE" && creation != "1" && creation != "INACTIVE" && creation != "2") return UserKeyInstruction.UNSUPPORTED
+    val type = response.opt(CRYPTAUTH_FIELD_KEY_TYPE)?.toString()
+    // A missing type is not proof of P256, but the user key bundle only holds P256 keys.
+    return if (type == null || type == "P256" || type == "4") UserKeyInstruction.CREATE else UserKeyInstruction.UNSUPPORTED
+}
+
+internal fun syncSingleKeyRequests(userKey: CryptAuthUserKey?): JSONArray = jsonArrayOf(
+    jsonObjectOf(
+        "keyName" to CRYPTAUTH_KEY_NAME_USER_KEY,
+        "keyHandles" to jsonArrayOf(userKey?.handle?.toByteString()?.base64() ?: PLACEHOLDER_USER_KEY_HANDLE)
+    )
+)
+
+/**
+ * Builds the EnrollKeys body. `randomSessionId` is proto `bytes`, so the proof signs its decoded
+ * bytes, as Chromium's `CryptAuthV2EnrollerImpl` does.
+ *
+ * @throws IllegalArgumentException if a key must be enrolled but [session] is not Base64
+ */
+internal fun enrollKeysRequest(session: String, newUserKey: CryptAuthUserKey?): JSONObject {
+    val enrollSingleKeyRequests = JSONArray()
+    if (newUserKey != null) {
+        val sessionBytes = requireNotNull(session.decodeBase64()) { "randomSessionId is not Base64" }.toByteArray()
+        enrollSingleKeyRequests.put(
+            jsonObjectOf(
+                "keyName" to CRYPTAUTH_KEY_NAME_USER_KEY,
+                "newKeyHandle" to newUserKey.handle.toByteString().base64(),
+                "keyMaterial" to newUserKey.keyMaterial.toByteString().base64(),
+                "keyProof" to newUserKey.computeKeyProof(sessionBytes).toByteString().base64()
+            )
+        )
+    }
+    return jsonObjectOf(
+        CRYPTAUTH_FIELD_SESSION_ID to session,
+        "clientEphemeralDh" to "",
+        "enrollSingleKeyRequests" to enrollSingleKeyRequests,
+    )
+}
 
 internal suspend fun Context.cryptAuthSyncKeys(authToken: String, instanceId: String, instanceToken: String, androidId: Long, userKey: CryptAuthUserKey?): JSONObject? {
     // CryptAuth sync request tells server whether or not screenlock is enabled
@@ -77,13 +142,7 @@ internal suspend fun Context.cryptAuthSyncKeys(authToken: String, instanceId: St
     val jsonBody = jsonObjectOf(
         "applicationName" to Constants.GMS_PACKAGE_NAME,
         "clientVersion" to "1.0.0",
-        "syncSingleKeyRequests" to jsonArrayOf(
-            jsonObjectOf(
-                "keyName" to CRYPTAUTH_KEY_NAME_USER_KEY,
-                "keyHandles" to (userKey?.let { jsonArrayOf(Base64.encodeToString(it.handle, Base64.NO_WRAP)) }
-                    ?: "ZGV2aWNlX2tleQo=") // base64 for `device_key`
-            )
-        ),
+        "syncSingleKeyRequests" to syncSingleKeyRequests(userKey),
         "clientMetadata" to jsonObjectOf(
             "invocationReason" to "NEW_ACCOUNT"
         ),
@@ -93,27 +152,8 @@ internal suspend fun Context.cryptAuthSyncKeys(authToken: String, instanceId: St
     return cryptAuthQuery(CRYPTAUTH_BASE_URL + CRYPTAUTH_METHOD_SYNC_KEYS, authToken, jsonBody)
 }
 
-internal suspend fun Context.cryptAuthEnrollKeys(authToken: String, session: String, newUserKey: CryptAuthUserKey?): JSONObject? {
-    val enrollSingleKeyRequests = JSONArray()
-    if (newUserKey != null) {
-        val sessionBytes = Base64.decode(session, Base64.DEFAULT)
-        enrollSingleKeyRequests.put(
-            jsonObjectOf(
-                "keyName" to CRYPTAUTH_KEY_NAME_USER_KEY,
-                "newKeyHandle" to Base64.encodeToString(newUserKey.handle, Base64.NO_WRAP),
-                "keyMaterial" to Base64.encodeToString(newUserKey.keyMaterial, Base64.NO_WRAP),
-                "keyProof" to Base64.encodeToString(newUserKey.computeKeyProof(sessionBytes), Base64.NO_WRAP)
-            )
-        )
-    }
-    val jsonBody = jsonObjectOf(
-        CRYPTAUTH_FIELD_SESSION_ID to session,
-        "clientEphemeralDh" to "",
-        "enrollSingleKeyRequests" to enrollSingleKeyRequests,
-    )
-
-    return cryptAuthQuery(CRYPTAUTH_BASE_URL + CRYPTAUTH_METHOD_ENROLL_KEYS, authToken, jsonBody)
-}
+internal suspend fun Context.cryptAuthEnrollKeys(authToken: String, session: String, newUserKey: CryptAuthUserKey?): JSONObject? =
+    cryptAuthQuery(CRYPTAUTH_BASE_URL + CRYPTAUTH_METHOD_ENROLL_KEYS, authToken, enrollKeysRequest(session, newUserKey))
 
 private suspend fun Context.cryptAuthQuery(url: String, authToken: String, requestBody: JSONObject) = withContext(
     Dispatchers.IO) {
@@ -126,6 +166,8 @@ private suspend fun Context.cryptAuthQuery(url: String, authToken: String, reque
         setRequestProperty("x-android-cert", CERTIFICATE)
         setRequestProperty("Authorization", "Bearer $authToken")
         setRequestProperty("Content-Type", "application/json")
+        connectTimeout = CRYPTAUTH_TIMEOUT_MILLIS
+        readTimeout = CRYPTAUTH_TIMEOUT_MILLIS
     }
 
     // Bodies carry authenticated device data; log them only when explicitly enabled.
@@ -134,14 +176,15 @@ private suspend fun Context.cryptAuthQuery(url: String, authToken: String, reque
     os.write(requestBody.toString().toByteArray())
     os.close()
 
-    if (connection.getResponseCode() != 200) {
+    val responseCode = connection.getResponseCode()
+    if (responseCode != 200) {
         var error = connection.getResponseMessage()
         try {
-            error = String(Utils.readStreamToEnd(connection.errorStream))
+            connection.errorStream?.let { error = String(Utils.readStreamToEnd(it)) }
         } catch (e: IOException) {
             // Ignore
         }
-        throw IOException(error)
+        throw CryptAuthHttpException(responseCode, error)
     }
 
     val result = String(Utils.readStreamToEnd(connection.inputStream))

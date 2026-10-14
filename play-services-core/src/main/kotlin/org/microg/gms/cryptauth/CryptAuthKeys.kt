@@ -2,15 +2,21 @@
  * SPDX-FileCopyrightText: 2026 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
  */
+// Modified by Cyclon in 2026: key file kept out of backups, okio Base64 for host tests, serialized key creation.
 
 package org.microg.gms.cryptauth
 
 import android.content.Context
-import android.util.Base64
+import android.os.Build.VERSION.SDK_INT
+import android.util.AtomicFile
+import android.util.Log
+import okio.ByteString.Companion.decodeBase64
+import okio.ByteString.Companion.encodeUtf8
 import okio.ByteString.Companion.toByteString
 import securemessage.EcP256PublicKey
 import securemessage.GenericPublicKey
 import securemessage.PublicKeyType
+import java.io.File
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -22,21 +28,21 @@ import java.security.spec.ECGenParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 
-private const val PREFERENCES_NAME = "cryptauth_keys"
-private const val PREF_PRIVATE_KEY = "private_key"
-private const val PREF_PUBLIC_KEY = "public_key"
+private const val TAG = "CryptAuthKeys"
+
+private const val KEY_DIRECTORY = "cryptauth_keys"
 
 /**
  * Salt prepended to the random session id when computing the proof of an enrolled key.
- * See Chromium's `CryptAuthKeyProofComputerImpl`.
+ * See Chromium's `CryptAuthKeyProofComputerImpl` and `kCryptAuthKeyProofSalt`.
  */
-private const val KEY_PROOF_SALT = "CryptAuth Key Proof"
+internal const val KEY_PROOF_SALT = "CryptAuth Key Proof"
 
 /**
  * P256 user key pair enrolled in the `PublicKey` key bundle. Google expects this key to exist
  * after answering a SyncKeys request with `keyCreation: ACTIVE`.
  */
-internal class CryptAuthUserKey(private val keyPair: KeyPair) {
+internal class CryptAuthUserKey(val keyPair: KeyPair) {
 
     /** Serialized SecureMessage `GenericPublicKey`, the format CryptAuth expects for P256 keys. */
     val keyMaterial: ByteArray by lazy {
@@ -59,39 +65,81 @@ internal class CryptAuthUserKey(private val keyPair: KeyPair) {
         update(randomSessionId)
         sign()
     }
+
+    /** Two Base64 lines: X.509 public key, then PKCS#8 private key. */
+    fun serialize(): String =
+        keyPair.public.encoded.toByteString().base64() + "\n" + keyPair.private.encoded.toByteString().base64() + "\n"
+
+    companion object {
+        fun generate(): CryptAuthUserKey =
+            CryptAuthUserKey(KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair())
+
+        /** @return `null` if [serialized] is not a key written by [serialize]. */
+        fun deserialize(serialized: String): CryptAuthUserKey? = try {
+            val lines = serialized.lines().filter { it.isNotBlank() }
+            if (lines.size != 2) null else {
+                val publicKey = lines[0].decodeBase64() ?: return null
+                val privateKey = lines[1].decodeBase64() ?: return null
+                val keyFactory = KeyFactory.getInstance("EC")
+                CryptAuthUserKey(
+                    KeyPair(
+                        keyFactory.generatePublic(X509EncodedKeySpec(publicKey.toByteArray())),
+                        keyFactory.generatePrivate(PKCS8EncodedKeySpec(privateKey.toByteArray()))
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
 }
 
 /** P256 coordinates are encoded as fixed 33 byte two's complement, as done by SecureMessage. */
-private fun BigInteger.toTwosComplement(): ByteArray {
+internal fun BigInteger.toTwosComplement(): ByteArray {
     val bytes = toByteArray()
     return if (bytes.size >= 33) bytes.copyOfRange(bytes.size - 33, bytes.size) else ByteArray(33 - bytes.size) + bytes
 }
 
-private fun keyPreferenceKey(accountName: String, key: String) = "$accountName:$key"
+/**
+ * The key file lives outside auto backup: a restored private key on another device must not
+ * claim this device's enrollment. Losing it is harmless, CryptAuth asks for a new key.
+ */
+private fun Context.cryptAuthKeyFile(accountName: String): AtomicFile {
+    val base = if (SDK_INT >= 21) noBackupFilesDir else filesDir
+    val directory = File(base, KEY_DIRECTORY).apply { mkdirs() }
+    return AtomicFile(File(directory, accountName.encodeUtf8().sha256().hex()))
+}
 
 internal fun Context.getCryptAuthUserKey(accountName: String): CryptAuthUserKey? {
-    val preferences = getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-    val privateKey = preferences.getString(keyPreferenceKey(accountName, PREF_PRIVATE_KEY), null) ?: return null
-    val publicKey = preferences.getString(keyPreferenceKey(accountName, PREF_PUBLIC_KEY), null) ?: return null
+    val file = cryptAuthKeyFile(accountName)
+    if (!file.baseFile.exists()) return null
     return try {
-        val keyFactory = KeyFactory.getInstance("EC")
-        CryptAuthUserKey(
-            KeyPair(
-                keyFactory.generatePublic(X509EncodedKeySpec(Base64.decode(publicKey, Base64.NO_WRAP))),
-                keyFactory.generatePrivate(PKCS8EncodedKeySpec(Base64.decode(privateKey, Base64.NO_WRAP)))
-            )
-        )
+        CryptAuthUserKey.deserialize(String(file.readFully())).also {
+            if (it == null) Log.w(TAG, "Stored CryptAuth user key is unreadable; a new key will be created if requested.")
+        }
     } catch (e: Exception) {
+        Log.w(TAG, "Failed to read CryptAuth user key", e)
         null
     }
 }
 
-internal fun Context.getOrCreateCryptAuthUserKey(accountName: String): CryptAuthUserKey {
+private val keyCreationLock = Any()
+
+/**
+ * Reuses the account's existing key, as Chromium does for the user key pair, so that a repeated
+ * creation request never rotates an already enrolled key.
+ */
+internal fun Context.getOrCreateCryptAuthUserKey(accountName: String): CryptAuthUserKey = synchronized(keyCreationLock) {
     getCryptAuthUserKey(accountName)?.let { return it }
-    val keyPair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
-    getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE).edit()
-        .putString(keyPreferenceKey(accountName, PREF_PRIVATE_KEY), Base64.encodeToString(keyPair.private.encoded, Base64.NO_WRAP))
-        .putString(keyPreferenceKey(accountName, PREF_PUBLIC_KEY), Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP))
-        .apply()
-    return CryptAuthUserKey(keyPair)
+    val key = CryptAuthUserKey.generate()
+    val file = cryptAuthKeyFile(accountName)
+    val stream = file.startWrite()
+    try {
+        stream.write(key.serialize().toByteArray())
+        file.finishWrite(stream)
+    } catch (e: Exception) {
+        file.failWrite(stream)
+        throw e
+    }
+    return key
 }
