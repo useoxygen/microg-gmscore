@@ -10,11 +10,15 @@ import android.accounts.Account;
 import android.accounts.AccountAuthenticatorResponse;
 import android.accounts.AccountManager;
 import android.accounts.NetworkErrorException;
+import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Base64;
 import android.util.Log;
+
+import androidx.core.app.PendingIntentCompat;
 
 import com.google.android.gms.common.internal.CertData;
 import org.microg.gms.accountaction.ErrorResolverKt;
@@ -25,11 +29,13 @@ import org.microg.gms.auth.login.LoginActivity;
 import org.microg.gms.common.NotOkayException;
 import org.microg.gms.common.PackageUtils;
 import org.microg.gms.auth.AuthResponse;
+import org.microg.gms.ui.UnpackingRedirectActivity;
 import org.microg.gms.utils.PackageManagerUtilsKt;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 import static android.accounts.AccountManager.*;
 import static android.os.Build.VERSION.SDK_INT;
@@ -132,7 +138,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
                 i.putExtra(KEY_ACCOUNT_NAME, account.name);
                 i.putExtra(KEY_OVERRIDE_PACKAGE, overridePackage);
                 i.putExtra(KEY_OVERRIDE_CERTIFICATE, overrideCert.getBytes());
-                result.putParcelable(KEY_INTENT, i);
+                result.putParcelable(KEY_INTENT, redirectToUnexportedActivity(i));
                 return result;
             }
         } else {
@@ -162,7 +168,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
                 } catch (Exception e) {
                     Log.w(TAG, "Can't decode consent data: ", e);
                 }
-                result.putParcelable(KEY_INTENT, i);
+                result.putParcelable(KEY_INTENT, redirectToUnexportedActivity(i));
                 return result;
             }
         } catch (ReauthenticationRequiredException e) {
@@ -208,6 +214,19 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         intent.putExtra(LoginActivity.EXTRA_RE_AUTH_ACCOUNT, account);
         result.putParcelable(KEY_INTENT, intent);
         return result;
+    }
+
+    /**
+     * AccountManager starts KEY_INTENT from the caller's process, which cannot open our
+     * unexported consent activities. Hand out the exported redirect instead, carrying an
+     * immutable pending intent so the caller still cannot change what the prompt shows.
+     */
+    private Intent redirectToUnexportedActivity(Intent target) {
+        // Extras do not distinguish pending intents, so give each request its own identity.
+        // Otherwise a concurrent request would receive an earlier caller's prompt.
+        target.setData(Uri.fromParts("microg-auth", UUID.randomUUID().toString(), null));
+        PendingIntent pendingIntent = PendingIntentCompat.getActivity(context, 0, target, PendingIntent.FLAG_ONE_SHOT, false);
+        return UnpackingRedirectActivity.createIntent(context, pendingIntent);
     }
 
     private static class ReauthenticationRequiredException extends Exception {
