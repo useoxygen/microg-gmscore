@@ -17,6 +17,8 @@ configurations {
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.
+    testImplementation 'org.json:json:20240303'
     implementation project(':people-sync')
     implementation project(':people-sync-android')
     implementation project(':calendar-sync')

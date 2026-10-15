@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: enroll the requested user key and log each step of the screen lock proof.
 package org.microg.gms.cryptauth
 
 import android.accounts.Account
@@ -73,7 +74,7 @@ suspend fun Context.sendDeviceScreenlockState(accountName: String): Boolean {
         return false
     }
 
-    val cryptAuthSyncKeysResult = cryptAuthSyncKeys(authToken, instanceId, instanceToken, checkinInfo.androidId)
+    val cryptAuthSyncKeysResult = cryptAuthSyncKeys(authToken, instanceId, instanceToken, checkinInfo.androidId, getCryptAuthUserKey(accountName))
     if (cryptAuthSyncKeysResult == null
         || !cryptAuthSyncKeysResult.has(CRYPTAUTH_FIELD_SESSION_ID)
         || cryptAuthSyncKeysResult.get(CRYPTAUTH_FIELD_SESSION_ID) !is String
@@ -83,9 +84,21 @@ suspend fun Context.sendDeviceScreenlockState(accountName: String): Boolean {
     }
 
     val session: String = cryptAuthSyncKeysResult.get(CRYPTAUTH_FIELD_SESSION_ID) as String
-    val cryptAuthEnrollKeysResult = cryptAuthEnrollKeys(authToken, session)
+    val newUserKey = when (userKeyInstruction(cryptAuthSyncKeysResult)) {
+        UserKeyInstruction.NONE -> null
+        UserKeyInstruction.CREATE -> {
+            Log.i(TAG, "CryptAuth asked for the account's P256 user key; enrolling it.")
+            getOrCreateCryptAuthUserKey(accountName)
+        }
+        UserKeyInstruction.UNSUPPORTED -> {
+            Log.w(TAG, "CryptAuth asked for a user key microG cannot create. Cannot complete flow.")
+            return false
+        }
+    }
+    val cryptAuthEnrollKeysResult = cryptAuthEnrollKeys(authToken, session, newUserKey)
 
     return if (cryptAuthEnrollKeysResult != null) {
+        Log.i(TAG, "CryptAuth enrollKeys accepted (${if (newUserKey != null) "user key enrolled" else "no new key"}).")
         /* Give Google server some time to process the new information.
          * This leads to higher success rate compared to sending
          * the next query immediately after this one. Tests show that it
@@ -94,6 +107,7 @@ suspend fun Context.sendDeviceScreenlockState(accountName: String): Boolean {
         delay(AFTER_REQUEST_DELAY)
         true
     } else {
+        Log.w(TAG, "CryptAuth enrollKeys returned no readable response.")
         false
     }
 }

@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: notice for work accounts whose management mode is unsupported.
 package org.microg.gms.accountaction
 
 import android.Manifest
@@ -18,6 +19,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.PendingIntentCompat
 import com.google.android.gms.R
 import org.microg.gms.auth.login.LoginActivity
+import org.microg.gms.ui.MainSettingsActivity
 
 private const val CHANNEL_ID = "AccountNotification"
 
@@ -90,6 +92,34 @@ fun Context.sendAccountActionNotification(account: Account, action: UserSatisfyR
         NotificationManagerCompat.from(this).notify(account.hashCode(), notification)
     }
 
+}
+
+/** Explains, once, that the account's organization requires management microG cannot provide. */
+@RequiresApi(21)
+fun Context.sendAccountUnsupportedNotification(account: Account) {
+    registerAccountNotificationChannel()
+
+    val intent = PendingIntentCompat.getActivity(
+        this, account.hashCode(), Intent(this, MainSettingsActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT, false
+    )
+    val text = getString(R.string.auth_action_unsupported_notification_content, account.name)
+    val notification: Notification =
+        NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_manage_accounts)
+            .setSound(null)
+            .setContentTitle(getString(R.string.auth_action_unsupported_notification_title))
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setOnlyAlertOnce(true)
+            .setContentIntent(intent)
+            .setAutoCancel(true)
+            .build()
+
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+    ) {
+        NotificationManagerCompat.from(this).notify(account.hashCode(), notification)
+    }
 }
 
 fun Context.registerAccountNotificationChannel() {

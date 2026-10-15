@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: device registration authentication requirement.
 package org.microg.gms.accountaction
 
 import java.io.Serializable
@@ -21,6 +22,8 @@ data class UserSatisfyRequirements(val actions: Set<Requirement>) : Resolution()
 
 enum class Requirement {
     ENABLE_CHECKIN,
+    /** "Authenticate with device registration": without it Google cannot link tokens to the screen lock proof. */
+    AUTH_WITH_DEVICE_REGISTRATION,
     ENABLE_GCM,
     ALLOW_MICROG_GCM,
     ENABLE_LOCKSCREEN
