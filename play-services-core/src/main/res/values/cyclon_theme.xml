@@ -16,12 +16,6 @@
         <item name="android:textColorPrimary">@color/cyclon_ink</item>
         <item name="android:textColorSecondary">@color/cyclon_muted</item>
         <item name="android:textColorLink">@color/cyclon_ink</item>
-        <item name="materialButtonStyle">@style/Widget.Cyclon.Button</item>
-        <item name="materialButtonOutlinedStyle">@style/Widget.Cyclon.Button.Outlined</item>
-        <item name="borderlessButtonStyle">@style/Widget.Cyclon.Button.Text</item>
-        <item name="buttonBarButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
-        <item name="alertDialogTheme">@style/ThemeOverlay.Cyclon.Dialog.Alert</item>
-        <item name="materialAlertDialogTheme">@style/ThemeOverlay.Cyclon.MaterialAlertDialog</item>
     </style>
     <!-- Titles use the UI font; Space Mono is reserved for the agent's voice and clock digits. -->
     <style name="TextAppearance.CyclonServices.Title" parent="TextAppearance.Material3.HeadlineLarge">
@@ -139,12 +133,14 @@
     </style>
 
     <style name="ThemeOverlay.Cyclon.Dialog.Alert" parent="ThemeOverlay.Material3.Dialog.Alert">
+        <item name="buttonBarButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
         <item name="buttonBarPositiveButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
         <item name="buttonBarNegativeButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
         <item name="buttonBarNeutralButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
     </style>
 
     <style name="ThemeOverlay.Cyclon.MaterialAlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="buttonBarButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
         <item name="buttonBarPositiveButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
         <item name="buttonBarNegativeButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>
         <item name="buttonBarNeutralButtonStyle">@style/Widget.Cyclon.Button.Text.Dialog</item>

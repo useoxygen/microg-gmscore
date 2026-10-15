@@ -25,6 +25,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
+import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.CyclonOutlinedButton
+import org.microg.gms.cyclon.CyclonTextButton
+import org.microg.gms.cyclon.cyclonPrimaryButtonColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -72,7 +76,7 @@ class ContactsSyncActivity : ComponentActivity() {
             }
         }
         setContent {
-            MaterialTheme {
+            CyclonMaterialTheme {
                 var confirmation by remember { mutableStateOf<Account?>(null) }
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -93,12 +97,12 @@ class ContactsSyncActivity : ComponentActivity() {
                                 ActivationFailure.TIMEOUT -> R.string.contacts_sync_enable_timeout
                             }), color = MaterialTheme.colorScheme.error)
                             if (reason == ActivationFailure.PERMISSION) {
-                                OutlinedButton(onClick = {
+                                CyclonOutlinedButton(onClick = {
                                     startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
                                 }) { Text(stringResource(R.string.contacts_sync_open_permissions)) }
                             }
                             retryChoice?.let { choice ->
-                                OutlinedButton(onClick = { choose(choice.first, choice.second) }, enabled = !busy) {
+                                CyclonOutlinedButton(onClick = { choose(choice.first, choice.second) }, enabled = !busy) {
                                     Text(stringResource(R.string.contacts_sync_retry))
                                 }
                             }
@@ -136,8 +140,8 @@ class ContactsSyncActivity : ComponentActivity() {
                                 if (prefs.lastSuccess > 0) Text(stringResource(R.string.contacts_sync_last_success,
                                     DateFormat.getDateTimeInstance().format(Date(prefs.lastSuccess))))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { prefs.refresh(); revision++ }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_refresh)) }
-                                    OutlinedButton(onClick = { choose(account, prefs.mode) }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_reconnect)) }
+                                    Button(onClick = { prefs.refresh(); revision++ }, enabled = !busy, colors = cyclonPrimaryButtonColors()) { Text(stringResource(R.string.contacts_sync_refresh)) }
+                                    CyclonOutlinedButton(onClick = { choose(account, prefs.mode) }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_reconnect)) }
                                 }
                             }
                             HorizontalDivider()
@@ -148,9 +152,9 @@ class ContactsSyncActivity : ComponentActivity() {
                     AlertDialog(onDismissRequest = { confirmation = null },
                         title = { Text(stringResource(R.string.contacts_sync_two_way)) },
                         text = { Text(stringResource(R.string.contacts_sync_two_way_consent)) },
-                        confirmButton = { TextButton(onClick = { confirmation = null; choose(account, SyncMode.TWO_WAY) }) {
+                        confirmButton = { CyclonTextButton(onClick = { confirmation = null; choose(account, SyncMode.TWO_WAY) }) {
                             Text(stringResource(R.string.contacts_sync_enable))
-                        } }, dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(android.R.string.cancel)) } })
+                        } }, dismissButton = { CyclonTextButton(onClick = { confirmation = null }) { Text(stringResource(android.R.string.cancel)) } })
                 }
             }
         }
