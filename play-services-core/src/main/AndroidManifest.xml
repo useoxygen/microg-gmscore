@@ -988,6 +988,9 @@
                 android:name="com.android.settings.icon"
                 android:resource="@drawable/ic_cyclon_services_system" />
             <meta-data
+                android:name="com.android.settings.icon_tintable"
+                android:value="true" />
+            <meta-data
                 android:name="com.android.settings.summary"
                 android:resource="@string/cyclon_services_summary" />
         </activity-alias>
