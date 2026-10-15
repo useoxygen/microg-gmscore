@@ -5,6 +5,7 @@ import android.accounts.Account
 import android.content.Context
 import android.content.Intent
 import android.os.Build.VERSION.SDK_INT
+import android.util.AtomicFile
 import android.util.Log
 import kotlinx.coroutines.runBlocking
 import org.microg.gms.auth.AuthPrefs
@@ -189,7 +190,8 @@ fun <T> Resolution.initiateFromForegroundBlocking(context: Context, account: Acc
 private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFunction: RetryFunction<T>): T? {
     val proven = context.withCryptAuthLock("proof", account.name, wait = false) {
         val bounds = context.cryptAuthStateFile("attempts", account.name)
-        cryptAuthAttempts.restore(account.name, bounds.takeIf { it.exists() }?.readText())
+        val saved = try { AtomicFile(bounds).readFully().decodeToString() } catch (e: IOException) { null }
+        cryptAuthAttempts.restore(account.name, saved)
         when (val decision = cryptAuthAttempts.decide(account.name)) {
             is CryptAuthAttempts.Decision.Wait -> {
                 val minutes = ((decision.untilMillis - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)
@@ -216,9 +218,14 @@ private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFu
                     outcome = context.proveScreenlock(account)
                 } finally {
                     cryptAuthAttempts.record(account.name, outcome)
-                    try {
-                        bounds.writeText(cryptAuthAttempts.save(account.name))
+                    // Atomic, so a failed write keeps the previous bounds rather than none.
+                    val file = AtomicFile(bounds)
+                    val stream = try { file.startWrite() } catch (e: IOException) { Log.w(TAG, "Failed to save the screen lock proof bounds", e); null }
+                    if (stream != null) try {
+                        stream.write(cryptAuthAttempts.save(account.name).toByteArray())
+                        file.finishWrite(stream)
                     } catch (e: IOException) {
+                        file.failWrite(stream)
                         Log.w(TAG, "Failed to save the screen lock proof bounds", e)
                     }
                 }

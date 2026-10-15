@@ -96,15 +96,20 @@ class CryptAuthAttemptsTest {
     }
 
     @Test
-    fun unreadableOrFutureBoundsDoNotBlock() {
+    fun unreadableBoundsCountAsNoHistory() {
         attempts.restore("work", "garbage")
         assertEquals(Decision.Run, attempts.decide("work"))
-        attempts.record("work", Outcome.SUCCEEDED)
+    }
 
+    @Test
+    fun boundsFromBeforeAClockRollbackStillHold() {
         val later = now + 10 * hour
-        val saved = listOf(later, later, later).joinToString(",") + ";;$later;"
         val other = CryptAuthAttempts(clock = { now })
-        other.restore("work", saved)
-        assertEquals(Decision.Run, other.decide("work"))
+        other.restore("work", "$later,$later,$later;;;${later + hour}")
+        assertEquals(Decision.Wait(now + hour, WaitReason.RATE_LIMITED), other.decide("work"))
+
+        val third = CryptAuthAttempts(clock = { now })
+        third.restore("work", "$later,$later,$later;;;")
+        assertEquals(Decision.Wait(now + hour, WaitReason.ATTEMPTS_EXHAUSTED), third.decide("work"))
     }
 }

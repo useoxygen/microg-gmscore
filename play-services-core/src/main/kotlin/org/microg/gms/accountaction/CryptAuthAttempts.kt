@@ -95,20 +95,21 @@ class CryptAuthAttempts(
     }
 
     /**
-     * Replaces the account's bounds with a [save]d line. An unreadable line counts as no history;
-     * times after now (the clock was set back) are dropped, so they can't block for longer.
+     * Replaces the account's bounds with a [save]d line. An unreadable line counts as no history.
+     * Times after now (the clock was set back) count as now, so a recorded failure or rate limit
+     * still holds for one full period instead of being lost or lasting longer.
      */
     @Synchronized
     fun restore(accountName: String, line: String?) {
         val now = clock()
         val state = accounts.getOrPut(accountName) { AccountState() }
         val parts = line?.split(";")?.takeIf { it.size == 4 }
-        fun past(value: String?) = value?.toLongOrNull()?.takeIf { it <= now }
+        fun time(value: String?) = value?.toLongOrNull()?.coerceAtMost(now)
         state.attempts.clear()
-        parts?.get(0)?.split(",")?.mapNotNull(::past)?.sorted()?.let { state.attempts.addAll(it) }
-        state.lastSuccess = past(parts?.get(1))
-        state.lastFailure = past(parts?.get(2))
-        state.rateLimitedUntil = parts?.get(3)?.toLongOrNull()?.takeIf { it <= now + rateLimitedMillis }
+        parts?.get(0)?.split(",")?.mapNotNull(::time)?.sorted()?.let { state.attempts.addAll(it) }
+        state.lastSuccess = time(parts?.get(1))
+        state.lastFailure = time(parts?.get(2))
+        state.rateLimitedUntil = parts?.get(3)?.toLongOrNull()?.coerceAtMost(now + rateLimitedMillis)
     }
 
     companion object {
