@@ -108,6 +108,13 @@ class CryptAuthAttemptsTest {
         other.restore("work", "$later,$later,$later;;;${later + hour}")
         assertEquals(Decision.Wait(now + hour, WaitReason.RATE_LIMITED), other.decide("work"))
 
+        // The caller saves the normalized bounds, so the wait ends one hour after the rollback.
+        val resaved = other.save("work")
+        now += hour
+        val next = CryptAuthAttempts(clock = { now })
+        next.restore("work", resaved)
+        assertEquals(Decision.Run, next.decide("work"))
+
         val third = CryptAuthAttempts(clock = { now })
         third.restore("work", "$later,$later,$later;;;")
         assertEquals(Decision.Wait(now + hour, WaitReason.ATTEMPTS_EXHAUSTED), third.decide("work"))

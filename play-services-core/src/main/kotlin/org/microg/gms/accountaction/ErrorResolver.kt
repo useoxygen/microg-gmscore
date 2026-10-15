@@ -192,7 +192,7 @@ private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFu
         val bounds = context.cryptAuthStateFile("attempts", account.name)
         val saved = try { AtomicFile(bounds).readFully().decodeToString() } catch (e: IOException) { null }
         cryptAuthAttempts.restore(account.name, saved)
-        when (val decision = cryptAuthAttempts.decide(account.name)) {
+        try { when (val decision = cryptAuthAttempts.decide(account.name)) {
             is CryptAuthAttempts.Decision.Wait -> {
                 val minutes = ((decision.untilMillis - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)
                 val cause = when (decision.reason) {
@@ -218,18 +218,20 @@ private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFu
                     outcome = context.proveScreenlock(account)
                 } finally {
                     cryptAuthAttempts.record(account.name, outcome)
-                    // Atomic, so a failed write keeps the previous bounds rather than none.
-                    val file = AtomicFile(bounds)
-                    val stream = try { file.startWrite() } catch (e: IOException) { Log.w(TAG, "Failed to save the screen lock proof bounds", e); null }
-                    if (stream != null) try {
-                        stream.write(cryptAuthAttempts.save(account.name).toByteArray())
-                        file.finishWrite(stream)
-                    } catch (e: IOException) {
-                        file.failWrite(stream)
-                        Log.w(TAG, "Failed to save the screen lock proof bounds", e)
-                    }
                 }
                 outcome == CryptAuthAttempts.Outcome.SUCCEEDED
+            }
+        } } finally {
+            // Saved after every decision, so times restore() normalized (clock set back) stay
+            // normalized. Atomic, so a failed write keeps the previous bounds rather than none.
+            val file = AtomicFile(bounds)
+            val stream = try { file.startWrite() } catch (e: IOException) { Log.w(TAG, "Failed to save the screen lock proof bounds", e); null }
+            if (stream != null) try {
+                stream.write(cryptAuthAttempts.save(account.name).toByteArray())
+                file.finishWrite(stream)
+            } catch (e: IOException) {
+                file.failWrite(stream)
+                Log.w(TAG, "Failed to save the screen lock proof bounds", e)
             }
         }
     }
