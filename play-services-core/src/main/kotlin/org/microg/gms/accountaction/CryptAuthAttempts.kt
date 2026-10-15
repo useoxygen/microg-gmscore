@@ -20,7 +20,7 @@ package org.microg.gms.accountaction
  *   attempts at once;
  * - a full window of rest after the server rate limits the account.
  *
- * State is in memory; a process restart allows at most one more window of attempts.
+ * The caller keeps the bounds across processes and restarts with [save] and [restore].
  */
 class CryptAuthAttempts(
     private val maxAttempts: Int = 3,
@@ -84,6 +84,31 @@ class CryptAuthAttempts(
             Outcome.FAILED -> state.lastFailure = now
             Outcome.RATE_LIMITED -> state.rateLimitedUntil = now + rateLimitedMillis
         }
+    }
+
+    /** The account's bounds as one line for [restore]. Whether a proof is running isn't saved. */
+    @Synchronized
+    fun save(accountName: String): String {
+        val state = accounts[accountName] ?: return ""
+        return listOf(state.attempts.joinToString(","), state.lastSuccess, state.lastFailure, state.rateLimitedUntil)
+            .joinToString(";") { it?.toString() ?: "" }
+    }
+
+    /**
+     * Replaces the account's bounds with a [save]d line. An unreadable line counts as no history;
+     * times after now (the clock was set back) are dropped, so they can't block for longer.
+     */
+    @Synchronized
+    fun restore(accountName: String, line: String?) {
+        val now = clock()
+        val state = accounts.getOrPut(accountName) { AccountState() }
+        val parts = line?.split(";")?.takeIf { it.size == 4 }
+        fun past(value: String?) = value?.toLongOrNull()?.takeIf { it <= now }
+        state.attempts.clear()
+        parts?.get(0)?.split(",")?.mapNotNull(::past)?.sorted()?.let { state.attempts.addAll(it) }
+        state.lastSuccess = past(parts?.get(1))
+        state.lastFailure = past(parts?.get(2))
+        state.rateLimitedUntil = parts?.get(3)?.toLongOrNull()?.takeIf { it <= now + rateLimitedMillis }
     }
 
     companion object {

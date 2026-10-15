@@ -123,23 +123,22 @@ internal fun Context.getCryptAuthUserKey(accountName: String): CryptAuthUserKey?
     }
 }
 
-private val keyCreationLock = Any()
 
 /**
  * Reuses the account's existing key, as Chromium does for the user key pair, so that a repeated
- * creation request never rotates an already enrolled key.
+ * creation request never rotates an already enrolled key. Creation holds the account's key lock in
+ * every GmsCore process, so two first proofs can't each write a different key.
  */
-internal fun Context.getOrCreateCryptAuthUserKey(accountName: String): CryptAuthUserKey = synchronized(keyCreationLock) {
-    getCryptAuthUserKey(accountName)?.let { return it }
-    val key = CryptAuthUserKey.generate()
-    val file = cryptAuthKeyFile(accountName)
-    val stream = file.startWrite()
-    try {
-        stream.write(key.serialize().toByteArray())
-        file.finishWrite(stream)
-    } catch (e: Exception) {
-        file.failWrite(stream)
-        throw e
+internal fun Context.getOrCreateCryptAuthUserKey(accountName: String): CryptAuthUserKey = withCryptAuthLock("key", accountName, wait = true) {
+    getCryptAuthUserKey(accountName) ?: CryptAuthUserKey.generate().also { key ->
+        val file = cryptAuthKeyFile(accountName)
+        val stream = file.startWrite()
+        try {
+            stream.write(key.serialize().toByteArray())
+            file.finishWrite(stream)
+        } catch (e: Exception) {
+            file.failWrite(stream)
+            throw e
+        }
     }
-    return key
-}
+}!!

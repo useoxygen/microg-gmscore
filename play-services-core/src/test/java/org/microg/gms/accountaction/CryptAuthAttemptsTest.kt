@@ -82,4 +82,29 @@ class CryptAuthAttemptsTest {
         assertTrue(attempts.decide("work") is Decision.Wait)
         assertEquals(Decision.Run, attempts.decide("personal"))
     }
+
+    @Test
+    fun savedBoundsCarryOverToAnotherProcess() {
+        failOnce()
+        now += 5 * 60_000L
+        assertEquals(Decision.Run, attempts.decide("work"))
+        attempts.record("work", Outcome.RATE_LIMITED)
+
+        val other = CryptAuthAttempts(clock = { now })
+        other.restore("work", attempts.save("work"))
+        assertEquals(Decision.Wait(now + hour, WaitReason.RATE_LIMITED), other.decide("work"))
+    }
+
+    @Test
+    fun unreadableOrFutureBoundsDoNotBlock() {
+        attempts.restore("work", "garbage")
+        assertEquals(Decision.Run, attempts.decide("work"))
+        attempts.record("work", Outcome.SUCCEEDED)
+
+        val later = now + 10 * hour
+        val saved = listOf(later, later, later).joinToString(",") + ";;$later;"
+        val other = CryptAuthAttempts(clock = { now })
+        other.restore("work", saved)
+        assertEquals(Decision.Run, other.decide("work"))
+    }
 }

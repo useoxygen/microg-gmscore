@@ -11,8 +11,10 @@ import org.microg.gms.auth.AuthPrefs
 import org.microg.gms.auth.login.LoginActivity
 import org.microg.gms.common.Constants
 import org.microg.gms.cryptauth.CryptAuthHttpException
+import org.microg.gms.cryptauth.cryptAuthStateFile
 import org.microg.gms.cryptauth.isLockscreenConfigured
 import org.microg.gms.cryptauth.sendDeviceScreenlockState
+import org.microg.gms.cryptauth.withCryptAuthLock
 import org.microg.gms.gcm.GcmDatabase
 import org.microg.gms.gcm.GcmPrefs
 import org.microg.gms.settings.SettingsContract
@@ -178,41 +180,54 @@ fun <T> Resolution.initiateFromForegroundBlocking(context: Context, account: Acc
 
 /**
  * Proves the secure screen lock to CryptAuth within [CryptAuthAttempts]' bounds, then retries the
- * token request once.
+ * token request once. The proof and its bounds are shared by all GmsCore processes: the account's
+ * proof lock is held throughout, and the bounds are saved after each proof.
  *
  * @return `null` without retrying when the proof is skipped or fails, so callers report the
  * original error instead of a CryptAuth one
  */
 private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFunction: RetryFunction<T>): T? {
-    when (val decision = cryptAuthAttempts.decide(account.name)) {
-        is CryptAuthAttempts.Decision.Wait -> {
-            val minutes = ((decision.untilMillis - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)
-            val cause = when (decision.reason) {
-                CryptAuthAttempts.WaitReason.RATE_LIMITED -> "CryptAuth rate limited this account"
-                CryptAuthAttempts.WaitReason.RECENT_FAILURE -> "the last attempt failed"
-                CryptAuthAttempts.WaitReason.ATTEMPTS_EXHAUSTED -> "recent attempts did not unlock this account"
+    val proven = context.withCryptAuthLock("proof", account.name, wait = false) {
+        val bounds = context.cryptAuthStateFile("attempts", account.name)
+        cryptAuthAttempts.restore(account.name, bounds.takeIf { it.exists() }?.readText())
+        when (val decision = cryptAuthAttempts.decide(account.name)) {
+            is CryptAuthAttempts.Decision.Wait -> {
+                val minutes = ((decision.untilMillis - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1)
+                val cause = when (decision.reason) {
+                    CryptAuthAttempts.WaitReason.RATE_LIMITED -> "CryptAuth rate limited this account"
+                    CryptAuthAttempts.WaitReason.RECENT_FAILURE -> "the last attempt failed"
+                    CryptAuthAttempts.WaitReason.ATTEMPTS_EXHAUSTED -> "recent attempts did not unlock this account"
+                }
+                Log.w(TAG, "Not proving the screen lock to Google: $cause. Next try in about $minutes min.")
+                false
             }
-            Log.w(TAG, "Not proving the screen lock to Google: $cause. Next try in about $minutes min.")
-            return null
+            CryptAuthAttempts.Decision.InProgress -> {
+                Log.i(TAG, "Screen lock proof for this account is already running; not starting another.")
+                false
+            }
+            CryptAuthAttempts.Decision.RetryTokenOnly -> {
+                Log.i(TAG, "Screen lock was just proven for this account; retrying the token only.")
+                true
+            }
+            CryptAuthAttempts.Decision.Run -> {
+                Log.i(TAG, "Resolving account error by proving the secure screen lock to Google (CryptAuth syncKeys/enrollKeys).")
+                var outcome = CryptAuthAttempts.Outcome.FAILED
+                try {
+                    outcome = context.proveScreenlock(account)
+                } finally {
+                    cryptAuthAttempts.record(account.name, outcome)
+                    try {
+                        bounds.writeText(cryptAuthAttempts.save(account.name))
+                    } catch (e: IOException) {
+                        Log.w(TAG, "Failed to save the screen lock proof bounds", e)
+                    }
+                }
+                outcome == CryptAuthAttempts.Outcome.SUCCEEDED
+            }
         }
-        CryptAuthAttempts.Decision.InProgress -> {
-            Log.i(TAG, "Screen lock proof for this account is already running; not starting another.")
-            return null
-        }
-        CryptAuthAttempts.Decision.RetryTokenOnly -> {
-            Log.i(TAG, "Screen lock was just proven for this account; retrying the token only.")
-            return retryFunction.run()
-        }
-        CryptAuthAttempts.Decision.Run -> Unit
     }
-    Log.i(TAG, "Resolving account error by proving the secure screen lock to Google (CryptAuth syncKeys/enrollKeys).")
-    var outcome = CryptAuthAttempts.Outcome.FAILED
-    try {
-        outcome = context.proveScreenlock(account)
-    } finally {
-        cryptAuthAttempts.record(account.name, outcome)
-    }
-    return if (outcome == CryptAuthAttempts.Outcome.SUCCEEDED) retryFunction.run() else null
+    if (proven == null) Log.i(TAG, "Screen lock proof for this account is already running; not starting another.")
+    return if (proven == true) retryFunction.run() else null
 }
 
 private fun Context.proveScreenlock(account: Account): CryptAuthAttempts.Outcome = try {
