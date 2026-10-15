@@ -28,6 +28,7 @@ import org.microg.gms.auth.*;
 import org.microg.gms.auth.login.LoginActivity;
 import org.microg.gms.common.NotOkayException;
 import org.microg.gms.common.PackageUtils;
+import org.microg.gms.cyclon.ImageStoreTrust;
 import org.microg.gms.auth.AuthResponse;
 import org.microg.gms.ui.UnpackingRedirectActivity;
 import org.microg.gms.utils.PackageManagerUtilsKt;
@@ -126,9 +127,11 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
             } else {
                 overrideCert = PackageManagerUtilsKt.getCertificates(context.getPackageManager(), app).get(0);
             }
-            if (isPackageOverrideAllowed(account, app, overridePackage, overrideCert)) {
+            String overrideCertSha1 = PackageManagerUtilsKt.toHexString(PackageManagerUtilsKt.digest(overrideCert, "SHA1"), "");
+            if (isPackageOverrideAllowed(account, app, overridePackage, overrideCert)
+                    || ImageStoreTrust.allowsPlayOverride(context, app, overridePackage, overrideCertSha1, authTokenType)) {
                 authManager = new AuthManager(context, account.name, overridePackage, authTokenType);
-                authManager.setPackageSignature(PackageManagerUtilsKt.toHexString(PackageManagerUtilsKt.digest(overrideCert, "SHA1"), ""));
+                authManager.setPackageSignature(overrideCertSha1);
             } else {
                 Bundle result = new Bundle();
                 Intent i = new Intent(context, AskPackageOverrideActivity.class);
