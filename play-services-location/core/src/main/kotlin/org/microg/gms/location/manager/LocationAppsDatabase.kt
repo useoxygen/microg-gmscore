@@ -5,15 +5,16 @@
 
 package org.microg.gms.location.manager
 
-import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.location.Location
-import android.util.Log
 import androidx.core.content.contentValuesOf
 import androidx.core.database.getIntOrNull
 
+// SQLiteOpenHelper.close() locks this helper. Hold the same monitor for each complete
+// operation, including cursor consumption, so lifecycle and write-side closes cannot
+// invalidate a query in progress. No cursor or database handle escapes these methods.
 class LocationAppsDatabase(context: Context) : SQLiteOpenHelper(context, "geoapps.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS $TABLE_APPS($FIELD_PACKAGE TEXT NOT NULL, $FIELD_TIME INTEGER NOT NULL, $FIELD_FORCE_COARSE INTEGER);")
@@ -30,28 +31,24 @@ class LocationAppsDatabase(context: Context) : SQLiteOpenHelper(context, "geoapp
         close()
     }
 
+    @Synchronized
     fun noteAppUsage(packageName: String) {
         insertOrUpdateApp(packageName, FIELD_TIME to System.currentTimeMillis())
     }
 
+    @Synchronized
     fun getForceCoarse(packageName: String): Boolean {
-        return readableDatabase.query(TABLE_APPS, arrayOf(FIELD_FORCE_COARSE), "$FIELD_PACKAGE = ?", arrayOf(packageName), null, null, null, "1").run {
-            try {
-                if (moveToNext()) {
-                    getIntOrNull(0) == 1
-                } else {
-                    false
-                }
-            } finally {
-                close()
-            }
+        return readableDatabase.query(TABLE_APPS, arrayOf(FIELD_FORCE_COARSE), "$FIELD_PACKAGE = ?", arrayOf(packageName), null, null, null, "1").use { cursor ->
+            cursor.moveToNext() && cursor.getIntOrNull(0) == 1
         }
     }
 
+    @Synchronized
     fun setForceCoarse(packageName: String, forceCoarse: Boolean) {
         insertOrUpdateApp(packageName, FIELD_FORCE_COARSE to (if (forceCoarse) 1 else 0))
     }
 
+    @Synchronized
     fun noteAppLocation(packageName: String, location: Location?) {
         noteAppUsage(packageName)
         if (location == null) return
@@ -67,17 +64,18 @@ class LocationAppsDatabase(context: Context) : SQLiteOpenHelper(context, "geoapp
         close()
     }
 
+    @Synchronized
     fun listAppsByAccessTime(limit: Int = Int.MAX_VALUE): List<Pair<String, Long>> {
         val res = arrayListOf<Pair<String, Long>>()
-        readableDatabase.query(TABLE_APPS, arrayOf(FIELD_PACKAGE, FIELD_TIME), null, null, null, null, "$FIELD_TIME DESC", "$limit").apply {
-            while (moveToNext()) {
-                res.add(getString(0) to getLong(1))
+        readableDatabase.query(TABLE_APPS, arrayOf(FIELD_PACKAGE, FIELD_TIME), null, null, null, null, "$FIELD_TIME DESC", "$limit").use { cursor ->
+            while (cursor.moveToNext()) {
+                res.add(cursor.getString(0) to cursor.getLong(1))
             }
-            close()
         }
         return res
     }
 
+    @Synchronized
     fun getAppLocation(packageName: String): Location? {
         return readableDatabase.query(
             TABLE_APPS_LAST_LOCATION,
@@ -88,20 +86,16 @@ class LocationAppsDatabase(context: Context) : SQLiteOpenHelper(context, "geoapp
             null,
             null,
             "1"
-        ).run {
-            try {
-                if (moveToNext()) {
-                    Location(getString(4)).also {
-                        it.latitude = getDouble(0)
-                        it.longitude = getDouble(1)
-                        it.accuracy = getFloat(2)
-                        it.time = getLong(3)
-                    }
-                } else {
-                    null
+        ).use { cursor ->
+            if (cursor.moveToNext()) {
+                Location(cursor.getString(4)).also {
+                    it.latitude = cursor.getDouble(0)
+                    it.longitude = cursor.getDouble(1)
+                    it.accuracy = cursor.getFloat(2)
+                    it.time = cursor.getLong(3)
                 }
-            } finally {
-                close()
+            } else {
+                null
             }
         }
     }
