@@ -359,11 +359,12 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
 
     private fun evaluate(view: WebView, submit: Boolean) {
         if (!isRegistration(view.url)) return
+        // A new puzzle only while the owner is looking; each Check again allows one more.
+        val rechecks = if (resumed) AUTO_RECHECKS + manualRechecks else 0
         view.evaluateJavascript(script.replace("__CYCLON_ID__", "\"$id\"")
             .replace("__CYCLON_ACCOUNT__", JSONObject.quote(accountName))
             .replace("__CYCLON_SUBMIT__", submit.toString())
-            // A new puzzle only while the owner is looking; each Check again allows one more.
-            .replace("__CYCLON_RECHECKS__", (if (resumed) AUTO_RECHECKS + manualRechecks else 0).toString())) { result ->
+            .replace("__CYCLON_RECHECKS__", rechecks.toString())) { result ->
             if (isFinishing || isDestroyed || browser !== view || !isRegistration(view.url)) return@evaluateJavascript
             val phase = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
             if (phase != lastPhase) { Log.i("CyclonEnrollment", "Registration phase $phase"); lastPhase = phase }
@@ -384,8 +385,12 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                     status = if (helper) R.string.cyclon_enrollment_assisting else R.string.cyclon_enrollment_challenge
                 }
                 "verification" -> { busy = false; status = R.string.cyclon_enrollment_verifying }
-                // No puzzle left to assist with; the owner asks for a new one with Check again.
-                "expired" -> { helper = false; puzzle.reset(); busy = false; status = R.string.cyclon_enrollment_expired }
+                "expired" -> {
+                    // Expiry while paused gets a new puzzle on resume; only a used-up allowance ends assistance,
+                    // leaving Check again as the owner's action.
+                    if (rechecks > 0) { helper = false; puzzle.reset() }
+                    busy = false; status = R.string.cyclon_enrollment_expired
+                }
                 "rejected" -> { busy = false; status = R.string.cyclon_enrollment_needs_help; job?.cancel() }
                 // Keep checking: the account label can be read mid-render. Nothing is filled or clicked until it matches.
                 "account_mismatch" -> { busy = false; status = R.string.cyclon_enrollment_choose_web }
