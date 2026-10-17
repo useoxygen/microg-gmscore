@@ -48,6 +48,8 @@ internal data class AuthZenRecord(
     val decision: AuthZenDecision? = null,
     val authAttempt: String? = null,
     val operation: String? = null,
+    /** After a 429: no send may begin before this monotonic time (this boot; a reboot ends the record anyway). */
+    val retryNotBeforeElapsedMillis: Long? = null,
 )
 
 internal sealed class AuthZenAction {
@@ -62,7 +64,8 @@ internal sealed class AuthZenAction {
     class Deny(val handle: String) : AuthZenAction()
     /** Last checks before a reply leaves the phone. */
     class BeginSend(val handle: String, val operation: String, val accountPresent: Boolean, val optedIn: Boolean, val currentGeneration: Long) : AuthZenAction()
-    class SendFinished(val handle: String, val operation: String, val outcome: SendOutcome) : AuthZenAction()
+    /** [retryAfterMillis] is the server's requested wait for [SendOutcome.RATE_LIMITED]. */
+    class SendFinished(val handle: String, val operation: String, val outcome: SendOutcome, val retryAfterMillis: Long = 0) : AuthZenAction()
     class AccountRemoved(val account: String) : AuthZenAction()
     /** Only expiry, reboot and tombstone cleanup, which every action also applies first. */
     data object Reconcile : AuthZenAction()
@@ -70,7 +73,7 @@ internal sealed class AuthZenAction {
 
 internal enum class AuthZenRejection { TOO_MANY_FOR_ACCOUNT, TOO_MANY_FOR_DEVICE, ALREADY_EXPIRED }
 
-internal enum class AuthZenIgnored { NOT_FOUND, WRONG_STATE, STALE_ATTEMPT, NUMBER_REQUIRED }
+internal enum class AuthZenIgnored { NOT_FOUND, WRONG_STATE, STALE_ATTEMPT, NUMBER_REQUIRED, RETRY_LATER }
 
 internal sealed class AuthZenResult {
     class Inserted(val record: AuthZenRecord) : AuthZenResult()
@@ -152,6 +155,8 @@ internal class AuthZenReducer(
         is AuthZenAction.BeginSend -> when {
             record.state != AuthZenState.DECISION_AUTHORIZED -> Step.Ignore(AuthZenIgnored.WRONG_STATE)
             !action.accountPresent || !action.optedIn || action.currentGeneration != record.generation -> Step.To(ended(record, AuthZenState.CANCELED, now))
+            // The server's requested wait is kept across screens and processes; nothing is sent before it ends.
+            record.retryNotBeforeElapsedMillis != null && now.elapsedMillis < record.retryNotBeforeElapsedMillis -> Step.Ignore(AuthZenIgnored.RETRY_LATER)
             else -> Step.To(record.copy(state = AuthZenState.SENDING, operation = action.operation))
         }
 
@@ -160,6 +165,11 @@ internal class AuthZenReducer(
             else -> when (action.outcome) {
                 SendOutcome.CONFIRMED -> Step.To(ended(record, if (record.decision == AuthZenDecision.APPROVE) AuthZenState.APPROVED_CONFIRMED else AuthZenState.DENIED_CONFIRMED, now))
                 SendOutcome.NOT_DELIVERED -> Step.To(record.copy(state = AuthZenState.DECISION_AUTHORIZED, operation = null))
+                // A longer wait already stored is never shortened.
+                SendOutcome.RATE_LIMITED -> Step.To(record.copy(
+                    state = AuthZenState.DECISION_AUTHORIZED, operation = null,
+                    retryNotBeforeElapsedMillis = maxOf(record.retryNotBeforeElapsedMillis ?: Long.MIN_VALUE, now.elapsedMillis + action.retryAfterMillis.coerceAtLeast(0)),
+                ))
                 SendOutcome.UNKNOWN -> Step.To(ended(record, AuthZenState.OUTCOME_UNKNOWN, now))
                 SendOutcome.REJECTED -> Step.To(ended(record, AuthZenState.UNSUPPORTED, now))
                 SendOutcome.EXPIRED -> Step.To(ended(record, AuthZenState.EXPIRED, now))

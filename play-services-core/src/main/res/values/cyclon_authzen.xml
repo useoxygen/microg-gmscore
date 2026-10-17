@@ -20,5 +20,6 @@
     <string name="cyclon_authzen_submitted">Your answer was sent to Google.</string>
     <string name="cyclon_authzen_approved">Google accepted your answer.</string>
     <string name="cyclon_authzen_unknown">Your answer may not have reached Google. Check the sign-in screen.</string>
+    <string name="cyclon_authzen_retry_later">Google asked this phone to wait before answering. Open the request again in a few minutes.</string>
     <string name="cyclon_authzen_ended">This sign-in request has ended.</string>
 </resources>

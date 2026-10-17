@@ -262,6 +262,23 @@ class AuthZenReducerTest {
     }
 
     @Test
+    fun aRateLimitIsDurableAndNeverShortened() {
+        val record = authorize(inserted())
+        repository.apply(AuthZenAction.BeginSend(record.handle, "op", true, true, 1), clock.now())
+        repository.apply(AuthZenAction.SendFinished(record.handle, "op", SendOutcome.RATE_LIMITED, 120_000L), clock.now())
+        val restarted = AuthZenRepository(storage, TestLock)
+        val stored = restarted.find(record.handle, clock.now())!!
+        assertEquals(AuthZenState.DECISION_AUTHORIZED, stored.state)
+        assertEquals(clock.elapsed + 120_000L, stored.retryNotBeforeElapsedMillis)
+        assertEquals(AuthZenIgnored.RETRY_LATER, (restarted.apply(AuthZenAction.BeginSend(record.handle, "op2", true, true, 1), clock.now()) as AuthZenResult.Ignored).reason)
+        clock.advance(120_000L)
+        restarted.apply(AuthZenAction.BeginSend(record.handle, "op2", true, true, 1), clock.now())
+        // A later, shorter wait still starts from now; the stored deadline only moves forward.
+        restarted.apply(AuthZenAction.SendFinished(record.handle, "op2", SendOutcome.RATE_LIMITED, 1_000L), clock.now())
+        assertEquals(clock.elapsed + 1_000L, restarted.find(record.handle, clock.now())!!.retryNotBeforeElapsedMillis)
+    }
+
+    @Test
     fun accountRemovalForgetsTheAccountsRecords() {
         val record = inserted()
         val other = inserted(receive(account = "b"))

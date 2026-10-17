@@ -52,7 +52,7 @@ internal sealed class AuthZenApiResult {
     data object NotDelivered : AuthZenApiResult()
     /** No token, or the token was refused twice. Shown as a setup problem; never retried in a loop. */
     data object AuthFailed : AuthZenApiResult()
-    /** 429: wait at least [retryAfterMillis]. */
+    /** 429: wait at least [retryAfterMillis]; the sender stores it with the decision. */
     class RateLimited(val retryAfterMillis: Long) : AuthZenApiResult()
     /** 403 and other refusals, including redirects, which are never followed. */
     class Rejected(val code: Int) : AuthZenApiResult()
@@ -96,7 +96,8 @@ internal class AuthZenApi(private val transport: AuthZenTransport, private val t
 
 internal fun AuthZenApiResult.toSendOutcome(interpret: (JSONObject) -> SendOutcome): SendOutcome = when (this) {
     is AuthZenApiResult.Ok -> interpret(body)
-    AuthZenApiResult.NotDelivered, AuthZenApiResult.AuthFailed, is AuthZenApiResult.RateLimited -> SendOutcome.NOT_DELIVERED
+    AuthZenApiResult.NotDelivered, AuthZenApiResult.AuthFailed -> SendOutcome.NOT_DELIVERED
+    is AuthZenApiResult.RateLimited -> SendOutcome.RATE_LIMITED
     is AuthZenApiResult.Rejected -> SendOutcome.REJECTED
     AuthZenApiResult.Unknown -> SendOutcome.UNKNOWN
 }

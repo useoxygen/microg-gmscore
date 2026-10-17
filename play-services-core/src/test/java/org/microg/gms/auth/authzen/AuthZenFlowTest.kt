@@ -284,6 +284,42 @@ class AuthZenFlowTest {
         assertEquals(1, posts.size)
     }
 
+    /** Review round 1: a 429 with Retry-After 120 s was followed by a second POST when the screen was reopened. */
+    @Test
+    fun retryAfterIsStoredAndEnforcedAtTheSendBoundary() {
+        val record = pendingRecord()
+        response = AuthZenHttpResult.Response(429, "{}", 120L)
+        val consent = consent()
+        consent.open(record.handle)
+        val binding = (consent.approve(record.handle, 32) as ConsentStep.Authenticate).binding
+        val first = (consent.authenticated(binding, OwnerAuthResult.SUCCESS) as ConsentStep.Submitted).report
+        assertEquals(120_000L, (first as SendReport.RetryLater).waitMillis)
+        assertEquals(1, posts.size)
+        // Reopening at once, from a new screen or process, sends nothing until the wait is over.
+        response = AuthZenHttpResult.Response(200, "{\"recorded\":true}", null)
+        assertEquals(120_000L, ((consent().open(record.handle) as ConsentStep.Submitted).report as SendReport.RetryLater).waitMillis)
+        clock.advance(119_000L)
+        assertEquals(1_000L, ((consent().open(record.handle) as ConsentStep.Submitted).report as SendReport.RetryLater).waitMillis)
+        assertEquals(1, posts.size)
+        clock.advance(1_000L)
+        assertEquals(AuthZenState.APPROVED_CONFIRMED, ((consent().open(record.handle) as ConsentStep.Submitted).report as SendReport.Sent).state)
+        assertEquals(2, posts.size)
+    }
+
+    @Test
+    fun aRetryAfterBeyondTheExpiryMeansTheDecisionIsNeverSent() {
+        val record = pendingRecord()
+        response = AuthZenHttpResult.Response(429, "{}", 3600L)
+        val consent = consent()
+        consent.open(record.handle)
+        consent.deny(record.handle)
+        response = AuthZenHttpResult.Response(200, "{\"recorded\":true}", null)
+        clock.advance(5 * 60_000L)
+        assertTrue(consent.open(record.handle) is ConsentStep.Closed)
+        assertEquals(AuthZenState.EXPIRED, repository.find(record.handle, clock.now())!!.state)
+        assertEquals(1, posts.size)
+    }
+
     @Test
     fun anUnparsedSuccessIsNotShownAsApproved() {
         val record = pendingRecord()

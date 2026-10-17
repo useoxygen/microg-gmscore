@@ -106,6 +106,7 @@ class AuthZenActivity : ComponentActivity() {
             is ConsentStep.Authenticate -> authenticate(step.binding)
             is ConsentStep.Submitted -> showMessage(getString(when (val report = step.report) {
                 is SendReport.NotReady -> R.string.cyclon_authzen_not_ready
+                is SendReport.RetryLater -> R.string.cyclon_authzen_retry_later
                 is SendReport.Stopped -> if (report.state == AuthZenState.SENDING) R.string.cyclon_authzen_submitted else R.string.cyclon_authzen_ended
                 is SendReport.Sent -> when (report.state) {
                     AuthZenState.APPROVED_CONFIRMED -> R.string.cyclon_authzen_approved

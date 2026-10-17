@@ -83,6 +83,7 @@ internal class AuthZenRepository(
                     record.decision?.let { put("decision", it.name) }
                     record.authAttempt?.let { put("authAttempt", it) }
                     record.operation?.let { put("operation", it) }
+                    record.retryNotBeforeElapsedMillis?.let { put("retryNotBeforeElapsed", it) }
                     record.request?.let { request ->
                         put("request", JSONObject().apply {
                             put("transactionId", request.transactionId.b64())
@@ -132,6 +133,7 @@ internal class AuthZenRepository(
                     decision = record.optStringOrNull("decision")?.let { AuthZenDecision.valueOf(it) },
                     authAttempt = record.optStringOrNull("authAttempt"),
                     operation = record.optStringOrNull("operation"),
+                    retryNotBeforeElapsedMillis = if (record.has("retryNotBeforeElapsed")) record.getLong("retryNotBeforeElapsed") else null,
                 )
             }
         }

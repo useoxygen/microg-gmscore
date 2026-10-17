@@ -95,7 +95,7 @@ class AuthZenApiTest {
         assertEquals(SendOutcome.CONFIRMED, AuthZenApiResult.Ok(JSONObject()).toSendOutcome(confirmed))
         assertEquals(SendOutcome.NOT_DELIVERED, AuthZenApiResult.NotDelivered.toSendOutcome(confirmed))
         assertEquals(SendOutcome.NOT_DELIVERED, AuthZenApiResult.AuthFailed.toSendOutcome(confirmed))
-        assertEquals(SendOutcome.NOT_DELIVERED, AuthZenApiResult.RateLimited(1000).toSendOutcome(confirmed))
+        assertEquals(SendOutcome.RATE_LIMITED, AuthZenApiResult.RateLimited(1000).toSendOutcome(confirmed))
         assertEquals(SendOutcome.REJECTED, AuthZenApiResult.Rejected(403).toSendOutcome(confirmed))
         assertEquals(SendOutcome.UNKNOWN, AuthZenApiResult.Unknown.toSendOutcome(confirmed))
     }

@@ -35,6 +35,8 @@ internal enum class SendOutcome {
     CONFIRMED,
     /** The request provably did not reach the server; the decision may be sent again until expiry. */
     NOT_DELIVERED,
+    /** The server refused to process it now (429); the decision may be sent again after its wait, until expiry. */
+    RATE_LIMITED,
     /** It may have reached the server; never resend, reconcile through a verified state sync instead. */
     UNKNOWN,
     /** The server refused the route (for example 403 or a policy or attestation requirement). */

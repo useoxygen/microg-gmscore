@@ -253,6 +253,8 @@ internal sealed class SendReport {
     class NotReady(val blocker: AuthZenBlocker) : SendReport()
     /** Nothing was sent; the request ended or changed first. */
     class Stopped(val state: AuthZenState?) : SendReport()
+    /** Nothing was sent: Google asked to wait (429) and [waitMillis] of that wait remain. The decision stays stored. */
+    class RetryLater(val waitMillis: Long) : SendReport()
 }
 
 /**
@@ -294,10 +296,15 @@ internal class AuthZenSender(
             diagnostics.event(AuthZenEvent.RESULT, null, "store_failed" to true, "attempt" to false)
             return SendReport.Stopped(null)
         }
+        if (begin is AuthZenResult.Ignored && begin.reason == AuthZenIgnored.RETRY_LATER) {
+            val wait = (begin.record?.retryNotBeforeElapsedMillis ?: 0) - now().elapsedMillis
+            return SendReport.RetryLater(wait.coerceAtLeast(0))
+        }
         val sending = (begin as? AuthZenResult.Updated)?.record?.takeIf { it.state == AuthZenState.SENDING }
             ?: return SendReport.Stopped((begin as? AuthZenResult.Updated)?.record?.state ?: record.state)
 
         var attempted = false
+        var retryAfterMillis = 0L
         val outcome = try {
             val masterKey = accountKeys.active?.secretKey
             val (pair, keyMaterial) = userKey(sending.account) ?: (null to null)
@@ -308,7 +315,9 @@ internal class AuthZenSender(
                 val signcrypted = SecureGcm.signcryptClientMessage(Type.TX_REPLY, reply, pair, keyMaterial, masterKey, random).encode()
                 diagnostics.event(AuthZenEvent.SEND, null, "attempt" to true)
                 attempted = true
-                api.post(sending.account, AuthZenEndpoint.REPLY_TX, profile.replyEnvelope(sending.account, signcrypted)).toSendOutcome(profile::interpretReply)
+                val response = api.post(sending.account, AuthZenEndpoint.REPLY_TX, profile.replyEnvelope(sending.account, signcrypted))
+                if (response is AuthZenApiResult.RateLimited) retryAfterMillis = response.retryAfterMillis
+                response.toSendOutcome(profile::interpretReply)
             }
         } catch (e: Exception) {
             // Before the network call nothing left the phone; after it, the reply may have arrived.
@@ -316,12 +325,13 @@ internal class AuthZenSender(
         }
         // If the result cannot be stored, SENDING stays and later ends as OUTCOME_UNKNOWN; it is never sent again.
         val finished = try {
-            repository.apply(AuthZenAction.SendFinished(handle, operation, outcome), now())
+            repository.apply(AuthZenAction.SendFinished(handle, operation, outcome, retryAfterMillis), now())
         } catch (e: AuthZenStorageException) {
             null
         }
         val state = (finished as? AuthZenResult.Updated)?.record?.state
         diagnostics.event(AuthZenEvent.RESULT, null, "outcome" to outcome, "state" to state)
+        if (outcome == SendOutcome.RATE_LIMITED && state == AuthZenState.DECISION_AUTHORIZED) return SendReport.RetryLater(retryAfterMillis)
         return SendReport.Sent(state ?: AuthZenState.OUTCOME_UNKNOWN)
     }
 }
