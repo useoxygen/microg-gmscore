@@ -27,8 +27,9 @@ function fixture() {
     querySelectorAll: selector => selector === 'input' ? [input] : selector === 'iframe' ? state.frames :
       selector === 'button' ? [state.button] : selector.includes('button') ? [] : selector.includes('listItem') ? state.ids.map(visible) : state.messages.map(visible)
   };
-  state.run = (submit=false, suppliedId=id) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
-    .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit)),
+  state.run = (submit=false, suppliedId=id, rechecks=0) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
+    .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit))
+    .replace('__CYCLON_RECHECKS__',String(rechecks)),
     {...state, HTMLInputElement:Input, Event:class {constructor(type){this.type=type}}, URL});
   return state;
 }
@@ -69,8 +70,34 @@ test('different account, lookalike origin and invalid IDs cannot write',()=>{
 test('checkbox is attempted once and failures stay interactive',()=>{
   const f=fixture(); let clicked=0;
   f.frames=[{src:'https://www.google.com/recaptcha/api2/anchor',dataset:{},contentDocument:{
-    querySelector:()=>({getAttribute:()=> 'false',click:()=>clicked++})}}];
-  f.run(); f.run(); assert.equal(clicked,1); assert.equal(f.clicks,0);
+    querySelector:()=>({getAttribute:()=> 'false',classList:{contains:()=>false},click:()=>clicked++})}}];
+  f.run(); f.run(false,id,3); assert.equal(clicked,1); assert.equal(f.clicks,0);
+});
+function expiring(f) {
+  const anchor={src:'https://www.google.com/recaptcha/api2/anchor',dataset:{cyclonAttempted:'true'},scrolls:0,clicks:0,expired:true,
+    getClientRects:()=>[1],scrollIntoView(){anchor.scrolls++}};
+  anchor.contentDocument={querySelector:()=>({getAttribute:()=>'false',classList:{contains:c=>c==='recaptcha-checkbox-expired'&&anchor.expired},
+    click:()=>{anchor.clicks++;anchor.expired=false}})};
+  // Google hides an expired challenge with visibility and opacity; its frame keeps a layout box.
+  const puzzle={getClientRects:()=>[1],checkVisibility:()=>true};
+  const bframe={src:'https://www.google.com/recaptcha/api2/bframe',dataset:{},getClientRects:()=>[1],
+    checkVisibility:()=>!anchor.expired&&!bframe.hidden,hidden:false,contentDocument:{querySelector:()=>puzzle}};
+  f.frames=[anchor,bframe];
+  return {anchor,bframe};
+}
+test('a hidden expired challenge is not reported as a visible puzzle',()=>{
+  const f=fixture(), {anchor}=expiring(f);
+  assert.equal(f.run(false,id,0),'expired'); assert.equal(anchor.clicks,0);
+});
+test('expired checkbox is re-checked within the native allowance only',()=>{
+  const f=fixture(), {anchor}=expiring(f);
+  assert.equal(f.run(false,id,2),'challenge'); assert.equal(anchor.clicks,1); assert.equal(anchor.scrolls,1);
+  anchor.expired=true; assert.equal(f.run(false,id,2),'verification'); assert.equal(anchor.clicks,1); // still pending
+  anchor.expired=false; f.run(false,id,2); anchor.expired=true;
+  assert.equal(f.run(false,id,2),'challenge'); assert.equal(anchor.clicks,2);
+  anchor.expired=false; f.run(false,id,2); anchor.expired=true;
+  assert.equal(f.run(false,id,2),'expired'); assert.equal(anchor.clicks,2);
+  assert.equal(f.run(false,id,3),'challenge'); assert.equal(anchor.clicks,3); assert.equal(f.clicks,0);
 });
 test('Google rejection is distinct from CAPTCHA completion',()=>{
   const f=fixture(); f.response.value='opaque'; f.messages=['Uh oh. Something went wrong. Please try again.'];

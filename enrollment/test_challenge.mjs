@@ -98,3 +98,10 @@ test('reload asks for a different puzzle only through the visible enabled reload
   assert.equal(f.run('reload',[],snapshot.fingerprint).phase,'refused');assert.equal(reloads,1);
   assert.equal(f.state.clicks.length,0);assert.equal(f.state.verifies,0);
 });
+test('an expired challenge hidden by Google is not observed or acted on',()=>{
+  const f=fixture(),snapshot=f.run();
+  f.frame.checkVisibility=()=>false;
+  assert.equal(f.run(),null);assert.equal(f.run('tiles',[0],snapshot.fingerprint),null);
+  assert.equal(f.state.clicks.length,0);
+  f.frame.checkVisibility=()=>true;assert.equal(f.run().phase,'challenge');
+});

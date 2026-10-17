@@ -20,6 +20,7 @@
     <string name="cyclon_enrollment_registering">Registering this phone with Google…</string>
     <string name="cyclon_enrollment_verifying">Checking this phone’s registration with Google…</string>
     <string name="cyclon_enrollment_challenge">Solve Google’s puzzle below to continue registering this phone.</string>
+    <string name="cyclon_enrollment_expired">Google’s puzzle expired. Tap Check again for a new one.</string>
     <string name="cyclon_enrollment_done">This phone is registered with Google, and your account is connected.</string>
     <string name="cyclon_enrollment_network_error">Couldn’t prepare Google services. Check your internet connection, then try again.</string>
     <string name="cyclon_enrollment_web_error">Couldn’t load Google’s page. Try again, or set up Google later.</string>

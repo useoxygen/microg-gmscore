@@ -37,6 +37,7 @@ import org.microg.gms.checkin.CheckinPreferences
 import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.ASSIST_WINDOW_MS
+import org.microg.gms.cyclon.EnrollmentActivity.Companion.AUTO_RECHECKS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.POLL_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.REGISTRATION
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.TRANSIENT_ERRORS
@@ -202,7 +203,8 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
     private fun evaluate(view: WebView, submit: Boolean) {
         view.evaluateJavascript(script.replace("__CYCLON_ID__", "\"$id\"")
             .replace("__CYCLON_ACCOUNT__", JSONObject.quote(accountName))
-            .replace("__CYCLON_SUBMIT__", submit.toString())) { result ->
+            .replace("__CYCLON_SUBMIT__", submit.toString())
+            .replace("__CYCLON_RECHECKS__", AUTO_RECHECKS.toString())) { result ->
             if (ended || browser !== view || !isRegistration(view.url)) return@evaluateJavascript
             val phase = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
             if (phase != lastPhase) { Log.i(TAG, "Registration phase $phase"); lastPhase = phase }
@@ -214,6 +216,8 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
                     if (SystemClock.elapsedRealtime() - challengeSince > ASSIST_WINDOW_MS) { helper = false; end("timeout") }
                 }
                 "rejected" -> end("rejected")
+                // Google expired every puzzle it offered; the owner finishes from the notification.
+                "expired" -> { helper = false; end("timeout") }
                 // account_mismatch keeps polling: nothing is filled or clicked until the intended account is shown.
             }
         }
