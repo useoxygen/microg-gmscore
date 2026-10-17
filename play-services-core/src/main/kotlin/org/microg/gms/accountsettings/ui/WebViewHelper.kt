@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: no sign-in URLs (they carry session capabilities) in logs.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -80,7 +81,7 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                Log.d(TAG, "Navigating to $url")
+                Log.d(TAG, "Navigating to ${url.toUri().host}")
                 if (url.startsWith("intent:")) {
                     try {
                         val intent = Intent.parseUri(url, URI_INTENT_SCHEME)
@@ -191,7 +192,7 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
             if (authUrl?.contains("WILL_NOT_SIGN_IN") == true) {
                 throw RuntimeException("Would not sign in")
             }
-            Log.d(TAG, "Opening $authUrl")
+            Log.d(TAG, "Opening the signed-in page")
             webView.post {
                 if (SDK_INT >= 21) {
                     CookieManager.getInstance().removeAllCookies {

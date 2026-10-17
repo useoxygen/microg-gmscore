@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="cyclon_two_step_channel_name">Google sign-in prompts</string>
+    <string name="cyclon_two_step_channel_description">Google asks this phone to confirm a sign-in. Tap the notification to review it on Google\'s page.</string>
+    <string name="cyclon_two_step_notification_public_title">Google sign-in request</string>
+    <string name="cyclon_two_step_notification_public_text">Unlock to review</string>
+    <string name="cyclon_two_step_notifications_blocked">Notifications for sign-in prompts are turned off, so Google\'s prompts cannot appear on this phone.</string>
+</resources>

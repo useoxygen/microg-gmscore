@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: no page results or account names in logs.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -43,7 +44,7 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun closeWithResult(resultJsonStr: String?) {
-        Log.d(TAG, "closeWithResult: resultJsonStr -> $resultJsonStr")
+        Log.d(TAG, "closeWithResult: ${resultJsonStr?.length ?: 0} chars")
         setResult(resultJsonStr)
         close()
     }
@@ -95,7 +96,7 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun openScreen(screenId: Int, str: String?) {
-        Log.d(TAG, "openScreen: screenId -> $screenId str -> $str accountName -> $accountName")
+        Log.d(TAG, "openScreen: screenId -> $screenId")
         val intent = Intent(activity, MainActivity::class.java).apply {
             putExtra(EXTRA_SCREEN_ID, screenId)
             putExtra(EXTRA_ACCOUNT_NAME, accountName)
@@ -111,7 +112,7 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun setResult(resultJsonStr: String?) {
-        Log.d(TAG, "setResult: resultJsonStr -> $resultJsonStr")
+        Log.d(TAG, "setResult: ${resultJsonStr?.length ?: 0} chars")
         val map = jsonToMap(resultJsonStr) ?: return
         if (map.containsKey(KEY_UPDATED_PHOTO_URL)) {
             activity.updateLocalAccountAvatar(map[KEY_UPDATED_PHOTO_URL], accountName)
