@@ -94,8 +94,6 @@ internal class AuthZenReducer(
     private val maxPendingPerDevice: Int = 10,
     private val maxTombstones: Int = 100,
     private val tombstoneMillis: Long = 24 * 3600_000L,
-    /** A request whose server expiry is this far behind the phone's wall clock arrived too late. */
-    private val clockSkewMillis: Long = 2 * 60_000L,
     private val sendGraceMillis: Long = 60_000L,
 ) {
 
@@ -198,6 +196,10 @@ internal class AuthZenReducer(
             return ended to AuthZenResult.Conflict
         }
         val lifetime = (request.expiresAtMillis - request.createdAtMillis).coerceAtMost(AuthZenDecoder.MAX_LIFETIME_MILLIS)
+        // Time the request already spent in delivery, by the phone's clock; never negative, so it only ever shortens.
+        // A late request gets only what is left of its lifetime, not a fresh one from receipt.
+        val deliveryDelay = (now.wallMillis - request.createdAtMillis).coerceAtLeast(0)
+        val remaining = lifetime - deliveryDelay
         val record = AuthZenRecord(
             handle = action.handle,
             account = action.account,
@@ -209,7 +211,7 @@ internal class AuthZenReducer(
             request = request,
             displayChoices = action.displayChoices,
             bootId = now.bootId,
-            deadlineElapsedMillis = now.elapsedMillis + lifetime,
+            deadlineElapsedMillis = now.elapsedMillis + remaining,
             serverExpiresAtMillis = request.expiresAtMillis,
             updatedWallMillis = now.wallMillis,
         )
@@ -255,9 +257,13 @@ internal class AuthZenReducer(
         return trim(updated)
     }
 
-    /** Server expiry anchored to the monotonic clock at receipt, and the phone's wall clock for late deliveries. */
+    /**
+     * Expired at whichever comes first: the remaining lifetime on the monotonic clock (immune to wall clock changes),
+     * or the server's expiry on the phone's wall clock. No clock skew allowance is added to either: a skewed clock may
+     * end a request early, never keep it open past its expiry.
+     */
     fun expired(record: AuthZenRecord, now: AuthZenNow): Boolean =
-        now.elapsedMillis >= record.deadlineElapsedMillis || now.wallMillis >= record.serverExpiresAtMillis + clockSkewMillis
+        now.elapsedMillis >= record.deadlineElapsedMillis || now.wallMillis >= record.serverExpiresAtMillis
 
     private fun ended(record: AuthZenRecord, state: AuthZenState, now: AuthZenNow) =
         record.copy(state = state, request = null, displayChoices = emptyList(), authAttempt = null, updatedWallMillis = now.wallMillis)

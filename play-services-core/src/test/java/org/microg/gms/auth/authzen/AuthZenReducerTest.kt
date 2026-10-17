@@ -89,6 +89,46 @@ class AuthZenReducerTest {
         assertTrue(receive(stale) is AuthZenResult.Duplicate)
     }
 
+    /** Review round 1: a five-minute request delivered after 290 s reached SENDING 10 s after the server's expiry. */
+    @Test
+    fun aDelayedRequestGetsOnlyItsRemainingLifetime() {
+        val record = inserted(receive(request(created = clock.wall - 290_000L)))
+        repository.apply(AuthZenAction.Present(record.handle), clock.now())
+        clock.advance(9_000L)
+        assertEquals(AuthZenState.PRESENTED, state(record.handle))
+        repository.apply(AuthZenAction.Approve(record.handle, 32, "attempt"), clock.now())
+        repository.apply(AuthZenAction.AuthResult(record.handle, "attempt", record.digest, 1, true), clock.now())
+        clock.advance(11_000L)
+        assertTrue(repository.apply(AuthZenAction.BeginSend(record.handle, "op", true, true, 1), clock.now()) is AuthZenResult.Ignored)
+        assertEquals(AuthZenState.EXPIRED, state(record.handle))
+    }
+
+    @Test
+    fun theRemainingLifetimeHoldsOnTheMonotonicClockAfterAWallClockRollback() {
+        val record = inserted(receive(request(created = clock.wall - 200_000L)))
+        clock.wall -= 3600_000L
+        clock.elapsed += 99_000L
+        assertEquals(AuthZenState.VERIFIED_PENDING, state(record.handle))
+        clock.elapsed += 1_000L
+        assertEquals(AuthZenState.EXPIRED, state(record.handle))
+    }
+
+    @Test
+    fun clockSkewNeverExtendsApprovalPastTheExpiry() {
+        // Phone clock behind the server: the request looks created in the future; it still gets no more than its lifetime.
+        val ahead = inserted(receive(request("tx-ahead", created = clock.wall + 60_000L)))
+        clock.elapsed += 5 * 60_000L
+        assertEquals(AuthZenState.EXPIRED, state(ahead.handle))
+        // The wall clock reaching the server's expiry ends a request at once, without a grace period.
+        val record = inserted(receive(request("tx-wall")))
+        clock.wall += 5 * 60_000L - 1
+        assertEquals(AuthZenState.VERIFIED_PENDING, state(record.handle))
+        clock.wall += 1
+        assertEquals(AuthZenState.EXPIRED, state(record.handle))
+        // A request whose lifetime was used up in delivery is refused when it arrives.
+        assertEquals(AuthZenRejection.ALREADY_EXPIRED, (receive(request("tx-late", created = clock.wall - 5 * 60_000L)) as AuthZenResult.Rejected).reason)
+    }
+
     @Test
     fun lifetimeIsCappedLocally() {
         val record = inserted(receive(request(lifetime = AuthZenDecoder.MAX_LIFETIME_MILLIS + 3600_000L)))
