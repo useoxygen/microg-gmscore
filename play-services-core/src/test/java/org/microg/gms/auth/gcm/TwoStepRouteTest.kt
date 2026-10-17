@@ -230,6 +230,17 @@ class TwoStepRouteTest {
     }
 
     @Test
+    fun gmsCoreGrantsItsOwnPushPermissionOnlyWhileTwoStepIsOnAndMicroGHasNotDecided() {
+        val gms = "com.google.android.gms"
+        assertTrue(mayGrantOwnPushPermission(gms, gms, twoStepOn = true, gcmEnabled = true, knownToMicroG = false))
+        // Another package, the owner's opt-out, push off, or any decision already in microG's push settings: no grant.
+        assertFalse(mayGrantOwnPushPermission("com.example.app", gms, twoStepOn = true, gcmEnabled = true, knownToMicroG = false))
+        assertFalse(mayGrantOwnPushPermission(gms, gms, twoStepOn = false, gcmEnabled = true, knownToMicroG = false))
+        assertFalse(mayGrantOwnPushPermission(gms, gms, twoStepOn = true, gcmEnabled = false, knownToMicroG = false))
+        assertFalse(mayGrantOwnPushPermission(gms, gms, twoStepOn = true, gcmEnabled = true, knownToMicroG = true))
+    }
+
+    @Test
     fun sizeBucketsHidePreciseLengths() {
         assertEquals(listOf(0, 256, 256, 1024, 4096, 65536), listOf(0, 1, 256, 257, 4000, 100_000).map(::sizeBucket))
     }

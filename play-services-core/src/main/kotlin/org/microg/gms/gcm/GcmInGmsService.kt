@@ -1,5 +1,6 @@
 // Modified by Cyclon in 2026: deliver GmsCore messages before registration upkeep, allow GmsCore's own registration
-// once the owner enabled a Google push feature, redacted logs and two-step readiness diagnostics.
+// while the owner's two-step setting is on, prompt registrations only while it is on, redacted logs and two-step
+// readiness diagnostics.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -33,6 +34,7 @@ import org.microg.gms.auth.AuthPrefs
 import org.microg.gms.auth.gcm.SelfRegistration
 import org.microg.gms.auth.gcm.TwoStepReadiness
 import org.microg.gms.auth.gcm.admitTwoStepMessage
+import org.microg.gms.auth.gcm.mayGrantOwnPushPermission
 import org.microg.gms.auth.gcm.twoStepChannelAllowed
 import org.microg.gms.auth.gcm.twoStepDiagnostics
 import org.microg.gms.auth.gcm.twoStepNotificationsAllowed
@@ -188,7 +190,12 @@ class GcmInGmsService : LifecycleService() {
 
     private suspend fun updateLocalAccountGroups(account: Account? = null, explicit: Boolean) {
         val regId = sp?.getString(KEY_GCM_REG_ID, null) ?: return
-        val accounts = chimeGmsRegistrationHelper.handleRegistration(regId, explicit = explicit)
+        // Accounts are registered for prompt notifications only while the owner wants prompts. Turning the setting off
+        // stops new registrations; existing ones are not withdrawn (see docs/google-prompt.md), and prompts that still
+        // arrive are dropped at the receiver.
+        val accounts = if (AuthPrefs.shouldReceiveTwoStepVerification(this)) {
+            chimeGmsRegistrationHelper.handleRegistration(regId, explicit = explicit)
+        } else emptyList()
         if (accounts.isNotEmpty()) {
             accounts.forEach { updateGroupsWithAccount(it, regId) }
             return
@@ -207,10 +214,10 @@ class GcmInGmsService : LifecycleService() {
 
     /**
      * Registers GmsCore for Google's notification sender, then broadcasts [followUp] so accounts get registered for
-     * the new id. The owner enabled this by turning on a Google push feature, so GmsCore's own push permission is
-     * granted here when microG has not asked yet (a permission dialog cannot open from this background service); an
-     * explicit denial in microG's push settings is kept. [followUp] is only sent when the registration is complete,
-     * so a failed write cannot loop.
+     * the new id. While the two-step setting is on, GmsCore's own push permission is granted here when microG has not
+     * asked yet (a permission dialog cannot open from this background service; see [mayGrantOwnPushPermission]); an
+     * explicit grant or denial in microG's push settings is kept, and with the setting off microG's usual check
+     * applies. [followUp] is only sent when the registration is complete, so a failed write cannot loop.
      */
     private suspend fun registerGcmInGms(context: Context, followUp: Intent) {
         Log.i(TAG, "Registering GMS $GMS_GCM_REGISTER_SENDER")
@@ -226,7 +233,14 @@ class GcmInGmsService : LifecycleService() {
                 .extraParam("scope", GMS_GCM_REGISTER_SCOPE)
             val gcmDatabase = GcmDatabase(context)
             try {
-                if (gcmDatabase.getApp(Constants.GMS_PACKAGE_NAME) == null) gcmDatabase.noteAppKnown(Constants.GMS_PACKAGE_NAME, true)
+                val selfGrant = mayGrantOwnPushPermission(
+                    packageName = request.app,
+                    gmsPackageName = Constants.GMS_PACKAGE_NAME,
+                    twoStepOn = AuthPrefs.shouldReceiveTwoStepVerification(context),
+                    gcmEnabled = GcmPrefs.get(context).isEnabled,
+                    knownToMicroG = gcmDatabase.getApp(request.app) != null,
+                )
+                if (selfGrant) gcmDatabase.noteAppKnown(request.app, true)
                 ensureAppRegistrationAllowed(context, gcmDatabase, request.app)
                 completeRegisterRequest(context, gcmDatabase, request).getString(GcmConstants.EXTRA_REGISTRATION_ID)
             } finally {

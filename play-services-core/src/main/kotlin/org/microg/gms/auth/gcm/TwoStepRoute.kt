@@ -36,6 +36,17 @@ internal fun <A> selectAccountByUserId(candidates: List<Pair<A, String?>>, userI
 }
 
 /**
+ * Whether GmsCore may record its own push permission as granted without asking: only for GmsCore's own package,
+ * only while push is on and the owner's two-step setting is on, and only when microG has no entry yet. An explicit
+ * grant or denial in microG's push settings always stands, and turning the two-step setting off stops new grants.
+ *
+ * DESIGN, a deliberate Cyclon deviation (docs/google-prompt.md): the two-step setting is on by default on Cyclon
+ * phones, and the push permission dialog cannot open from the background service that registers GmsCore.
+ */
+internal fun mayGrantOwnPushPermission(packageName: String, gmsPackageName: String, twoStepOn: Boolean, gcmEnabled: Boolean, knownToMicroG: Boolean): Boolean =
+    packageName == gmsPackageName && twoStepOn && gcmEnabled && !knownToMicroG
+
+/**
  * Whether the owner allows this route; if not, a GNOTS message is dropped and recorded. Other GmsCore messages (for
  * example Find My Device ones, which share the receiver) pass silently so the log only shows this route's drops.
  */

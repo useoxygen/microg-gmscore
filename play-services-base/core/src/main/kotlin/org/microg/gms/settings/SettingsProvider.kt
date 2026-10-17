@@ -248,6 +248,7 @@ class SettingsProvider : ContentProvider() {
             Auth.VISIBLE -> getSettingsBoolean(key, false)
             Auth.INCLUDE_ANDROID_ID -> getSettingsBoolean(key, true)
             Auth.STRIP_DEVICE_NAME -> getSettingsBoolean(key, false)
+            // Cyclon: on unless the owner turns it off, unlike upstream's default-off (docs/google-prompt.md).
             Auth.TWO_STEP_VERIFICATION -> getSettingsBoolean(key, true)
             Auth.FIND_DEVICES -> getSettingsBoolean(key, false)
             else -> throw IllegalArgumentException("Unknown key: $key")
