@@ -15,6 +15,7 @@
     <string name="cyclon_authzen_number">Number %1$d</string>
     <string name="cyclon_authzen_auth_title">Confirm it\'s you</string>
     <string name="cyclon_authzen_auth_subtitle">Approve this Google sign-in</string>
+    <string name="cyclon_authzen_yes_unsupported">Approving needs Android 11 or later, which can ask for a fresh unlock. You can still answer No here, or approve on another device.</string>
     <string name="cyclon_authzen_no_lock">Set a screen lock to approve sign-ins on this phone.</string>
     <string name="cyclon_authzen_not_ready">Native prompt protocol not yet verified on device. Nothing was sent to Google.</string>
     <string name="cyclon_authzen_submitted">Your answer was sent to Google.</string>

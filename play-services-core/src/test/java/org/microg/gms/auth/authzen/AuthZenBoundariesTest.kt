@@ -87,8 +87,21 @@ class AuthZenBoundariesTest {
         assertEquals(AuthZenBlocker.NO_AUTHZEN_KEY, authZenBlocker(AuthZenReadinessInput(true, true, 1, 0, true, true)))
         assertEquals(AuthZenBlocker.NO_SECURE_LOCK, authZenBlocker(AuthZenReadinessInput(true, true, 1, 1, false, true)))
         assertEquals(AuthZenBlocker.NOTIFICATIONS_BLOCKED, authZenBlocker(AuthZenReadinessInput(true, true, 1, 1, true, false)))
+        assertEquals(AuthZenBlocker.NO_PRIVATE_STORAGE, authZenBlocker(AuthZenReadinessInput(true, true, 1, 1, true, true, privateStorage = false)))
+        assertEquals(AuthZenBlocker.FEATURE_OFF, authZenBlocker(AuthZenReadinessInput(false, true, 1, 1, true, true, privateStorage = false)))
         val strings = File("src/main/res/values/cyclon_authzen.xml").readText()
         assertTrue(strings.contains("Native prompt protocol not yet verified on device."))
+    }
+
+    @Test
+    fun bootIdsChangeWithEveryBootAndFallBackToTheBootTime() {
+        assertEquals("7", authZenBootId(7, 1_800_000_000_000L, 50_000L))
+        // Without a boot count: the same boot keeps its id as both clocks advance, and a new boot gets a new one.
+        val boot = authZenBootId(null, 1_800_000_000_000L, 50_000L)
+        assertEquals(boot, authZenBootId(null, 1_800_000_000_000L + 3600_000L, 50_000L + 3600_000L))
+        assertEquals(boot, authZenBootId(-1, 1_800_000_000_000L, 50_000L))
+        assertNotEquals(boot, authZenBootId(null, 1_800_000_000_000L + 3600_000L, 1_000L))
+        assertNotEquals("legacy", boot)
     }
 
     @Test

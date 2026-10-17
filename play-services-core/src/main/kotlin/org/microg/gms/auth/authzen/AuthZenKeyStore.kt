@@ -105,7 +105,11 @@ internal class DirectoryFileLock(private val directory: File) : AuthZenLock {
     }
 }
 
-/** AuthZen state is never backed up: a restored master key or transaction must not act for another device. */
+/**
+ * AuthZen state is never backed up: a restored master key or transaction must not act for another device. Below API
+ * 21 there is no `noBackupFilesDir`; the route is blocked there ([AuthZenBlocker.NO_PRIVATE_STORAGE]) before it stores
+ * anything, and the `filesDir` fallback only keeps this function total.
+ */
 internal fun Context.authZenStorage(): AuthZenStorage =
     AtomicFileStorage(File(if (SDK_INT >= 21) noBackupFilesDir else filesDir, "authzen"))
 

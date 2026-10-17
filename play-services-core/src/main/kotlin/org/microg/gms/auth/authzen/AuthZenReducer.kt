@@ -25,6 +25,14 @@ internal enum class AuthZenState(val terminal: Boolean) {
 internal class AuthZenNow(val wallMillis: Long, val elapsedMillis: Long, val bootId: String)
 
 /**
+ * An id that changes with every boot: Android's boot count where it is readable (API 24+), otherwise the boot time
+ * estimated from the two clocks, in whole minutes. With the estimate, a wall clock change of about a minute or more
+ * looks like a reboot and ends pending requests (a send in progress becomes unknown): it fails closed, never open.
+ */
+internal fun authZenBootId(bootCount: Int?, wallMillis: Long, elapsedMillis: Long): String =
+    if (bootCount != null && bootCount >= 0) bootCount.toString() else "boot-at-" + (wallMillis - elapsedMillis).floorDiv(60_000L)
+
+/**
  * One transaction. Records are keyed by account, key generation and verified transaction id; [handle] is a random
  * local id that notifications and the Activity use instead. Terminal records keep no request, only a [digest]
  * tombstone so that a resent copy is recognized.

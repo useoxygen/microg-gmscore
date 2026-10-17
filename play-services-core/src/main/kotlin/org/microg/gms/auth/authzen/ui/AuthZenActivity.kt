@@ -138,13 +138,16 @@ class AuthZenActivity : ComponentActivity() {
             }
             content.addView(row)
         } else {
+            val availability = ownerAuth.availability()
+            // Below Android 11 the system cannot ask for a fresh strong unlock, so Yes is off there; No still works.
+            if (availability == OwnerAuthAvailability.UNSUPPORTED) content.addView(text(getString(R.string.cyclon_authzen_yes_unsupported), 14f))
             content.addView(button(getString(R.string.cyclon_authzen_yes)) {
                 when {
                     ownerAuth.availability() != OwnerAuthAvailability.AVAILABLE -> showMessage(getString(R.string.cyclon_authzen_no_lock))
                     record.displayChoices.isNotEmpty() -> showRequest(step, numbers = true)
                     else -> perform { consent.approve(handle, null) }
                 }
-            })
+            }.apply { isEnabled = availability != OwnerAuthAvailability.UNSUPPORTED })
         }
         content.addView(button(getString(R.string.cyclon_authzen_no)) { perform { consent.deny(handle) } })
     }

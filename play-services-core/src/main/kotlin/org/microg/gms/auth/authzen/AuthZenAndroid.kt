@@ -63,8 +63,10 @@ internal fun Context.dispatchAuthZenMessage(intent: Intent, done: () -> Unit) {
 }
 
 internal fun Context.authZenNow(): AuthZenNow {
-    val bootId = if (SDK_INT >= 24) Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1).toString() else "legacy"
-    return AuthZenNow(System.currentTimeMillis(), SystemClock.elapsedRealtime(), bootId)
+    val wall = System.currentTimeMillis()
+    val elapsed = SystemClock.elapsedRealtime()
+    val bootCount = if (SDK_INT >= 24) Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT, -1) else null
+    return AuthZenNow(wall, elapsed, authZenBootId(bootCount, wall, elapsed))
 }
 
 internal fun Context.authZenRepository() = AuthZenRepository(authZenStorage(), CryptAuthFileLock(this))
@@ -78,6 +80,7 @@ internal fun Context.authZenBlocker(): AuthZenBlocker? {
     val keys = authZenKeys()
     return authZenBlocker(AuthZenReadinessInput(
         featureEnabled = true,
+        privateStorage = SDK_INT >= 21,
         ownerOptedIn = AuthPrefs.shouldReceiveTwoStepVerification(this),
         verifiedProfiles = AuthZenProfiles.verified.size,
         accountsWithAuthZenKey = googleAccounts().count { keys.keys(it).active != null },

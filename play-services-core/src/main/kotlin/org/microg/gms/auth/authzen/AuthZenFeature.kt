@@ -24,6 +24,11 @@ internal object AuthZenFeature {
 /** Why the native route cannot handle a prompt, in the order they are checked. */
 internal enum class AuthZenBlocker {
     FEATURE_OFF,
+    /**
+     * Android 4.4 (API 19–20) has no `noBackupFilesDir`; the store would fall back to `filesDir`, which ADB backup can
+     * copy, so the route does not run there at all.
+     */
+    NO_PRIVATE_STORAGE,
     /** The owner turned off "Receive two-step verification prompts". */
     OWNER_OPTED_OUT,
     /** No transaction profile has been verified against current Google traffic on a device. */
@@ -41,11 +46,14 @@ internal class AuthZenReadinessInput(
     val accountsWithAuthZenKey: Int,
     val secureLock: Boolean,
     val notificationsAllowed: Boolean,
+    /** Whether `noBackupFilesDir` exists (API 21+). */
+    val privateStorage: Boolean = true,
 )
 
 /** The first reason the route is not ready, or null when it could handle a prompt. */
 internal fun authZenBlocker(input: AuthZenReadinessInput): AuthZenBlocker? = when {
     !input.featureEnabled -> AuthZenBlocker.FEATURE_OFF
+    !input.privateStorage -> AuthZenBlocker.NO_PRIVATE_STORAGE
     !input.ownerOptedIn -> AuthZenBlocker.OWNER_OPTED_OUT
     input.verifiedProfiles == 0 -> AuthZenBlocker.PROTOCOL_NOT_VERIFIED
     input.accountsWithAuthZenKey == 0 -> AuthZenBlocker.NO_AUTHZEN_KEY
