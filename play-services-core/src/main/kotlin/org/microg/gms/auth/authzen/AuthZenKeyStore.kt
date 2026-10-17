@@ -5,8 +5,12 @@
 
 package org.microg.gms.auth.authzen
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build.VERSION.SDK_INT
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.encodeUtf8
 import okio.ByteString.Companion.toByteString
@@ -17,6 +21,8 @@ import org.microg.gms.cryptauth.withProcessFileLock
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 
@@ -44,8 +50,15 @@ internal interface AuthZenLock {
  * temporary files. Android's `AtomicFile` is not used: its `openRead()` deletes an unfinished `.new` file, so a read
  * racing a write in another process could silently undo that write, and its `finishWrite()` only logs a failed
  * rename (useoxygen/cyclon#842). Here a failed rename throws, and [commit] reads the result back.
+ *
+ * A rename or delete is only crash-durable once the directory holding the entry is synced, so [directorySync] runs on
+ * [directory] after each rename and delete, and on the parent of every directory this storage creates. A failed sync
+ * throws, so no effect relies on a change a power loss could undo; see [syncDirectory] for where it is best-effort.
  */
-internal class AtomicFileStorage(private val directory: File) : AuthZenStorage {
+internal class AtomicFileStorage(
+    private val directory: File,
+    private val directorySync: (File) -> Unit = ::syncDirectory,
+) : AuthZenStorage {
     private fun file(name: String): File {
         require(name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '-' || it == '_' }) { "Bad blob name" }
         return File(directory, name)
@@ -54,7 +67,7 @@ internal class AtomicFileStorage(private val directory: File) : AuthZenStorage {
     override fun read(name: String): ByteArray? = file(name).takeIf { it.isFile }?.readBytes()
 
     override fun write(name: String, bytes: ByteArray) {
-        if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) throw AuthZenStorageException("No storage directory")
+        ensureDirectory()
         val target = file(name)
         val temporary = File.createTempFile("$name.", TEMPORARY_SUFFIX, directory)
         try {
@@ -67,17 +80,74 @@ internal class AtomicFileStorage(private val directory: File) : AuthZenStorage {
         } finally {
             if (temporary.exists()) temporary.delete()
         }
+        directorySync(directory)
     }
 
     override fun delete(name: String) {
         val target = file(name)
-        if (target.exists() && !target.delete()) throw AuthZenStorageException("Delete failed")
-        // Leftovers of a write that died before its rename; they never count as content.
+        if (target.exists()) {
+            if (!target.delete()) throw AuthZenStorageException("Delete failed")
+            directorySync(directory)
+        }
+        // Leftovers of a write that died before its rename; they never count as content, so their removal needs no sync.
         directory.listFiles { file -> file.name.startsWith("$name.") && file.name.endsWith(TEMPORARY_SUFFIX) }?.forEach { it.delete() }
+    }
+
+    /** Creates [directory] if needed and syncs the parent of each directory created here, innermost first. */
+    private fun ensureDirectory() {
+        if (directory.isDirectory) return
+        val missing = generateSequence(directory.absoluteFile) { it.parentFile }.takeWhile { !it.exists() }.toList()
+        if (!directory.mkdirs() && !directory.isDirectory) throw AuthZenStorageException("No storage directory")
+        for (created in missing) created.parentFile?.let(directorySync)
     }
 
     private companion object {
         const val TEMPORARY_SUFFIX = ".tmp"
+    }
+}
+
+/**
+ * Syncs [directory] itself (fsync on a read-only descriptor), which makes renames, creations and deletions of its
+ * entries durable. On Android this uses [Os]; its `FileInputStream`/`FileChannel` refuse directories. On a host JVM
+ * (tests) it uses a read-only [FileChannel].
+ *
+ * Best-effort only where the platform cannot do it: a file system that does not support syncing directories (EINVAL,
+ * EOPNOTSUPP on Android), Android below API 21 (no [Os]; the route is blocked there), or a JVM that cannot open a
+ * directory at all (Windows). There nothing more can be done, and an entry is as durable as that file system makes it.
+ * Any other failure, including an I/O error from the sync itself, throws [AuthZenStorageException].
+ */
+internal fun syncDirectory(directory: File) {
+    if (System.getProperty("java.vm.name") != "Dalvik") return syncDirectoryOnHostJvm(directory)
+    // Below API 21 there is no Os; the route is blocked there before it stores anything (NO_PRIVATE_STORAGE).
+    if (SDK_INT < 21) return
+    val fd = try {
+        Os.open(directory.path, OsConstants.O_RDONLY, 0)
+    } catch (e: ErrnoException) {
+        throw AuthZenStorageException("Directory open failed: errno ${e.errno}")
+    }
+    try {
+        Os.fsync(fd)
+    } catch (e: ErrnoException) {
+        if (e.errno != OsConstants.EINVAL && e.errno != OsConstants.EOPNOTSUPP) throw AuthZenStorageException("Directory sync failed: errno ${e.errno}")
+    } finally {
+        try { Os.close(fd) } catch (ignored: ErrnoException) { }
+    }
+}
+
+/** Host JVMs only (unit tests); never reached on Android, so the API 26 NIO calls are not a minSdk concern. */
+@SuppressLint("NewApi")
+private fun syncDirectoryOnHostJvm(directory: File) {
+    val channel = try {
+        FileChannel.open(directory.toPath(), StandardOpenOption.READ)
+    } catch (e: IOException) {
+        return
+    }
+    channel.use {
+        try {
+            it.force(true)
+        } catch (e: IOException) {
+            throw AuthZenStorageException("Directory sync failed: ${e.javaClass.name}")
+        }
     }
 }
 

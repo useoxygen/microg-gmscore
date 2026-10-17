@@ -85,6 +85,46 @@ class AuthZenStorageTest {
         assertTrue(File(root, "authzen").listFiles()!!.none { it.name.endsWith(".tmp") })
     }
 
+    @Test
+    fun everyRenameDeleteAndNewDirectoryIsSyncedInItsParent() {
+        val directory = File(root, "a/b/authzen")
+        val synced = mutableListOf<String>()
+        val storage = AtomicFileStorage(directory) { dir ->
+            // The sync of the store's directory comes after the rename or delete it makes durable.
+            val blob = File(dir, "blob")
+            synced += "${dir.relativeTo(root).path.ifEmpty { "." }}:${if (blob.isFile) blob.readText() else "-"}"
+        }
+        storage.commit("blob", "one".toByteArray())
+        assertEquals(listOf("a/b:-", "a:-", ".:-", "a/b/authzen:one"), synced)
+        synced.clear()
+        storage.commit("blob", "two".toByteArray())
+        storage.delete("blob")
+        storage.delete("blob")
+        assertEquals(listOf("a/b/authzen:two", "a/b/authzen:-"), synced)
+    }
+
+    @Test
+    fun aFailedDirectorySyncFailsTheCommitBeforeAnySend() {
+        enroll()
+        val record = authorizedRecord(storage)
+        val failing = AtomicFileStorage(File(root, "authzen")) { throw AuthZenStorageException("Directory sync failed") }
+        try {
+            failing.commit("blob", "x".toByteArray())
+            fail("a failed directory sync must throw")
+        } catch (e: AuthZenStorageException) {
+        }
+        assertTrue(sender(failing).send(record.handle) is SendReport.Stopped)
+        assertEquals(0, posts.get())
+    }
+
+    @Test
+    fun theDefaultDirectorySyncWorksOnThisPlatform() {
+        val directory = File(root, "synced").apply { mkdirs() }
+        syncDirectory(directory)
+        AtomicFileStorage(File(root, "fresh/authzen")).commit("blob", "x".toByteArray())
+        assertArrayEquals("x".toByteArray(), AtomicFileStorage(File(root, "fresh/authzen")).read("blob"))
+    }
+
     /** A storage that reports success but keeps the old bytes, like `AtomicFile.finishWrite()` after a lost rename. */
     private class DroppingStorage(private val inner: AuthZenStorage) : AuthZenStorage {
         @Volatile var dropWrites = false
