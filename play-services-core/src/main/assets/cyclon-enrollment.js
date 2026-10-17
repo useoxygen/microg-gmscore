@@ -1,12 +1,22 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 // Only the Google-owned registration page is eligible for these bounded actions.
 // No credentials, CAPTCHA response tokens or page text leave the WebView.
-(function (id, account, submit) {
+(function (id, account, submit, rechecks) {
   'use strict';
   if (location.origin !== 'https://www.google.com' ||
       location.pathname !== '/android/uncertified/') return 'outside';
   if (!/^[0-9]{19}$/.test(id) || /^0+$/.test(id)) return 'invalid_id';
   const visible = e => !!e && e.getClientRects().length > 0;
+  // reCAPTCHA hides an expired challenge with visibility and opacity but keeps its layout box.
+  const shown = e => {
+    if (!visible(e)) return false;
+    const view = e.ownerDocument && e.ownerDocument.defaultView;
+    for (let n = e; n && view; n = n.parentElement) {
+      const style = view.getComputedStyle(n);
+      if (style.visibility !== 'visible' || parseFloat(style.opacity) === 0) return false;
+    }
+    return true;
+  };
   const accountButton = document.querySelector('[aria-label^="Google Account:"]');
   const accountLabel = accountButton && accountButton.getAttribute('aria-label');
   // The last parenthesized field is Google's email; a display name can contain parentheses.
@@ -44,25 +54,38 @@
     window.__cyclonEnrollmentFormVisible = true;
   }
   // Google owns the challenge. Try the checkbox once; image challenges stay in place.
-  let challenge = false;
+  // An unsolved challenge expires after about two minutes and Google asks to check the
+  // box again. Native code allows a bounded number of those re-checks per page.
+  let challenge = false, expired = false;
   for (const frame of document.querySelectorAll('iframe')) {
     try {
       const u = new URL(frame.src || 'about:blank');
       if (u.origin !== location.origin || !u.pathname.startsWith('/recaptcha/api2/')) continue;
       const d = frame.contentDocument;
-      if (u.pathname.endsWith('/bframe') && visible(frame) &&
-          d && visible(d.querySelector('#rc-imageselect, #rc-audio'))) challenge = true;
+      if (u.pathname.endsWith('/bframe') && shown(frame) &&
+          d && shown(d.querySelector('#rc-imageselect, #rc-audio'))) challenge = true;
       const checkbox = d && d.querySelector('[role="checkbox"]');
-      if (u.pathname.endsWith('/anchor') && checkbox &&
-          checkbox.getAttribute('aria-checked') !== 'true' && !frame.dataset.cyclonAttempted) {
+      if (!u.pathname.endsWith('/anchor') || !checkbox || checkbox.getAttribute('aria-checked') === 'true') continue;
+      if (!frame.dataset.cyclonAttempted) {
         frame.dataset.cyclonAttempted = 'true';
         checkbox.click();
+      } else if (!checkbox.classList.contains('recaptcha-checkbox-expired')) {
+        delete frame.dataset.cyclonRecheck;
+      } else if (Date.now() - Number(frame.dataset.cyclonRecheck || 0) >= 10000) {
+        // Google normally answers a re-check within a second; an ignored one may be retried after ten.
+        const used = window.__cyclonEnrollmentRechecks || 0;
+        if (used < rechecks) {
+          window.__cyclonEnrollmentRechecks = used + 1;
+          frame.dataset.cyclonRecheck = String(Date.now());
+          frame.scrollIntoView({block: 'center', inline: 'nearest'});
+          checkbox.click();
+        } else expired = true;
       }
     } catch (_) { /* cross-origin challenges remain interactive */ }
   }
   const response = document.querySelector('textarea[name="g-recaptcha-response"]');
   const verified = !!response && !!response.value;
-  if (!verified) return challenge ? 'challenge' : 'verification';
+  if (!verified) return challenge ? 'challenge' : expired ? 'expired' : 'verification';
   // Google's button uses the default submit type without a literal type attribute.
   const buttons = Array.from(document.querySelectorAll('button'))
     .filter(e => visible(e) && e.type === 'submit' && e.innerText.trim() === 'Register' && !e.disabled);
@@ -74,4 +97,4 @@
     return 'submitting';
   }
   return 'ready';
-})(__CYCLON_ID__, __CYCLON_ACCOUNT__, __CYCLON_SUBMIT__);
+})(__CYCLON_ID__, __CYCLON_ACCOUNT__, __CYCLON_SUBMIT__, __CYCLON_RECHECKS__);
