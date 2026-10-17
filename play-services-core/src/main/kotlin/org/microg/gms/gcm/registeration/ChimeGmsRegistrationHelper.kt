@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: no tokens, ids or account names in logs; failed registrations back off.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -40,7 +41,6 @@ import org.microg.gms.gcm.GMS_NOTS_OAUTH_SERVICE
 import org.microg.gms.gcm.createGrpcClient
 import org.microg.gms.profile.Build
 import org.microg.gms.profile.Build.VERSION.SDK_INT
-import org.microg.gms.utils.toBase64
 import java.util.Locale
 import java.util.TimeZone
 
@@ -51,50 +51,58 @@ private const val DEFAULT_CHANNEL_NUMBER = "-1"
 class ChimeGmsRegistrationHelper(val context: Context) {
     private val chimeAccountsStore = context.getSharedPreferences("chime_gms_accounts", Context.MODE_PRIVATE)
 
-    suspend fun handleRegistration(regId: String, reason: RegistrationReason = RegistrationReason.ACCOUNT_CHANGED): List<Account> {
-        Log.d(TAG, "handle Account Registration regId:$regId")
+    /**
+     * Registers the Google accounts that need it (see [needsChimeRegistration]) for notifications to [regId], GmsCore's
+     * registration for Google's notification sender, and returns those tried. Logs carry counts only: no account names,
+     * registration ids, tokens, requests or responses.
+     */
+    suspend fun handleRegistration(regId: String, reason: RegistrationReason = RegistrationReason.ACCOUNT_CHANGED, explicit: Boolean = false): List<Account> {
         clearDeletedAccountRegistration()
+        val now = System.currentTimeMillis()
         val accounts = AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).filter {
-            val accountRegistration = getAccountRegistration(it.name)
-            accountRegistration == null || accountRegistration.registrationStatus != RegistrationStatus.STATUS_REGISTERED
+            needsChimeRegistration(getAccountRegistration(it.name), now, explicit)
         }
-        Log.d(TAG, "handleRegistration: needRegistration: ${accounts.joinToString("|") { it.name }}")
         if (accounts.isEmpty()) return emptyList()
+        Log.d(TAG, "handleRegistration: ${accounts.size} account(s) need registration")
         val authTokens = withContext(Dispatchers.IO) {
             accounts.mapNotNull {
                 val authToken = runCatching { AccountManager.get(context).blockingGetAuthToken(it, GMS_NOTS_OAUTH_SERVICE, true) }.getOrNull()
                 if (authToken != null) Pair(it.name, authToken) else null
             }
         }
-        Log.d(TAG, "authTokens: $authTokens")
-        if (authTokens.isEmpty()) return emptyList()
-        val response = withContext(Dispatchers.IO) {
+        if (authTokens.size < accounts.size) Log.w(TAG, "handleRegistration: no notifications token for ${accounts.size - authTokens.size} account(s)")
+        val response = if (authTokens.isEmpty()) null else withContext(Dispatchers.IO) {
             val request = buildRegistrationRequest(authTokens, reason, regId)
-            Log.d(TAG, "Registration request: ${request.encode().toBase64()}")
             val api = createGrpcClient<NotificationsApiServiceClient>(
                 baseUrl = GMS_NOTS_BASE_URL,
                 interceptor = AuthHeaderInterceptor(authTokens.first().second)
             )
             runCatching { api.MultiLoginUpdate().executeBlocking(request) }.onFailure {
-                Log.d(TAG, "handleRegistration: failed!", it)
+                Log.w(TAG, "handleRegistration: MultiLoginUpdate failed: ${it.javaClass.simpleName}")
             }.getOrNull()
         }
-        Log.d(TAG, "Registration response: $response")
-        if (response == null) return emptyList()
-        accounts.map {
+        val registered = accounts.map {
             val accountId = it.name.hashCode().toString()
-            val result = response.registrationResults.find { data -> accountId == data.id }
+            val result = response?.registrationResults?.find { data -> accountId == data.id }
             ChimeGmsAccount(
                 id = accountId,
                 accountName = it.name,
                 representativeTargetId = result?.payload?.representativeTargetId,
                 registrationStatus = if (result?.success == true) RegistrationStatus.STATUS_REGISTERED else RegistrationStatus.STATUS_UNREGISTERED,
-                obfuscatedGaiaId = result?.obfuscatedGaiaId
+                obfuscatedGaiaId = result?.obfuscatedGaiaId,
+                updatedAt = now
             )
-        }.forEach { saveAccountRegistration(it) }
-        Log.d(TAG, "Registration success : ${accounts.joinToString("|") { it.name }}")
+        }.onEach { saveAccountRegistration(it) }.count { it.registrationStatus == RegistrationStatus.STATUS_REGISTERED }
+        Log.i(TAG, "handleRegistration: $registered of ${accounts.size} account(s) registered")
+        if (response == null) return emptyList()
         return accounts
     }
+
+    /** How many current Google accounts have a successful notification registration. */
+    fun registeredAccountCount(): Int =
+        AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).count {
+            getAccountRegistration(it.name)?.registrationStatus == RegistrationStatus.STATUS_REGISTERED
+        }
 
     private fun buildRegistrationRequest(authTokens: List<Pair<String, String?>>, reason: RegistrationReason, gmsRegId: String): RegistrationRequest {
         val devices = authTokens.map {

@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: Google's two-step verification prompts are on unless the owner turns them off.
 /*
  * SPDX-FileCopyrightText: 2021, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -247,7 +248,7 @@ class SettingsProvider : ContentProvider() {
             Auth.VISIBLE -> getSettingsBoolean(key, false)
             Auth.INCLUDE_ANDROID_ID -> getSettingsBoolean(key, true)
             Auth.STRIP_DEVICE_NAME -> getSettingsBoolean(key, false)
-            Auth.TWO_STEP_VERIFICATION -> getSettingsBoolean(key, false)
+            Auth.TWO_STEP_VERIFICATION -> getSettingsBoolean(key, true)
             Auth.FIND_DEVICES -> getSettingsBoolean(key, false)
             else -> throw IllegalArgumentException("Unknown key: $key")
         }
