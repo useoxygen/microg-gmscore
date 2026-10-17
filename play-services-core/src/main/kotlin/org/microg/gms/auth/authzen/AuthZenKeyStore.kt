@@ -7,50 +7,102 @@ package org.microg.gms.auth.authzen
 
 import android.content.Context
 import android.os.Build.VERSION.SDK_INT
-import android.util.AtomicFile
 import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.encodeUtf8
 import okio.ByteString.Companion.toByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import org.microg.gms.cryptauth.withCryptAuthLock
+import org.microg.gms.cryptauth.withProcessFileLock
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 
-/** Small named blobs, written atomically. Production files live in `noBackupFilesDir`. */
+/**
+ * Small named blobs, written atomically. Production files live in `noBackupFilesDir`.
+ *
+ * Callers hold the blob's [AuthZenLock] for every call, reads included, and write through [commit], which reads the
+ * result back: a write that did not land throws [AuthZenStorageException] before any effect depends on it.
+ */
 internal interface AuthZenStorage {
     fun read(name: String): ByteArray?
     fun write(name: String, bytes: ByteArray)
     fun delete(name: String)
 }
 
-/** Serializes read-modify-write of one blob across threads and GmsCore processes. */
+internal class AuthZenStorageException(message: String) : IOException(message)
+
+/** Serializes every read and read-modify-write of one blob across threads and GmsCore processes. Not reentrant. */
 internal interface AuthZenLock {
     fun <T> withLock(name: String, block: () -> T): T
 }
 
+/**
+ * Writes a blob as a uniquely named temporary file, synced, then renamed over the old one; reads never touch
+ * temporary files. Android's `AtomicFile` is not used: its `openRead()` deletes an unfinished `.new` file, so a read
+ * racing a write in another process could silently undo that write, and its `finishWrite()` only logs a failed
+ * rename (useoxygen/cyclon#842). Here a failed rename throws, and [commit] reads the result back.
+ */
 internal class AtomicFileStorage(private val directory: File) : AuthZenStorage {
-    private fun file(name: String) = AtomicFile(File(directory.apply { mkdirs() }, name))
-    override fun read(name: String): ByteArray? = file(name).takeIf { it.baseFile.exists() }?.readFully()
+    private fun file(name: String): File {
+        require(name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '-' || it == '_' }) { "Bad blob name" }
+        return File(directory, name)
+    }
+
+    override fun read(name: String): ByteArray? = file(name).takeIf { it.isFile }?.readBytes()
+
     override fun write(name: String, bytes: ByteArray) {
-        val file = file(name)
-        val stream = file.startWrite()
+        if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) throw AuthZenStorageException("No storage directory")
+        val target = file(name)
+        val temporary = File.createTempFile("$name.", TEMPORARY_SUFFIX, directory)
         try {
-            stream.write(bytes)
-            file.finishWrite(stream)
-        } catch (e: Exception) {
-            file.failWrite(stream)
-            throw e
+            FileOutputStream(temporary).use { stream ->
+                stream.write(bytes)
+                stream.flush()
+                stream.fd.sync()
+            }
+            if (!temporary.renameTo(target)) throw AuthZenStorageException("Rename failed")
+        } finally {
+            if (temporary.exists()) temporary.delete()
         }
     }
 
-    override fun delete(name: String) = file(name).delete()
+    override fun delete(name: String) {
+        val target = file(name)
+        if (target.exists() && !target.delete()) throw AuthZenStorageException("Delete failed")
+        // Leftovers of a write that died before its rename; they never count as content.
+        directory.listFiles { file -> file.name.startsWith("$name.") && file.name.endsWith(TEMPORARY_SUFFIX) }?.forEach { it.delete() }
+    }
+
+    private companion object {
+        const val TEMPORARY_SUFFIX = ".tmp"
+    }
+}
+
+/**
+ * Writes [bytes] and checks that a read returns exactly them, so a storage that dropped or mangled the write fails
+ * here, before any effect that depends on the new state. Call with the blob's lock held.
+ */
+internal fun AuthZenStorage.commit(name: String, bytes: ByteArray) {
+    write(name, bytes)
+    if (!(read(name) ?: throw AuthZenStorageException("Missing after write")).contentEquals(bytes)) throw AuthZenStorageException("Read-back mismatch")
 }
 
 /** The `cryptauth_locks` file locks shared with the Workspace screen-lock proof, under their own `authzen-` kinds. */
 internal class CryptAuthFileLock(private val context: Context) : AuthZenLock {
-    override fun <T> withLock(name: String, block: () -> T): T = context.withCryptAuthLock("authzen-$name", name, wait = true, block)!!
+    @Suppress("UNCHECKED_CAST")
+    override fun <T> withLock(name: String, block: () -> T): T = context.withCryptAuthLock("authzen-$name", name, wait = true, block) as T
+}
+
+/** The same process and file locking as [CryptAuthFileLock], with lock files in [directory]; for host tests. */
+internal class DirectoryFileLock(private val directory: File) : AuthZenLock {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T> withLock(name: String, block: () -> T): T {
+        directory.mkdirs()
+        return withProcessFileLock(File(directory, "authzen-$name.lock"), wait = true, block) as T
+    }
 }
 
 /** AuthZen state is never backed up: a restored master key or transaction must not act for another device. */
@@ -103,11 +155,11 @@ internal class AuthZenAccountKeys(
  */
 internal class AuthZenKeyRegistry(private val storage: AuthZenStorage, private val lock: AuthZenLock) {
 
-    fun keys(account: String): AuthZenAccountKeys = read(account)
+    fun keys(account: String): AuthZenAccountKeys = lock.withLock(fileName(account)) { read(account) }
 
     /** The key for a server message's (unverified) handle, active or decrypt-only, or null. */
     fun serverKey(account: String, handle: ByteArray): SecretKey? =
-        read(account).keys.firstOrNull { it.handle.contentEquals(handle) }?.secretKey
+        keys(account).keys.firstOrNull { it.handle.contentEquals(handle) }?.secretKey
 
     fun stage(account: String, type: AuthZenKeyType, material: ByteArray, handle: ByteArray): AuthZenPendingKey = update(account) { keys ->
         require(material.size == type.length) { "Key length does not match its type" }
@@ -153,11 +205,11 @@ internal class AuthZenKeyRegistry(private val storage: AuthZenStorage, private v
 
     private fun <T> update(account: String, block: (AuthZenAccountKeys) -> Pair<AuthZenAccountKeys, T>): T = lock.withLock(fileName(account)) {
         val (next, result) = block(read(account))
-        storage.write(fileName(account), encode(next))
+        storage.commit(fileName(account), encode(next))
         result
     }
 
-    /** An unreadable file counts as no keys; prompts then fail closed until enrollment runs again. */
+    /** Call with the account's lock held. An unreadable file counts as no keys; prompts then fail closed. */
     private fun read(account: String): AuthZenAccountKeys = storage.read(fileName(account))?.let {
         try {
             decode(it)

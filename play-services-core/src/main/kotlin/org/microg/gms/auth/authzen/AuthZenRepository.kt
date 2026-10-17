@@ -11,9 +11,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Durable transaction store shared by every GmsCore process. Each call reads, reduces and writes under one
- * cross-process lock, so concurrent taps, duplicate pushes and a recreated Activity all see one ordered history.
- * Writes happen before effects: a send starts only after `SENDING` is stored.
+ * Durable transaction store shared by every GmsCore process. Every call, reads included, holds one cross-process
+ * lock while it reads, reduces and writes, so concurrent taps, duplicate pushes and a recreated Activity all see one
+ * ordered history. Writes happen before effects and are read back ([commit]): a send starts only after `SENDING` is
+ * provably stored, and a write that did not land throws instead of letting an effect run on a stale state.
  */
 internal class AuthZenRepository(
     private val storage: AuthZenStorage,
@@ -21,24 +22,33 @@ internal class AuthZenRepository(
     private val reducer: AuthZenReducer = AuthZenReducer(),
 ) {
     fun apply(action: AuthZenAction, now: AuthZenNow): AuthZenResult? = lock.withLock(FILE) {
-        val (records, result) = reducer.reduce(read(), action, now)
-        storage.write(FILE, encode(records))
+        val stored = storage.read(FILE)
+        val (records, result) = reducer.reduce(decodeOrEmpty(stored), action, now)
+        store(stored, records)
         result
     }
 
     /** A record after reconciling expiry, for rendering. Never trusts anything but the store. */
-    fun find(handle: String, now: AuthZenNow): AuthZenRecord? {
-        apply(AuthZenAction.Reconcile, now)
-        return read().firstOrNull { it.handle == handle }
+    fun find(handle: String, now: AuthZenNow): AuthZenRecord? = snapshot(now).firstOrNull { it.handle == handle }
+
+    fun all(now: AuthZenNow): List<AuthZenRecord> = snapshot(now)
+
+    /** Reconciles and returns the stored records under one lock, so no write can slip in between. */
+    private fun snapshot(now: AuthZenNow): List<AuthZenRecord> = lock.withLock(FILE) {
+        val stored = storage.read(FILE)
+        val (records, _) = reducer.reduce(decodeOrEmpty(stored), AuthZenAction.Reconcile, now)
+        store(stored, records)
+        records
     }
 
-    fun all(now: AuthZenNow): List<AuthZenRecord> {
-        apply(AuthZenAction.Reconcile, now)
-        return read()
+    /** Call with the lock held. Unchanged content is not rewritten; anything else is committed and read back. */
+    private fun store(stored: ByteArray?, records: List<AuthZenRecord>) {
+        val bytes = encode(records)
+        if (stored == null || !stored.contentEquals(bytes)) storage.commit(FILE, bytes)
     }
 
     /** An unreadable store fails closed: no request can be shown or answered from it. */
-    private fun read(): List<AuthZenRecord> = storage.read(FILE)?.let {
+    private fun decodeOrEmpty(stored: ByteArray?): List<AuthZenRecord> = stored?.let {
         try {
             decode(it)
         } catch (e: Exception) {

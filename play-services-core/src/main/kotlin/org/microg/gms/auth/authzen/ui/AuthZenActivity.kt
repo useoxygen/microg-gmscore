@@ -93,7 +93,8 @@ class AuthZenActivity : ComponentActivity() {
         busy = true
         setControlsEnabled(false)
         lifecycleScope.launch {
-            val step = withContext(Dispatchers.IO) { block() }
+            // A store that cannot be read or written decides nothing; the screen just ends.
+            val step = withContext(Dispatchers.IO) { runCatching(block).getOrElse { ConsentStep.Closed(null) } }
             busy = false
             render(step)
         }

@@ -274,7 +274,11 @@ internal class AuthZenSender(
     private val random: SecureRandom = SecureRandom(),
 ) {
     fun send(handle: String): SendReport {
-        val record = repository.find(handle, now()) ?: return SendReport.Stopped(null)
+        val record = try {
+            repository.find(handle, now())
+        } catch (e: AuthZenStorageException) {
+            null
+        } ?: return SendReport.Stopped(null)
         if (record.state != AuthZenState.DECISION_AUTHORIZED) return SendReport.Stopped(record.state)
         val profile = profiles.firstOrNull { it.name == record.profile }
         if (profile == null || api == null) {
@@ -283,7 +287,13 @@ internal class AuthZenSender(
         }
         val accountKeys = keys.keys(record.account)
         val operation = random.handle()
-        val begin = repository.apply(AuthZenAction.BeginSend(handle, operation, accountPresent(record.account), optedIn(), accountKeys.generation), now())
+        // A store that cannot prove SENDING was written stops here: nothing leaves the phone.
+        val begin = try {
+            repository.apply(AuthZenAction.BeginSend(handle, operation, accountPresent(record.account), optedIn(), accountKeys.generation), now())
+        } catch (e: AuthZenStorageException) {
+            diagnostics.event(AuthZenEvent.RESULT, null, "store_failed" to true, "attempt" to false)
+            return SendReport.Stopped(null)
+        }
         val sending = (begin as? AuthZenResult.Updated)?.record?.takeIf { it.state == AuthZenState.SENDING }
             ?: return SendReport.Stopped((begin as? AuthZenResult.Updated)?.record?.state ?: record.state)
 
@@ -304,7 +314,12 @@ internal class AuthZenSender(
             // Before the network call nothing left the phone; after it, the reply may have arrived.
             if (attempted) SendOutcome.UNKNOWN else SendOutcome.NOT_DELIVERED
         }
-        val finished = repository.apply(AuthZenAction.SendFinished(handle, operation, outcome), now())
+        // If the result cannot be stored, SENDING stays and later ends as OUTCOME_UNKNOWN; it is never sent again.
+        val finished = try {
+            repository.apply(AuthZenAction.SendFinished(handle, operation, outcome), now())
+        } catch (e: AuthZenStorageException) {
+            null
+        }
         val state = (finished as? AuthZenResult.Updated)?.record?.state
         diagnostics.event(AuthZenEvent.RESULT, null, "outcome" to outcome, "state" to state)
         return SendReport.Sent(state ?: AuthZenState.OUTCOME_UNKNOWN)
