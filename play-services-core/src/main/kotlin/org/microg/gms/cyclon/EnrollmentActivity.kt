@@ -384,7 +384,8 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                     status = if (helper) R.string.cyclon_enrollment_assisting else R.string.cyclon_enrollment_challenge
                 }
                 "verification" -> { busy = false; status = R.string.cyclon_enrollment_verifying }
-                "expired" -> { busy = false; status = R.string.cyclon_enrollment_expired }
+                // No puzzle left to assist with; the owner asks for a new one with Check again.
+                "expired" -> { helper = false; puzzle.reset(); busy = false; status = R.string.cyclon_enrollment_expired }
                 "rejected" -> { busy = false; status = R.string.cyclon_enrollment_needs_help; job?.cancel() }
                 // Keep checking: the account label can be read mid-render. Nothing is filled or clicked until it matches.
                 "account_mismatch" -> { busy = false; status = R.string.cyclon_enrollment_choose_web }

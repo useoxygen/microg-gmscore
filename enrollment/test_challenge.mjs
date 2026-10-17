@@ -100,8 +100,10 @@ test('reload asks for a different puzzle only through the visible enabled reload
 });
 test('an expired challenge hidden by Google is not observed or acted on',()=>{
   const f=fixture(),snapshot=f.run();
-  f.frame.checkVisibility=()=>false;
+  let hidden=true;const container={parentElement:null};
+  f.frame.parentElement=container;
+  f.frame.ownerDocument={defaultView:{getComputedStyle:n=>n===container&&hidden?{visibility:'visible',opacity:'0'}:{visibility:hidden?'hidden':'visible',opacity:'1'}}};
   assert.equal(f.run(),null);assert.equal(f.run('tiles',[0],snapshot.fingerprint),null);
   assert.equal(f.state.clicks.length,0);
-  f.frame.checkVisibility=()=>true;assert.equal(f.run().phase,'challenge');
+  hidden=false;assert.equal(f.run().phase,'challenge');
 });

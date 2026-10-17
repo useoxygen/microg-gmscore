@@ -8,8 +8,15 @@
   if (!/^[0-9]{19}$/.test(id) || /^0+$/.test(id)) return 'invalid_id';
   const visible = e => !!e && e.getClientRects().length > 0;
   // reCAPTCHA hides an expired challenge with visibility and opacity but keeps its layout box.
-  const shown = e => visible(e) && (typeof e.checkVisibility !== 'function' ||
-    e.checkVisibility({visibilityProperty: true, opacityProperty: true}));
+  const shown = e => {
+    if (!visible(e)) return false;
+    const view = e.ownerDocument && e.ownerDocument.defaultView;
+    for (let n = e; n && view; n = n.parentElement) {
+      const style = view.getComputedStyle(n);
+      if (style.visibility !== 'visible' || parseFloat(style.opacity) === 0) return false;
+    }
+    return true;
+  };
   const accountButton = document.querySelector('[aria-label^="Google Account:"]');
   const accountLabel = accountButton && accountButton.getAttribute('aria-label');
   // The last parenthesized field is Google's email; a display name can contain parentheses.
@@ -64,11 +71,12 @@
         checkbox.click();
       } else if (!checkbox.classList.contains('recaptcha-checkbox-expired')) {
         delete frame.dataset.cyclonRecheck;
-      } else if (!frame.dataset.cyclonRecheck) {
+      } else if (Date.now() - Number(frame.dataset.cyclonRecheck || 0) >= 10000) {
+        // Google normally answers a re-check within a second; an ignored one may be retried after ten.
         const used = window.__cyclonEnrollmentRechecks || 0;
         if (used < rechecks) {
           window.__cyclonEnrollmentRechecks = used + 1;
-          frame.dataset.cyclonRecheck = 'true';
+          frame.dataset.cyclonRecheck = String(Date.now());
           frame.scrollIntoView({block: 'center', inline: 'nearest'});
           checkbox.click();
         } else expired = true;
