@@ -1,4 +1,5 @@
-// Modified by Cyclon in 2026: redacted route diagnostics, tap-to-open prompt notification instead of a background activity start.
+// Modified by Cyclon in 2026: redacted route diagnostics, tap-to-open prompt notification instead of a background activity start,
+// SecureGcm messages handed to the native AuthZen route.
 /**
  * SPDX-FileCopyrightText: 2026 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -31,6 +32,8 @@ import org.microg.gms.accountsettings.ui.KEY_NOTIFICATION_ID
 import org.microg.gms.accountsettings.ui.MainActivity
 import org.microg.gms.auth.AuthConstants
 import org.microg.gms.auth.AuthPrefs
+import org.microg.gms.auth.authzen.dispatchAuthZenMessage
+import org.microg.gms.auth.authzen.isSecureGcmCandidate
 import org.microg.gms.common.Constants
 import org.microg.gms.common.ForegroundServiceContext
 import org.microg.gms.gcm.AuthHeaderInterceptor
@@ -65,6 +68,12 @@ internal val twoStepDiagnostics = TwoStepDiagnostics { Log.i(TAG, it) }
 
 class GcmReceiver : WakefulBroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // SecureGcm (`P`) messages belong to the native AuthZen route, which is off by default and only logs them.
+        if (intent.isSecureGcmCandidate()) {
+            val pending = goAsync()
+            context.dispatchAuthZenMessage(intent) { pending.finish() }
+            return
+        }
         val prefOn = AuthPrefs.shouldReceiveTwoStepVerification(context)
         if (!admitTwoStepMessage(prefOn, intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY), twoStepDiagnostics)) return
         val callIntent = Intent(context, GcmReceiverService::class.java)
