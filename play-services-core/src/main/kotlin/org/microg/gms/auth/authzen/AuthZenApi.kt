@@ -14,6 +14,10 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.text.ParsePosition
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * The only endpoints the native route may call. Push data never supplies a URL, host or scope.
@@ -102,12 +106,19 @@ internal fun AuthZenApiResult.toSendOutcome(interpret: (JSONObject) -> SendOutco
     AuthZenApiResult.Unknown -> SendOutcome.UNKNOWN
 }
 
-/** HTTPS POST without redirects; the token only ever goes to an [AuthZenEndpoint] URL. */
-internal class HttpAuthZenTransport(private val timeoutMillis: Int = 20_000) : AuthZenTransport {
+/**
+ * HTTPS POST without redirects; the token only ever goes to an [AuthZenEndpoint] URL. [openConnection] and
+ * [wallClock] exist for host tests, which never open a real connection.
+ */
+internal class HttpAuthZenTransport(
+    private val timeoutMillis: Int = 20_000,
+    private val openConnection: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+    private val wallClock: () -> Long = System::currentTimeMillis,
+) : AuthZenTransport {
     override fun post(endpoint: AuthZenEndpoint, bearerToken: String, body: String): AuthZenHttpResult {
         val url = URL(endpoint.url)
         check(url.protocol == "https" && url.host == "www.googleapis.com")
-        val connection = url.openConnection() as HttpURLConnection
+        val connection = openConnection(url)
         connection.instanceFollowRedirects = false
         connection.requestMethod = "POST"
         connection.doOutput = true
@@ -126,7 +137,8 @@ internal class HttpAuthZenTransport(private val timeoutMillis: Int = 20_000) : A
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.let { String(Utils.readStreamToEnd(it)) }
-            AuthZenHttpResult.Response(code, text, connection.getHeaderField("Retry-After")?.toLongOrNull())
+            val retryAfter = parseRetryAfterSeconds(connection.getHeaderField("Retry-After"), connection.getHeaderField("Date"), wallClock())
+            AuthZenHttpResult.Response(code, text, retryAfter)
         } catch (e: SocketTimeoutException) {
             AuthZenHttpResult.Interrupted
         } catch (e: IOException) {
@@ -136,6 +148,38 @@ internal class HttpAuthZenTransport(private val timeoutMillis: Int = 20_000) : A
         }
     }
 }
+
+/**
+ * The wait a `Retry-After` value asks for, in whole seconds, or null when it is missing or malformed (RFC 9110
+ * §10.2.3). It is either delay-seconds or an HTTP-date; recipients must accept all three HTTP-date forms (§5.6.7).
+ * A date is measured against the response's own `Date` header when that parses, so the phone's clock skew does not
+ * change the wait, and otherwise against [nowWallMillis]; a date already past means no wait. Rounded up, never
+ * negative; [AuthZenApi] applies the caps, and the store turns the wait into a monotonic deadline.
+ */
+internal fun parseRetryAfterSeconds(retryAfter: String?, responseDate: String?, nowWallMillis: Long): Long? {
+    val value = retryAfter?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    if (value.all { it in '0'..'9' }) return value.toLongOrNull() ?: Long.MAX_VALUE
+    val until = parseHttpDate(value) ?: return null
+    val from = responseDate?.let(::parseHttpDate) ?: nowWallMillis
+    val millis = until - from
+    return if (millis <= 0) 0 else (millis + 999) / 1000
+}
+
+/** IMF-fixdate, then the obsolete RFC 850 and asctime forms; always GMT, English names, strict. */
+private fun parseHttpDate(value: String): Long? {
+    for (pattern in HTTP_DATE_PATTERNS) {
+        val format = SimpleDateFormat(pattern, Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("GMT")
+            isLenient = false
+        }
+        val position = ParsePosition(0)
+        val date = format.parse(value, position)
+        if (date != null && position.index == value.length) return date.time
+    }
+    return null
+}
+
+private val HTTP_DATE_PATTERNS = listOf("EEE, dd MMM yyyy HH:mm:ss 'GMT'", "EEEE, dd-MMM-yy HH:mm:ss 'GMT'", "EEE MMM d HH:mm:ss yyyy")
 
 internal class AccountManagerTokenProvider(private val context: Context) : AuthZenTokenProvider {
     override fun token(account: String): String? = try {

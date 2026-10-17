@@ -5,6 +5,11 @@ package org.microg.gms.auth.authzen
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.HttpURLConnection
 import java.net.URL
 
 class AuthZenApiTest {
@@ -98,5 +103,60 @@ class AuthZenApiTest {
         assertEquals(SendOutcome.RATE_LIMITED, AuthZenApiResult.RateLimited(1000).toSendOutcome(confirmed))
         assertEquals(SendOutcome.REJECTED, AuthZenApiResult.Rejected(403).toSendOutcome(confirmed))
         assertEquals(SendOutcome.UNKNOWN, AuthZenApiResult.Unknown.toSendOutcome(confirmed))
+    }
+
+    @Test
+    fun retryAfterAcceptsDelaySecondsAndEveryHttpDateForm() {
+        val now = 784_111_777_000L // Sun, 06 Nov 1994 08:49:37 GMT
+        assertEquals(120L, parseRetryAfterSeconds("120", null, now))
+        assertEquals(0L, parseRetryAfterSeconds(" 0 ", null, now))
+        assertEquals(Long.MAX_VALUE, parseRetryAfterSeconds("99999999999999999999", null, now))
+        // The same instant, 180 s after now, in IMF-fixdate, RFC 850 and asctime form (RFC 9110 §5.6.7).
+        for (date in listOf("Sun, 06 Nov 1994 08:52:37 GMT", "Sunday, 06-Nov-94 08:52:37 GMT", "Sun Nov  6 08:52:37 1994")) {
+            assertEquals(date, 180L, parseRetryAfterSeconds(date, null, now))
+        }
+        // Measured against the response's Date header, not the phone's (here 1 h fast) clock.
+        assertEquals(180L, parseRetryAfterSeconds("Sun, 06 Nov 1994 08:52:37 GMT", "Sun, 06 Nov 1994 08:49:37 GMT", now + 3_600_000))
+        // An unparsable Date header falls back to the local clock; a partial second rounds up; the past means now.
+        assertEquals(180L, parseRetryAfterSeconds("Sun, 06 Nov 1994 08:52:37 GMT", "yesterday", now))
+        assertEquals(1L, parseRetryAfterSeconds("Sun, 06 Nov 1994 08:49:38 GMT", null, now + 500))
+        assertEquals(0L, parseRetryAfterSeconds("Sun, 06 Nov 1994 08:00:00 GMT", null, now))
+        for (bad in listOf(null, "", "-5", "1.5", "soon", "Sun, 06 Nov 1994 08:52:37 PST", "Sun, 06 Nov 1994 08:52:37 GMT trailing")) {
+            assertNull(bad, parseRetryAfterSeconds(bad, null, now))
+        }
+    }
+
+    /** A canned 429 response; it never touches the network. */
+    private class RateLimitedConnection(url: URL, private val headers: Map<String, String>) : HttpURLConnection(url) {
+        val written = ByteArrayOutputStream()
+        override fun connect() = Unit
+        override fun disconnect() = Unit
+        override fun usingProxy() = false
+        override fun getOutputStream(): OutputStream = written
+        override fun getResponseCode() = 429
+        override fun getErrorStream(): InputStream = ByteArrayInputStream("{}".toByteArray())
+        override fun getHeaderField(name: String): String? = headers[name]
+    }
+
+    @Test
+    fun anHttpDateRetryAfterKeepsTheRequestedWaitThroughTheTransport() {
+        val now = 784_111_777_000L
+        val connections = mutableListOf<RateLimitedConnection>()
+        fun transport(headers: Map<String, String>) = HttpAuthZenTransport(
+            openConnection = { url -> RateLimitedConnection(url, headers).also { connections += it } },
+            wallClock = { now },
+        )
+        val dated = transport(mapOf("Retry-After" to "Sun, 06 Nov 1994 08:52:37 GMT", "Date" to "Sun, 06 Nov 1994 08:49:37 GMT"))
+        val response = dated.post(AuthZenEndpoint.REPLY_TX, "token", "{}") as AuthZenHttpResult.Response
+        assertEquals(180L, response.retryAfterSeconds)
+        assertEquals(180_000L, (post(response) as AuthZenApiResult.RateLimited).retryAfterMillis)
+        // The caps still apply to a date: at least 1 s, at most 1 h.
+        val past = transport(mapOf("Retry-After" to "Sun, 06 Nov 1994 08:00:00 GMT")).post(AuthZenEndpoint.REPLY_TX, "token", "{}")
+        assertEquals(1_000L, (post(past) as AuthZenApiResult.RateLimited).retryAfterMillis)
+        val far = transport(mapOf("Retry-After" to "Mon, 07 Nov 1994 08:49:37 GMT")).post(AuthZenEndpoint.REPLY_TX, "token", "{}")
+        assertEquals(3_600_000L, (post(far) as AuthZenApiResult.RateLimited).retryAfterMillis)
+        val malformed = transport(mapOf("Retry-After" to "soon")).post(AuthZenEndpoint.REPLY_TX, "token", "{}")
+        assertEquals(60_000L, (post(malformed) as AuthZenApiResult.RateLimited).retryAfterMillis)
+        assertEquals("{}", connections.first().written.toString())
     }
 }
