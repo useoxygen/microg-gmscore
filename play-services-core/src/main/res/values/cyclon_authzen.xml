@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="cyclon_authzen_channel_name">Google sign-in requests</string>
+    <string name="cyclon_authzen_channel_description">Google asks this phone whether a sign-in is you. Nothing is approved without you.</string>
+    <string name="cyclon_authzen_notification_title">Google sign-in request</string>
+    <string name="cyclon_authzen_notification_text">Open to review</string>
+    <string name="cyclon_authzen_notification_public_text">Unlock to review</string>
+    <string name="cyclon_authzen_title">Is it you trying to sign in?</string>
+    <string name="cyclon_authzen_locked">Unlock your phone to review this Google sign-in request.</string>
+    <string name="cyclon_authzen_yes">Yes</string>
+    <string name="cyclon_authzen_no">No, it\'s not me</string>
+    <string name="cyclon_authzen_choose_number">Tap the number shown on the sign-in screen</string>
+    <string name="cyclon_authzen_number">Number %1$d</string>
+    <string name="cyclon_authzen_auth_title">Confirm it\'s you</string>
+    <string name="cyclon_authzen_auth_subtitle">Approve this Google sign-in</string>
+    <string name="cyclon_authzen_yes_unsupported">Approving needs Android 11 or later, which can ask for a fresh unlock. You can still answer No here, or approve on another device.</string>
+    <string name="cyclon_authzen_no_lock">Set a screen lock to approve sign-ins on this phone.</string>
+    <string name="cyclon_authzen_not_ready">Native prompt protocol not yet verified on device. Nothing was sent to Google.</string>
+    <string name="cyclon_authzen_submitted">Your answer was sent to Google.</string>
+    <string name="cyclon_authzen_approved">Google accepted your answer.</string>
+    <string name="cyclon_authzen_unknown">Your answer may not have reached Google. Check the sign-in screen.</string>
+    <string name="cyclon_authzen_retry_later">Google asked this phone to wait before answering. Open the request again in a few minutes.</string>
+    <string name="cyclon_authzen_ended">This sign-in request has ended.</string>
+</resources>

@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: insert-only permission write for GmsCore's push self-grant.
 /*
  * SPDX-FileCopyrightText: 2016, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -193,6 +194,19 @@ public class GcmDatabase extends SQLiteOpenHelper {
 
         db.setTransactionSuccessful();
         db.endTransaction();
+    }
+
+    /**
+     * Records {@code packageName} as known with {@code allowRegister} only if it has no entry yet, in one
+     * INSERT OR IGNORE, so a decision another connection commits first is never overwritten (Cyclon, useoxygen/cyclon#842).
+     *
+     * @return whether a new entry was created
+     */
+    public synchronized boolean noteAppKnownIfAbsent(String packageName, boolean allowRegister) {
+        ContentValues cv = new ContentValues();
+        cv.put(FIELD_PACKAGE_NAME, packageName);
+        cv.put(FIELD_ALLOW_REGISTER, allowRegister);
+        return getWritableDatabase().insertWithOnConflict(TABLE_APPS, null, cv, SQLiteDatabase.CONFLICT_IGNORE) != -1;
     }
 
     public synchronized void noteAppMessage(String packageName, int numBytes) {

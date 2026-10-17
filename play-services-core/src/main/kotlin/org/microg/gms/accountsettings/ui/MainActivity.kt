@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: log extra names only; prompt extras and account names stay out of logs.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -182,8 +183,7 @@ class MainActivity : AppCompatActivity() {
     })
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val extras = intent?.extras?.also { it.keySet() }
-        Log.d(TAG, "Invoked with ${intent.action} and extras $extras")
+        Log.d(TAG, "Invoked with ${intent.action} and extras ${intent?.extras?.keySet()?.sorted()}")
         super.onCreate(savedInstanceState)
 
         val screenId = ACTION_TO_SCREEN_ID[intent.action] ?: intent?.getIntExtra(EXTRA_SCREEN_ID, -1)?.takeIf { it > 0 } ?: 1

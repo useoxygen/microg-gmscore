@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: transport logs name message types and sizes only, never content (useoxygen/cyclon#842).
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -55,6 +56,7 @@ public class McsInputStream extends Thread implements Closeable {
     private int lastStreamIdReported = -1;
     private int streamId = 0;
     private long lastMsgTime = 0;
+    private int lastTag = -1;
 
     private volatile boolean closed = false;
 
@@ -120,20 +122,27 @@ public class McsInputStream extends Thread implements Closeable {
         if (!initialized) {
             try {
                 version = is.read();
-                Log.d(TAG, "Reading from MCS version: " + version);
+                McsLog.d(TAG, "Reading from MCS version: " + version);
                 initialized = true;
             } catch (IOException e) {
-                Log.w(TAG, "Error reading version", e);
+                McsLog.w(TAG, "Error reading version " + McsLog.describe(e));
             }
         }
     }
 
     public synchronized android.os.Message read() throws IOException {
+        Message message = readMessage();
+        if (message == null) return null;
+        return mainHandler.obtainMessage(MSG_INPUT, lastTag, streamId, message);
+    }
+
+    /** Reads and decodes one frame; logs only its type, size bucket and category (see {@link McsLog}). */
+    synchronized Message readMessage() throws IOException {
         ensureVersionRead();
         int mcsTag = is.read();
         int mcsSize = readVarint();
         if (mcsTag < 0 || mcsSize < 0) {
-            Log.w(TAG, "mcsTag: " + mcsTag + " mcsSize: " + mcsSize);
+            McsLog.w(TAG, "mcsTag: " + mcsTag + " mcsSize: " + mcsSize);
             return null;
         }
         byte[] bytes = new byte[mcsSize];
@@ -143,9 +152,10 @@ public class McsInputStream extends Thread implements Closeable {
         }
         Message message = read(mcsTag, bytes, len);
         if (message == null) return null;
-        Log.d(TAG, "Incoming message: " + message);
+        lastTag = mcsTag;
+        McsLog.d(TAG, "Incoming message: " + McsLog.describe(message));
         streamId++;
-        return mainHandler.obtainMessage(MSG_INPUT, mcsTag, streamId, message);
+        return message;
     }
 
     private static Message read(int mcsTag, byte[] bytes, int len) throws IOException {
@@ -166,11 +176,11 @@ public class McsInputStream extends Thread implements Closeable {
                 case MCS_DATA_MESSAGE_STANZA_TAG:
                     return DataMessageStanza.ADAPTER.decode(bytes);
                 default:
-                    Log.w(TAG, "Unknown tag: " + mcsTag);
+                    McsLog.w(TAG, "Unknown tag: " + mcsTag);
                     return null;
             }
         } catch (IllegalStateException e) {
-            Log.w(TAG, "Error parsing tag: "+mcsTag, e);
+            McsLog.w(TAG, "Error parsing tag: " + mcsTag + " " + McsLog.describe(e));
             return null;
         }
     }

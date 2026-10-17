@@ -1,14 +1,73 @@
-/* SPDX-FileCopyrightText: 2014 Google Inc.
+/* SPDX-FileCopyrightText: 2014 Google Inc., 2020 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+// Modified by Cyclon in 2026: added the SecureMessage envelope (SecureMessage, schemes, Header, HeaderAndBody,
+// HeaderAndBodyInternal) from github.com/google/ukey2 @10fc737a src/main/proto/securemessage.proto for the native
+// AuthZen foundation (useoxygen/cyclon#842). Field numbers and names are unchanged from that source; the public key
+// definitions below them are the unchanged pre-existing subset.
 
-// Subset of the SecureMessage public key format, as used by CryptAuth for the
-// key material of enrolled asymmetric keys.
+// Subset of the SecureMessage format, as used by CryptAuth for the key material of enrolled asymmetric keys and by
+// SecureGcm for signed and encrypted messages.
 syntax = "proto2";
 
 package securemessage;
 
 option optimize_for = LITE_RUNTIME;
+
+message SecureMessage {
+  // Must contain a HeaderAndBody message
+  required bytes header_and_body = 1;
+  // Signature of header_and_body
+  required bytes signature = 2;
+}
+
+// Supported "signature" schemes (both symmetric key and public key based)
+enum SigScheme {
+  HMAC_SHA256 = 1;
+  ECDSA_P256_SHA256 = 2;
+  // Not recommended -- use ECDSA_P256_SHA256 instead
+  RSA2048_SHA256 = 3;
+}
+
+// Supported encryption schemes
+enum EncScheme {
+  // No encryption
+  NONE = 1;
+  AES_256_CBC = 2;
+}
+
+message Header {
+  required SigScheme signature_scheme = 1;
+  required EncScheme encryption_scheme = 2;
+  // Identifies the verification key
+  optional bytes verification_key_id = 3;
+  // Identifies the decryption key
+  optional bytes decryption_key_id = 4;
+  // Encryption may use an IV
+  optional bytes iv = 5;
+  // Arbitrary per-protocol public data, to be sent with the plain-text header
+  optional bytes public_metadata = 6;
+  // The length of some associated data this is not sent in this SecureMessage,
+  // but which will be bound to the signature.
+  optional uint32 associated_data_length = 7 [default = 0];
+}
+
+message HeaderAndBody {
+  // Public data about this message (to be bound in the signature)
+  required Header header = 1;
+  // Payload data
+  required bytes body = 2;
+}
+
+// Must be kept wire-format compatible with HeaderAndBody. Provides the
+// SecureMessage code with a consistent wire-format representation that
+// remains stable irrespective of protobuf implementation choices.
+message HeaderAndBodyInternal {
+  // A raw (wire-format) byte encoding of a Header, suitable for hashing
+  required bytes header = 1;
+  // Payload data
+  required bytes body = 2;
+}
 
 enum PublicKeyType {
   EC_P256 = 1;

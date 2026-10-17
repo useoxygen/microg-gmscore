@@ -1,0 +1,37 @@
+/* SPDX-FileCopyrightText: 2020 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+// Minimal subset of github.com/google/ukey2 @10fc737a src/main/proto/securegcm.proto (Apache-2.0, see LICENSE):
+// the SecureGcm message types and the metadata carried in a SecureMessage header's public_metadata. Names, numbers
+// and package are unchanged. This file defines no transaction schema: Google's open source publishes none, and the
+// native AuthZen foundation does not ship a reconstructed one (useoxygen/cyclon#842).
+syntax = "proto2";
+
+package securegcm;
+
+option optimize_for = LITE_RUNTIME;
+
+// Message types used over the SecureGcm channel.
+enum Type {
+  ENROLLMENT = 0;
+  TICKLE = 1;
+  TX_REQUEST = 2;
+  TX_REPLY = 3;
+  TX_SYNC_REQUEST = 4;
+  TX_SYNC_RESPONSE = 5;
+  TX_PING = 6;
+  DEVICE_INFO_UPDATE = 7;
+  TX_CANCEL_REQUEST = 8;
+  PROXIMITYAUTH_PAIRING = 10;
+  GCMV1_IDENTITY_ASSERTION = 11;
+  DEVICE_TO_DEVICE_RESPONDER_HELLO_PAYLOAD = 12;
+  DEVICE_TO_DEVICE_MESSAGE = 13;
+  DEVICE_PROXIMITY_CALLBACK = 14;
+  UNLOCK_KEY_SIGNED_CHALLENGE = 15;
+  LOGIN_NOTIFICATION = 101;
+}
+
+message GcmMetadata {
+  required Type type = 1;
+  optional int32 version = 2 [default = 0];
+}

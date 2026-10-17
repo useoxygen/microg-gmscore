@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: the sign-in prompt switch says when notifications keep prompts from appearing.
 /*
  * SPDX-FileCopyrightText: 2024 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -25,6 +26,8 @@ import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.microg.gms.auth.AuthConstants
+import org.microg.gms.auth.gcm.registerTwoStepNotificationChannel
+import org.microg.gms.auth.gcm.twoStepNotificationsAllowed
 import org.microg.gms.common.Constants
 import org.microg.gms.gcm.ACTION_GCM_CONNECTED
 import org.microg.gms.gcm.ACTION_GCM_REGISTER_ALL_ACCOUNTS
@@ -133,6 +136,14 @@ class AccountsFragment : PreferenceFragmentCompat() {
         for (setting in TWO_STATE_SETTINGS) {
             findPreference<TwoStatePreference>(setting)?.isChecked =
                 SettingsContract.getSettings(context, Auth.getContentUri(context), arrayOf(setting)) { c -> c.getInt(0) != 0 }
+        }
+        findPreference<TwoStatePreference>(Auth.TWO_STEP_VERIFICATION)?.let {
+            // The channel exists before the first prompt, so the owner can find and adjust it in system settings.
+            if (it.isChecked) context.registerTwoStepNotificationChannel()
+            it.setSummary(
+                if (it.isChecked && !context.twoStepNotificationsAllowed()) R.string.cyclon_two_step_notifications_blocked
+                else R.string.pref_auth_two_step_verification_summary
+            )
         }
     }
 

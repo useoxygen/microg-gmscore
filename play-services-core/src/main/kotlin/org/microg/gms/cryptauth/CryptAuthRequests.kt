@@ -170,8 +170,8 @@ private suspend fun Context.cryptAuthQuery(url: String, authToken: String, reque
         readTimeout = CRYPTAUTH_TIMEOUT_MILLIS
     }
 
-    // Bodies carry authenticated device data; log them only when explicitly enabled.
-    if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Request --\n$requestBody")
+    // Bodies carry registration ids, keys and proofs: even verbose logging shows only their shape.
+    if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Request -- ${jsonShape(requestBody)}")
     val os = connection.outputStream
     os.write(requestBody.toString().toByteArray())
     os.close()
@@ -188,14 +188,19 @@ private suspend fun Context.cryptAuthQuery(url: String, authToken: String, reque
     }
 
     val result = String(Utils.readStreamToEnd(connection.inputStream))
-    if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Response --\n$result")
-    try {
+    val response = try {
         JSONObject(result)
-
     } catch (e: Exception) {
         null
     }
+    if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Response -- ${response?.let { jsonShape(it) } ?: "unreadable, ${result.length} chars"}")
+    response
 }
+
+/** A JSON body's top-level field names and size, never its values. */
+internal fun jsonShape(json: JSONObject): String =
+    "fields=${json.keys().asSequence().sorted().joinToString(",", "[", "]")} chars=${json.toString().length}"
+
 
 fun <K, V> jsonObjectOf(vararg pairs: Pair<K, V>): JSONObject = JSONObject(mapOf(*pairs))
 inline fun <reified T> jsonArrayOf(vararg elements: T): JSONArray = JSONArray(arrayOf(*elements))
