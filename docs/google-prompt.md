@@ -18,7 +18,7 @@ Status: implemented and host-tested. Nothing in this document has been built int
 
 These are two separate routes. If the web route works, that does not show the native route works, and the reverse is also true. Accept and label each one separately.
 
-Logs on both routes are redacted, down to the push transport: `McsInputStream`, `McsOutputStream`, `McsService` and `SendReceiver` log only the message type, a size bucket, the target package (category) and the number of app data entries, and only exception class names on error paths (`McsLog`, tested by `McsTransportLogTest`). Prompt payloads, account names, registration ids and `auths` tokens never reach logcat.
+Logs on both routes are redacted, down to the push transport: `McsInputStream`, `McsOutputStream`, `McsService` and `SendReceiver` log only the message type, a size bucket, the target package (category) and the number of app data entries, and only exception class names on error paths (`McsLog`, tested by `McsTransportLogTest`). Prompt payloads, account names, registration ids and `auths` tokens never reach logcat. On the web route, Google's confirmation page bridge (`OcUiBridge`) and `WebViewHelper` log neither page results nor the URLs they open, and only exception classes on error paths, because Android's `JSONException` and URI/intent errors quote their input (`OcUiBridgeLogTest`).
 
 ## Default on: a deliberate Cyclon deviation
 
@@ -26,7 +26,7 @@ Upstream microG ships "Receive two-step verification prompts" **off**. Cyclon sh
 
 What the default does and does not allow:
 
-- **GmsCore's own push permission.** GmsCore registers itself with Google's notification sender from a background service, where microG's push permission dialog cannot open. `mayGrantOwnPushPermission()` therefore records the permission as granted, but only for GmsCore's own package, only while push and the two-step setting are on, and only when microG's push settings have no entry for GmsCore yet. An explicit grant or denial there always stands. With the setting off, microG's usual check applies (for example when only Find My Device needs the registration).
+- **GmsCore's own push permission.** GmsCore registers itself with Google's notification sender from a background service, where microG's push permission dialog cannot open. `mayGrantOwnPushPermission()` therefore records the permission as granted, but only for GmsCore's own package, only while push and the two-step setting are on, and only when microG's push settings have no entry for GmsCore yet. The grant is a single insert-only write (`GcmDatabase.noteAppKnownIfAbsent`, INSERT OR IGNORE), so an explicit grant or denial there always stands, even one the permission dialog commits while GmsCore is registering (`GcmSelfGrantTest`). With the setting off, microG's usual check applies (for example when only Find My Device needs the registration).
 - **Opt-out wins.** Turning the setting off drops GNOTS prompt messages at the receiver (`event=pref_off`), stops new prompt registrations for accounts (MultiLoginUpdate) and stops new self-grants. Existing registrations are **not withdrawn**: no unregistration call for this registration is known to be safe (it would need an unverified GNOTS request, and GmsCore's push registration is shared with Find My Device). A permission granted earlier stays in microG's push settings, where the owner can deny it.
 
 ## Implemented (stage B, package `org.microg.gms.auth.authzen`)
