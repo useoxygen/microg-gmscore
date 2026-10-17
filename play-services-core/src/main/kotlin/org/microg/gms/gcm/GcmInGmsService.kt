@@ -233,14 +233,13 @@ class GcmInGmsService : LifecycleService() {
                 .extraParam("scope", GMS_GCM_REGISTER_SCOPE)
             val gcmDatabase = GcmDatabase(context)
             try {
-                val selfGrant = mayGrantOwnPushPermission(
+                grantOwnPushPermissionIfAbsent(
+                    gcmDatabase,
                     packageName = request.app,
                     gmsPackageName = Constants.GMS_PACKAGE_NAME,
                     twoStepOn = AuthPrefs.shouldReceiveTwoStepVerification(context),
                     gcmEnabled = GcmPrefs.get(context).isEnabled,
-                    knownToMicroG = gcmDatabase.getApp(request.app) != null,
                 )
-                if (selfGrant) gcmDatabase.noteAppKnown(request.app, true)
                 ensureAppRegistrationAllowed(context, gcmDatabase, request.app)
                 completeRegisterRequest(context, gcmDatabase, request).getString(GcmConstants.EXTRA_REGISTRATION_ID)
             } finally {
@@ -277,6 +276,19 @@ class GcmInGmsService : LifecycleService() {
         val regTime = sp?.getLong(KEY_GCM_REG_TIME, 0) ?: 0L
         return targetId != androidId || regSender == null || regId == null || regTime + GCM_GMS_REG_REFRESH_S * 1000 < System.currentTimeMillis()
     }
+}
+
+/**
+ * GmsCore's push self-grant ([mayGrantOwnPushPermission]). The lookup is only a fast path: the grant itself is an
+ * insert-only write, so an explicit grant or denial that microG's permission dialog or settings commit after the lookup
+ * is never overwritten. The caller still checks the resulting permission before registering.
+ *
+ * @return whether the grant was recorded
+ */
+internal fun grantOwnPushPermissionIfAbsent(database: GcmDatabase, packageName: String, gmsPackageName: String, twoStepOn: Boolean, gcmEnabled: Boolean): Boolean {
+    val known = database.getApp(packageName) != null
+    if (!mayGrantOwnPushPermission(packageName, gmsPackageName, twoStepOn, gcmEnabled, knownToMicroG = known)) return false
+    return database.noteAppKnownIfAbsent(packageName, true)
 }
 
 class GcmRegistrationReceiver : WakefulBroadcastReceiver() {
