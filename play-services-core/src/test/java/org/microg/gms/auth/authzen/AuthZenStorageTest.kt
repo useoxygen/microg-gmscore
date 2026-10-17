@@ -100,7 +100,79 @@ class AuthZenStorageTest {
         storage.commit("blob", "two".toByteArray())
         storage.delete("blob")
         storage.delete("blob")
-        assertEquals(listOf("a/b/authzen:two", "a/b/authzen:-"), synced)
+        // The second delete finds nothing to unlink and still syncs: the first one's sync might have failed.
+        assertEquals(listOf("a/b/authzen:two", "a/b/authzen:-", "a/b/authzen:-"), synced)
+    }
+
+    /** Fails the first sync of [failing], then syncs normally; records every sync that succeeded. */
+    private class FlakySync(private val failing: File) : (File) -> Unit {
+        var failed = false
+        val synced = mutableListOf<File>()
+        override fun invoke(directory: File) {
+            if (!failed && directory == failing) {
+                failed = true
+                throw AuthZenStorageException("Directory sync failed")
+            }
+            synced += directory
+        }
+    }
+
+    @Test
+    fun aFailedParentSyncIsRetriedWhenTheDirectoryAlreadyExists() {
+        val directory = File(root, "a/authzen")
+        val sync = FlakySync(File(root, "a"))
+        try {
+            AtomicFileStorage(directory, root, sync).commit("blob", "one".toByteArray())
+            fail("a failed parent sync must throw")
+        } catch (e: AuthZenStorageException) {
+        }
+        assertTrue("the failed attempt left the directory behind", directory.isDirectory)
+        // The same instance and a fresh one (another process, or after a restart) both redo the barrier.
+        for (storage in listOf(AtomicFileStorage(directory, root, sync), AtomicFileStorage(directory, root, sync))) {
+            sync.synced.clear()
+            storage.commit("blob", "two".toByteArray())
+            assertEquals(listOf(File(root, "a").absoluteFile, root.absoluteFile, directory), sync.synced.map { it.absoluteFile })
+        }
+        val retried = FlakySync(File(root, "a"))
+        val sameInstance = AtomicFileStorage(directory, root, retried)
+        try {
+            sameInstance.commit("blob", "three".toByteArray())
+            fail("a failed parent sync must throw")
+        } catch (e: AuthZenStorageException) {
+        }
+        sameInstance.commit("blob", "four".toByteArray())
+        assertEquals(listOf(File(root, "a").absoluteFile, root.absoluteFile, directory), retried.synced.map { it.absoluteFile })
+        // Once established, later writes of that instance sync only the store's directory.
+        retried.synced.clear()
+        sameInstance.commit("blob", "five".toByteArray())
+        assertEquals(listOf(directory), retried.synced)
+    }
+
+    @Test
+    fun aFailedDeleteSyncIsRetriedWhenTheBlobIsAlreadyGone() {
+        val directory = File(root, "authzen")
+        AtomicFileStorage(directory).commit("blob", "one".toByteArray())
+        val sync = FlakySync(directory)
+        try {
+            AtomicFileStorage(directory, directorySync = sync).delete("blob")
+            fail("a failed delete sync must throw")
+        } catch (e: AuthZenStorageException) {
+        }
+        assertFalse(File(directory, "blob").exists())
+        for (storage in listOf(AtomicFileStorage(directory, directorySync = sync), AtomicFileStorage(directory, directorySync = sync))) {
+            sync.synced.clear()
+            storage.delete("blob")
+            assertEquals(listOf(directory), sync.synced)
+        }
+        // Without a directory nothing was ever stored, so there is nothing to sync.
+        sync.synced.clear()
+        AtomicFileStorage(File(root, "never"), directorySync = sync).delete("blob")
+        assertEquals(emptyList<File>(), sync.synced)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun theDurableRootMustContainTheDirectory() {
+        AtomicFileStorage(File(root, "a/authzen"), File(root, "b"))
     }
 
     @Test

@@ -165,8 +165,21 @@ internal fun parseRetryAfterSeconds(retryAfter: String?, responseDate: String?, 
     return if (millis <= 0) 0 else (millis + 999) / 1000
 }
 
-/** IMF-fixdate, then the obsolete RFC 850 and asctime forms; always GMT, English names, strict. */
+/**
+ * IMF-fixdate, then the obsolete RFC 850 and asctime forms; always GMT, English names, strict. The grammar allows a
+ * seconds value of 60 for a leap second, which strict [SimpleDateFormat] rejects: such a time is read as second 59
+ * plus one second, the instant just after the leap second on a clock without one.
+ */
 private fun parseHttpDate(value: String): Long? {
+    val leap = LEAP_SECOND_TIME.findAll(value).toList()
+    if (leap.size == 1) {
+        val group = leap.single().groups[1]!!
+        return parseStrictHttpDate(value.replaceRange(group.range, "59"))?.plus(1000)
+    }
+    return parseStrictHttpDate(value)
+}
+
+private fun parseStrictHttpDate(value: String): Long? {
     for (pattern in HTTP_DATE_PATTERNS) {
         val format = SimpleDateFormat(pattern, Locale.US).apply {
             timeZone = TimeZone.getTimeZone("GMT")
@@ -178,6 +191,9 @@ private fun parseHttpDate(value: String): Long? {
     }
     return null
 }
+
+/** The `time-of-day` of every HTTP-date form, preceded and followed by a space, with second 60. */
+private val LEAP_SECOND_TIME = Regex(" [0-9]{2}:[0-9]{2}:(60) ")
 
 private val HTTP_DATE_PATTERNS = listOf("EEE, dd MMM yyyy HH:mm:ss 'GMT'", "EEEE, dd-MMM-yy HH:mm:ss 'GMT'", "EEE MMM d HH:mm:ss yyyy")
 

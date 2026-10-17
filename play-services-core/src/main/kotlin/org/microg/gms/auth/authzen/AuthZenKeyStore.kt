@@ -52,13 +52,31 @@ internal interface AuthZenLock {
  * rename (useoxygen/cyclon#842). Here a failed rename throws, and [commit] reads the result back.
  *
  * A rename or delete is only crash-durable once the directory holding the entry is synced, so [directorySync] runs on
- * [directory] after each rename and delete, and on the parent of every directory this storage creates. A failed sync
+ * [directory] after each rename and delete (also when a retried delete finds the blob already gone, since the failed
+ * attempt may have unlinked it without its sync), and on the parent of every directory between [durableRoot] and
+ * [directory]. Those parents are synced on each instance's first write whether or not the directories already exist:
+ * an earlier attempt, perhaps in another process, may have created them and then failed its sync. A failed sync
  * throws, so no effect relies on a change a power loss could undo; see [syncDirectory] for where it is best-effort.
+ *
+ * [durableRoot] is the outermost directory this storage does not own (in production `noBackupFilesDir`, which the
+ * platform creates); it must be [directory] or one of its ancestors.
  */
 internal class AtomicFileStorage(
     private val directory: File,
+    private val durableRoot: File = directory.absoluteFile.parentFile ?: directory.absoluteFile,
     private val directorySync: (File) -> Unit = ::syncDirectory,
 ) : AuthZenStorage {
+    /** Directories from [directory] up to, not including, [durableRoot]; each one's parent holds its entry. */
+    private val ownedDirectories: List<File> = durableRoot.absoluteFile.let { root ->
+        val chain = generateSequence(directory.absoluteFile) { it.parentFile }.takeWhile { it != root }.toList()
+        require(chain.isEmpty() || chain.last().parentFile == root) { "Storage directory outside its durable root" }
+        chain
+    }
+
+    /** Set once this instance has synced every owned directory's parent; until then each write tries again. */
+    @Volatile
+    private var directoryBarrierEstablished = false
+
     private fun file(name: String): File {
         require(name.isNotEmpty() && name.all { it.isLetterOrDigit() || it == '-' || it == '_' }) { "Bad blob name" }
         return File(directory, name)
@@ -85,20 +103,25 @@ internal class AtomicFileStorage(
 
     override fun delete(name: String) {
         val target = file(name)
-        if (target.exists()) {
-            if (!target.delete()) throw AuthZenStorageException("Delete failed")
-            directorySync(directory)
-        }
+        if (target.exists() && !target.delete()) throw AuthZenStorageException("Delete failed")
+        // Synced even when the blob was already gone: a delete whose sync failed may have unlinked it, and only this
+        // sync makes that durable. Without the directory nothing was ever stored here.
+        if (directory.isDirectory) directorySync(directory)
         // Leftovers of a write that died before its rename; they never count as content, so their removal needs no sync.
         directory.listFiles { file -> file.name.startsWith("$name.") && file.name.endsWith(TEMPORARY_SUFFIX) }?.forEach { it.delete() }
     }
 
-    /** Creates [directory] if needed and syncs the parent of each directory created here, innermost first. */
+    /**
+     * Creates [directory] if needed and, once per instance, syncs the parent of every owned directory and of any
+     * directory above [durableRoot] created here, innermost first. Existing directories are synced too, so a barrier
+     * that failed after an earlier attempt created them is retried rather than skipped.
+     */
     private fun ensureDirectory() {
-        if (directory.isDirectory) return
+        if (directoryBarrierEstablished && directory.isDirectory) return
         val missing = generateSequence(directory.absoluteFile) { it.parentFile }.takeWhile { !it.exists() }.toList()
         if (!directory.mkdirs() && !directory.isDirectory) throw AuthZenStorageException("No storage directory")
-        for (created in missing) created.parentFile?.let(directorySync)
+        for (owned in (ownedDirectories + missing).distinct()) owned.parentFile?.let(directorySync)
+        directoryBarrierEstablished = true
     }
 
     private companion object {

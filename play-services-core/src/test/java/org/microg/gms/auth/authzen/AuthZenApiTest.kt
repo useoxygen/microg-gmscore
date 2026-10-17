@@ -126,6 +126,19 @@ class AuthZenApiTest {
         }
     }
 
+    @Test
+    fun retryAfterAcceptsALeapSecondInEveryHttpDateForm() {
+        val now = 1_483_228_620_000L // Sat, 31 Dec 2016 23:57:00 GMT, 180 s before the instant after 23:59:60
+        for (date in listOf("Sat, 31 Dec 2016 23:59:60 GMT", "Saturday, 31-Dec-16 23:59:60 GMT", "Sat Dec 31 23:59:60 2016")) {
+            assertEquals(date, 180L, parseRetryAfterSeconds(date, null, now))
+        }
+        // Also in the response's Date header.
+        assertEquals(60L, parseRetryAfterSeconds("Sun, 01 Jan 2017 00:01:00 GMT", "Sat, 31 Dec 2016 23:59:60 GMT", 0))
+        for (bad in listOf("Sat, 31 Dec 2016 23:59:61 GMT", "Sat, 31 Dec 2016 23:59:60 GMT trailing", "Sat, 31 Dec 2016 23:59:60 PST", "Sat, 32 Dec 2016 23:59:60 GMT", "Sat, 31 Dec 2016 23:60:60 GMT")) {
+            assertNull(bad, parseRetryAfterSeconds(bad, null, now))
+        }
+    }
+
     /** A canned 429 response; it never touches the network. */
     private class RateLimitedConnection(url: URL, private val headers: Map<String, String>) : HttpURLConnection(url) {
         val written = ByteArrayOutputStream()
@@ -158,5 +171,16 @@ class AuthZenApiTest {
         val malformed = transport(mapOf("Retry-After" to "soon")).post(AuthZenEndpoint.REPLY_TX, "token", "{}")
         assertEquals(60_000L, (post(malformed) as AuthZenApiResult.RateLimited).retryAfterMillis)
         assertEquals("{}", connections.first().written.toString())
+    }
+
+    @Test
+    fun aLeapSecondRetryAfterKeepsTheRequestedWaitThroughTheTransport() {
+        val transport = HttpAuthZenTransport(
+            openConnection = { url -> RateLimitedConnection(url, mapOf("Retry-After" to "Sat, 31 Dec 2016 23:59:60 GMT", "Date" to "Sat, 31 Dec 2016 23:57:00 GMT")) },
+            wallClock = { 0L },
+        )
+        val response = transport.post(AuthZenEndpoint.REPLY_TX, "token", "{}") as AuthZenHttpResult.Response
+        assertEquals(180L, response.retryAfterSeconds)
+        assertEquals(180_000L, (post(response) as AuthZenApiResult.RateLimited).retryAfterMillis)
     }
 }
