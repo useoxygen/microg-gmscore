@@ -1,4 +1,4 @@
-// Modified by Cyclon in 2026: no page results or account names in logs.
+// Modified by Cyclon in 2026: no page results, opened URLs, parser messages or account names in logs.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -86,12 +86,12 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun open(str: String?) {
-        Log.d(TAG, "open: str -> $str")
+        Log.d(TAG, "open")
     }
 
     @JavascriptInterface
     fun openHelp(str: String?) {
-        Log.d(TAG, "openHelp: str -> $str")
+        Log.d(TAG, "openHelp")
     }
 
     @JavascriptInterface
@@ -136,7 +136,8 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
                     hashMap[next] = obj as String
                 }
             } catch (e: JSONException) {
-                Log.d(TAG, "Unable to parse result JSON string", e)
+                // Android's JSONException message quotes the whole input, so only the class is logged.
+                Log.d(TAG, "Unable to parse result JSON string: ${e.javaClass.name}")
                 return null
             }
         }

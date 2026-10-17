@@ -1,4 +1,5 @@
-// Modified by Cyclon in 2026: no sign-in URLs (they carry session capabilities) in logs.
+// Modified by Cyclon in 2026: no sign-in URLs (they carry session capabilities) in logs, and only exception classes,
+// since exception messages (URI parsing, intents, auth) can quote those URLs.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -74,7 +75,7 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
                             saveUserAvatar = true
                         }
                     } catch (e: Exception) {
-                        Log.d(TAG, "shouldInterceptRequest: error", e)
+                        Log.d(TAG, "shouldInterceptRequest: error ${e.javaClass.name}")
                     }
                 }
                 return super.shouldInterceptRequest(view, request)
@@ -93,7 +94,7 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
                             Log.w(TAG, "Ignoring request to start non-Google app")
                         }
                     } catch (e: Exception) {
-                        Log.w(TAG, "Error invoking intent", e)
+                        Log.w(TAG, "Error invoking intent: ${e.javaClass.name}")
                     }
                     return false
                 }
@@ -104,7 +105,7 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
                         activity.startActivity(intent)
                         return true
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to open SMS", e)
+                        Log.w(TAG, "Failed to open SMS: ${e.javaClass.name}")
                     }
                     return false
                 }
@@ -133,13 +134,13 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
                                 intent.`package` = GMS_PACKAGE_NAME
                                 activity.startActivity(intent)
                             } catch (e: Exception) {
-                                Log.w(TAG, "Error forwarding to GMS ", e)
+                                Log.w(TAG, "Error forwarding to GMS: ${e.javaClass.name}")
                                 intent.`package` = null
                                 activity.startActivity(intent)
                             }
                         } else activity.startActivity(intent)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Error forwarding to browser", e)
+                        Log.w(TAG, "Error forwarding to browser: ${e.javaClass.name}")
                     }
                     activity.finishActivity()
                     return true
@@ -204,7 +205,7 @@ class WebViewHelper(private val activity: MainActivity, private val webView: Web
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to get weblogin auth.", e)
+            Log.w(TAG, "Failed to get weblogin auth: ${e.javaClass.name}")
             activity.finishActivity()
         }
     }
