@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 // Only the Google-owned registration page is eligible for these bounded actions.
 // No credentials, CAPTCHA response tokens or page text leave the WebView.
-(function (id, account, submit, rechecks) {
+(function (id, account, submit, reload) {
   'use strict';
   if (location.origin !== 'https://www.google.com' ||
       location.pathname !== '/android/uncertified/') return 'outside';
+  // Set below just before this page reloads itself: it is going away and decides nothing more.
+  if (window.__cyclonEnrollmentReloading) return 'reloading';
   if (!/^[0-9]{19}$/.test(id) || /^0+$/.test(id)) return 'invalid_id';
   const visible = e => !!e && e.getClientRects().length > 0;
   // reCAPTCHA hides an expired challenge with visibility and opacity but keeps its layout box.
@@ -54,8 +56,8 @@
     window.__cyclonEnrollmentFormVisible = true;
   }
   // Google owns the challenge. Try the checkbox once; image challenges stay in place.
-  // An unsolved challenge expires after about two minutes and Google asks to check the
-  // box again. Native code allows a bounded number of those re-checks per page.
+  // An unsolved challenge expires after about two minutes. Google ignores a scripted
+  // re-check of the expired box; reloading the page brings a new one, when native code allows it.
   let challenge = false, expired = false;
   for (const frame of document.querySelectorAll('iframe')) {
     try {
@@ -69,22 +71,17 @@
       if (!frame.dataset.cyclonAttempted) {
         frame.dataset.cyclonAttempted = 'true';
         checkbox.click();
-      } else if (!checkbox.classList.contains('recaptcha-checkbox-expired')) {
-        delete frame.dataset.cyclonRecheck;
-      } else if (Date.now() - Number(frame.dataset.cyclonRecheck || 0) >= 10000) {
-        // Google normally answers a re-check within a second; an ignored one may be retried after ten.
-        const used = window.__cyclonEnrollmentRechecks || 0;
-        if (used < rechecks) {
-          window.__cyclonEnrollmentRechecks = used + 1;
-          frame.dataset.cyclonRecheck = String(Date.now());
-          frame.scrollIntoView({block: 'center', inline: 'nearest'});
-          checkbox.click();
-        } else expired = true;
-      }
+      } else if (checkbox.classList.contains('recaptcha-checkbox-expired')) expired = true;
     } catch (_) { /* cross-origin challenges remain interactive */ }
   }
   const response = document.querySelector('textarea[name="g-recaptcha-response"]');
   const verified = !!response && !!response.value;
+  if (!verified && !challenge && expired && reload) {
+    // Marking and reloading in one evaluation lets each page start at most one reload.
+    window.__cyclonEnrollmentReloading = true;
+    location.reload();
+    return 'reload_started';
+  }
   if (!verified) return challenge ? 'challenge' : expired ? 'expired' : 'verification';
   // Google's button uses the default submit type without a literal type attribute.
   const buttons = Array.from(document.querySelectorAll('button'))
@@ -97,4 +94,4 @@
     return 'submitting';
   }
   return 'ready';
-})(__CYCLON_ID__, __CYCLON_ACCOUNT__, __CYCLON_SUBMIT__, __CYCLON_RECHECKS__);
+})(__CYCLON_ID__, __CYCLON_ACCOUNT__, __CYCLON_SUBMIT__, __CYCLON_RELOAD__);
