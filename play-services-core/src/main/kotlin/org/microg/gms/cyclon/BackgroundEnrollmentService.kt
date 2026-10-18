@@ -38,7 +38,6 @@ import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.ASSIST_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.AUTO_RELOADS
-import org.microg.gms.cyclon.EnrollmentActivity.Companion.RELOAD_SCRIPT
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.RELOAD_TIMEOUT_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.POLL_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.REGISTRATION
@@ -207,7 +206,8 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
     private fun evaluate(view: WebView, submit: Boolean) {
         view.evaluateJavascript(script.replace("__CYCLON_ID__", "\"$id\"")
             .replace("__CYCLON_ACCOUNT__", JSONObject.quote(accountName))
-            .replace("__CYCLON_SUBMIT__", submit.toString())) { result ->
+            .replace("__CYCLON_SUBMIT__", submit.toString())
+            .replace("__CYCLON_RELOAD__", (expiryReloads < AUTO_RELOADS).toString())) { result ->
             if (ended || browser !== view || !isRegistration(view.url)) return@evaluateJavascript
             val phase = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
             if (phase != lastPhase) { Log.i(TAG, "Registration phase $phase"); lastPhase = phase }
@@ -219,11 +219,11 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
                     if (SystemClock.elapsedRealtime() - challengeSince > ASSIST_WINDOW_MS) { helper = false; end("timeout") }
                 }
                 "rejected" -> end("rejected")
-                // Reloading the page brings a new puzzle; after the last one the owner finishes from the notification.
-                "expired" -> if (expiryReloads < AUTO_RELOADS) {
-                    expiryReloads++; reloadedAt = SystemClock.elapsedRealtime(); puzzle.reset()
-                    view.evaluateJavascript(RELOAD_SCRIPT, null)
-                } else { helper = false; end("timeout") }
+                // The page reloaded itself for a new puzzle (only while reloads remain).
+                "reload_started" -> { expiryReloads++; reloadedAt = SystemClock.elapsedRealtime(); puzzle.reset() }
+                // Every reload allowed expired too; the owner finishes from the notification.
+                "expired" -> { helper = false; end("timeout") }
+                // The old page answers until the reload commits; a reload that never does is a page error.
                 "reloading" -> if (SystemClock.elapsedRealtime() - reloadedAt > RELOAD_TIMEOUT_MS) end("web_error")
                 // account_mismatch keeps polling: nothing is filled or clicked until the intended account is shown.
             }

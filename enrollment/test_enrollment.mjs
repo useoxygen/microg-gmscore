@@ -19,7 +19,7 @@ function fixture() {
   const input = new Input(), response = {value:''};
   const visible = text => ({innerText:text, getClientRects:()=>[1]});
   const state = {input, response, messages:[], ids:[], clicks:0, frames:[], window:{},
-    location:{origin:'https://www.google.com',pathname:'/android/uncertified/'},
+    reloads:0, location:{origin:'https://www.google.com',pathname:'/android/uncertified/',reload:()=>state.reloads++},
     label:'Google Account: Fixture (' + account + ')'};
   state.button = {...visible('Register'), type:'submit', getAttribute:()=>null, disabled:false, click:()=>state.clicks++};
   state.document = {
@@ -27,8 +27,9 @@ function fixture() {
     querySelectorAll: selector => selector === 'input' ? [input] : selector === 'iframe' ? state.frames :
       selector === 'button' ? [state.button] : selector.includes('button') ? [] : selector.includes('listItem') ? state.ids.map(visible) : state.messages.map(visible)
   };
-  state.run = (submit=false, suppliedId=id) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
-    .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit)),
+  state.run = (submit=false, suppliedId=id, reload=false) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
+    .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit))
+    .replace('__CYCLON_RELOAD__',String(reload)),
     {...state, HTMLInputElement:Input, Event:class {constructor(type){this.type=type}}, URL});
   return state;
 }
@@ -94,6 +95,12 @@ test('a hidden expired challenge is reported as expired without clicking the box
 test('a fresh page attempts its checkbox once, as before',()=>{
   const f=fixture(), {anchor}=expiring(f); anchor.dataset={}; anchor.expired=false;
   assert.equal(f.run(),'challenge'); f.run(); assert.equal(anchor.clicks,1);
+});
+test('an expired page reloads itself once when allowed; queued polls of it start nothing more',()=>{
+  const f=fixture(), {anchor}=expiring(f);
+  assert.equal(f.run(false,id,true),'reload_started'); assert.equal(f.reloads,1);
+  assert.equal(f.run(false,id,true),'reloading'); assert.equal(f.run(false,id,true),'reloading');
+  assert.equal(f.reloads,1); assert.equal(anchor.clicks,0); assert.equal(f.clicks,0);
 });
 test('a page marked for reload reports reloading and acts on nothing',()=>{
   const f=fixture(), {anchor}=expiring(f); f.response.value='opaque'; f.window.__cyclonEnrollmentReloading=true;

@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 // Only the Google-owned registration page is eligible for these bounded actions.
 // No credentials, CAPTCHA response tokens or page text leave the WebView.
-(function (id, account, submit) {
+(function (id, account, submit, reload) {
   'use strict';
   if (location.origin !== 'https://www.google.com' ||
       location.pathname !== '/android/uncertified/') return 'outside';
-  // Set by native code just before it reloads this page: the page is going away.
+  // Set below just before this page reloads itself: it is going away and decides nothing more.
   if (window.__cyclonEnrollmentReloading) return 'reloading';
   if (!/^[0-9]{19}$/.test(id) || /^0+$/.test(id)) return 'invalid_id';
   const visible = e => !!e && e.getClientRects().length > 0;
@@ -57,7 +57,7 @@
   }
   // Google owns the challenge. Try the checkbox once; image challenges stay in place.
   // An unsolved challenge expires after about two minutes. Google ignores a scripted
-  // re-check of the expired box, so native code reloads the page for a new one.
+  // re-check of the expired box; reloading the page brings a new one, when native code allows it.
   let challenge = false, expired = false;
   for (const frame of document.querySelectorAll('iframe')) {
     try {
@@ -76,6 +76,12 @@
   }
   const response = document.querySelector('textarea[name="g-recaptcha-response"]');
   const verified = !!response && !!response.value;
+  if (!verified && !challenge && expired && reload) {
+    // Marking and reloading in one evaluation lets each page start at most one reload.
+    window.__cyclonEnrollmentReloading = true;
+    location.reload();
+    return 'reload_started';
+  }
   if (!verified) return challenge ? 'challenge' : expired ? 'expired' : 'verification';
   // Google's button uses the default submit type without a literal type attribute.
   const buttons = Array.from(document.querySelectorAll('button'))
@@ -88,4 +94,4 @@
     return 'submitting';
   }
   return 'ready';
-})(__CYCLON_ID__, __CYCLON_ACCOUNT__, __CYCLON_SUBMIT__);
+})(__CYCLON_ID__, __CYCLON_ACCOUNT__, __CYCLON_SUBMIT__, __CYCLON_RELOAD__);
