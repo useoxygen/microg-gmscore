@@ -392,9 +392,10 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                     expiryReloads++; reloadedAt = android.os.SystemClock.elapsedRealtime(); puzzle.reset()
                     busy = true; status = R.string.cyclon_enrollment_verifying
                 }
-                // A used-up allowance ends assistance, leaving Check again as the owner's action.
+                // Only a used-up allowance ends assistance, leaving Check again as the owner's action; an expiry seen
+                // while paused just waits for the reload on resume.
                 "expired" -> {
-                    if (resumed) { helper = false; puzzle.reset() }
+                    if (expiryReloads >= AUTO_RELOADS + manualReloads) { helper = false; puzzle.reset() }
                     busy = false; status = R.string.cyclon_enrollment_expired
                 }
                 // The old page answers until the reload commits; a reload that never does is a page error.
