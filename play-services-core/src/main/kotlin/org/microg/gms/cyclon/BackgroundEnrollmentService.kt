@@ -37,7 +37,7 @@ import org.microg.gms.checkin.CheckinPreferences
 import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.ASSIST_WINDOW_MS
-import org.microg.gms.cyclon.EnrollmentActivity.Companion.AUTO_RECHECKS
+import org.microg.gms.cyclon.EnrollmentActivity.Companion.AUTO_RELOADS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.POLL_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.REGISTRATION
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.TRANSIENT_ERRORS
@@ -77,6 +77,8 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
     private var job: Job? = null
     private var challengeSince = 0L
     private var transientRetries = 0
+    private var expiryReloads = 0
+    private var reloading = false
     private var lastPhase: String? = null
     private var lastObserve: String? = null
     private val puzzle by lazy { EnrollmentPuzzle(challengeScript, resources.displayMetrics.density, ::observeNote) }
@@ -165,6 +167,7 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = blocks(request.url, request.isForMainFrame)
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = blocks(Uri.parse(url), true)
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) { handler.cancel(); end("ssl") }
+            override fun onPageFinished(view: WebView, url: String?) { reloading = false }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (!request.isForMainFrame) return
                 Log.w(TAG, "Main-frame error ${error.errorCode} ${error.description} ${request.method}")
@@ -203,8 +206,7 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
     private fun evaluate(view: WebView, submit: Boolean) {
         view.evaluateJavascript(script.replace("__CYCLON_ID__", "\"$id\"")
             .replace("__CYCLON_ACCOUNT__", JSONObject.quote(accountName))
-            .replace("__CYCLON_SUBMIT__", submit.toString())
-            .replace("__CYCLON_RECHECKS__", AUTO_RECHECKS.toString())) { result ->
+            .replace("__CYCLON_SUBMIT__", submit.toString())) { result ->
             if (ended || browser !== view || !isRegistration(view.url)) return@evaluateJavascript
             val phase = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
             if (phase != lastPhase) { Log.i(TAG, "Registration phase $phase"); lastPhase = phase }
@@ -216,8 +218,11 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
                     if (SystemClock.elapsedRealtime() - challengeSince > ASSIST_WINDOW_MS) { helper = false; end("timeout") }
                 }
                 "rejected" -> end("rejected")
-                // Google expired every puzzle it offered; the owner finishes from the notification.
-                "expired" -> { helper = false; end("timeout") }
+                // Reloading the page brings a new puzzle; after the last one the owner finishes from the notification.
+                "expired" -> if (!reloading) {
+                    if (expiryReloads < AUTO_RELOADS) { expiryReloads++; reloading = true; puzzle.reset(); view.reload() }
+                    else { helper = false; end("timeout") }
+                }
                 // account_mismatch keeps polling: nothing is filled or clicked until the intended account is shown.
             }
         }
