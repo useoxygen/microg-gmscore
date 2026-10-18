@@ -38,7 +38,8 @@ import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.ASSIST_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.AUTO_RELOADS
-import org.microg.gms.cyclon.EnrollmentActivity.Companion.RELOAD_SETTLE_MS
+import org.microg.gms.cyclon.EnrollmentActivity.Companion.RELOAD_SCRIPT
+import org.microg.gms.cyclon.EnrollmentActivity.Companion.RELOAD_TIMEOUT_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.POLL_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.REGISTRATION
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.TRANSIENT_ERRORS
@@ -219,10 +220,11 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
                 }
                 "rejected" -> end("rejected")
                 // Reloading the page brings a new puzzle; after the last one the owner finishes from the notification.
-                "expired" -> if (SystemClock.elapsedRealtime() - reloadedAt >= RELOAD_SETTLE_MS) {
-                    if (expiryReloads < AUTO_RELOADS) { expiryReloads++; reloadedAt = SystemClock.elapsedRealtime(); puzzle.reset(); view.reload() }
-                    else { helper = false; end("timeout") }
-                }
+                "expired" -> if (expiryReloads < AUTO_RELOADS) {
+                    expiryReloads++; reloadedAt = SystemClock.elapsedRealtime(); puzzle.reset()
+                    view.evaluateJavascript(RELOAD_SCRIPT, null)
+                } else { helper = false; end("timeout") }
+                "reloading" -> if (SystemClock.elapsedRealtime() - reloadedAt > RELOAD_TIMEOUT_MS) end("web_error")
                 // account_mismatch keeps polling: nothing is filled or clicked until the intended account is shown.
             }
         }

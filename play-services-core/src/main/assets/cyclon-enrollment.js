@@ -5,6 +5,8 @@
   'use strict';
   if (location.origin !== 'https://www.google.com' ||
       location.pathname !== '/android/uncertified/') return 'outside';
+  // Set by native code just before it reloads this page: the page is going away.
+  if (window.__cyclonEnrollmentReloading) return 'reloading';
   if (!/^[0-9]{19}$/.test(id) || /^0+$/.test(id)) return 'invalid_id';
   const visible = e => !!e && e.getClientRects().length > 0;
   // reCAPTCHA hides an expired challenge with visibility and opacity but keeps its layout box.

@@ -95,6 +95,10 @@ test('a fresh page attempts its checkbox once, as before',()=>{
   const f=fixture(), {anchor}=expiring(f); anchor.dataset={}; anchor.expired=false;
   assert.equal(f.run(),'challenge'); f.run(); assert.equal(anchor.clicks,1);
 });
+test('a page marked for reload reports reloading and acts on nothing',()=>{
+  const f=fixture(), {anchor}=expiring(f); f.response.value='opaque'; f.window.__cyclonEnrollmentReloading=true;
+  assert.equal(f.run(true),'reloading'); assert.equal(anchor.clicks,0); assert.equal(f.clicks,0); assert.equal(f.input.value,'');
+});
 test('Google rejection is distinct from CAPTCHA completion',()=>{
   const f=fixture(); f.response.value='opaque'; f.messages=['Uh oh. Something went wrong. Please try again.'];
   assert.equal(f.run(true),'rejected'); assert.equal(f.clicks,0);
