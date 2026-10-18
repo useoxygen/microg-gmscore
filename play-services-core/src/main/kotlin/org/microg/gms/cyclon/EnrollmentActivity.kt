@@ -79,7 +79,7 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
     private var resumed = false
     private var manualReloads = 0
     private var expiryReloads = 0
-    private var reloading = false
+    private var reloadedAt = 0L
     private var challengeSince = 0L
     private val puzzle by lazy { EnrollmentPuzzle(challengeScript, resources.displayMetrics.density, ::observeNote) }
     private var transientRetries = 0
@@ -291,7 +291,6 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                 secureWindow(!isRegistration(url))
             }
             override fun onPageFinished(view: WebView, url: String?) {
-                reloading = false
                 busy = false
                 registrationPage = isRegistration(url)
                 if (isRegistration(url)) {
@@ -388,9 +387,9 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                 // Google ignores a re-check of an expired puzzle; reloading its page brings a new one. Only while the
                 // owner is looking (a paused screen gets one on resume), a bounded number of times plus one per Check
                 // again. A used-up allowance ends assistance, leaving Check again as the owner's action.
-                "expired" -> if (!reloading) {
+                "expired" -> if (android.os.SystemClock.elapsedRealtime() - reloadedAt >= RELOAD_SETTLE_MS) {
                     if (resumed && expiryReloads < AUTO_RELOADS + manualReloads) {
-                        expiryReloads++; reloading = true; puzzle.reset()
+                        expiryReloads++; reloadedAt = android.os.SystemClock.elapsedRealtime(); puzzle.reset()
                         busy = true; status = R.string.cyclon_enrollment_verifying
                         view.reload()
                     } else {
@@ -448,6 +447,8 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
         internal const val ASSIST_WINDOW_MS = 14 * 60_000L
         /** Page reloads for a fresh puzzle after Google expires an unsolved one (about two minutes each) before asking the owner. */
         internal const val AUTO_RELOADS = 3
+        /** A poll of the old page can still report expiry right after a reload; a new puzzle can't expire this soon. */
+        internal const val RELOAD_SETTLE_MS = 10_000L
         internal val TRANSIENT_ERRORS = setOf(WebViewClient.ERROR_CONNECT, WebViewClient.ERROR_IO,
             WebViewClient.ERROR_TIMEOUT, WebViewClient.ERROR_HOST_LOOKUP, WebViewClient.ERROR_UNKNOWN)
         internal fun allowed(uri: Uri): Boolean = uri.scheme == "https" && uri.userInfo == null &&

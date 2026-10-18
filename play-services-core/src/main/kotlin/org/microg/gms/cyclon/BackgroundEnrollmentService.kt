@@ -38,6 +38,7 @@ import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.ASSIST_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.AUTO_RELOADS
+import org.microg.gms.cyclon.EnrollmentActivity.Companion.RELOAD_SETTLE_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.POLL_WINDOW_MS
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.REGISTRATION
 import org.microg.gms.cyclon.EnrollmentActivity.Companion.TRANSIENT_ERRORS
@@ -78,7 +79,7 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
     private var challengeSince = 0L
     private var transientRetries = 0
     private var expiryReloads = 0
-    private var reloading = false
+    private var reloadedAt = 0L
     private var lastPhase: String? = null
     private var lastObserve: String? = null
     private val puzzle by lazy { EnrollmentPuzzle(challengeScript, resources.displayMetrics.density, ::observeNote) }
@@ -167,7 +168,6 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = blocks(request.url, request.isForMainFrame)
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = blocks(Uri.parse(url), true)
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) { handler.cancel(); end("ssl") }
-            override fun onPageFinished(view: WebView, url: String?) { reloading = false }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (!request.isForMainFrame) return
                 Log.w(TAG, "Main-frame error ${error.errorCode} ${error.description} ${request.method}")
@@ -219,8 +219,8 @@ class BackgroundEnrollmentService : Service(), EnrollmentChallengeHost {
                 }
                 "rejected" -> end("rejected")
                 // Reloading the page brings a new puzzle; after the last one the owner finishes from the notification.
-                "expired" -> if (!reloading) {
-                    if (expiryReloads < AUTO_RELOADS) { expiryReloads++; reloading = true; puzzle.reset(); view.reload() }
+                "expired" -> if (SystemClock.elapsedRealtime() - reloadedAt >= RELOAD_SETTLE_MS) {
+                    if (expiryReloads < AUTO_RELOADS) { expiryReloads++; reloadedAt = SystemClock.elapsedRealtime(); puzzle.reset(); view.reload() }
                     else { helper = false; end("timeout") }
                 }
                 // account_mismatch keeps polling: nothing is filled or clicked until the intended account is shown.
