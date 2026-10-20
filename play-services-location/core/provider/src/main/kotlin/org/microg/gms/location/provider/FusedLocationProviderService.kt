@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: offer a recent cached fix to a new request.
 /*
  * SPDX-FileCopyrightText: 2024 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -48,6 +49,12 @@ class FusedLocationProviderService : IntentLocationProviderService() {
         if (SDK_INT >= 29 && currentRequest != null) {
             request.setBypass(currentRequest.isLocationSettingsIgnored)
         }
+        if (currentRequest != null && currentRequest.interval != LocationRequestCompat.PASSIVE_INTERVAL) {
+            // Android answers a new request from its own last fix up to 30 s old, but only knows the fixes we reported.
+            // The implicit maximum age (the interval, 1 s for getCurrentLocation) held back a fix we had just computed
+            // for another client until the next one, often past the caller's timeout.
+            request.setMaxUpdateAgeMillis(CURRENT_LOCATION_MAX_AGE_MILLIS)
+        }
         val identity = Binder.clearCallingIdentity()
         try {
             LocationServices.getFusedLocationProviderClient(this).requestLocationUpdates(request.build(), pendingIntent)
@@ -73,6 +80,8 @@ class FusedLocationProviderService : IntentLocationProviderService() {
     companion object {
         private const val MIN_INTERVAL_MILLIS = 1000L
         private const val MIN_REPORT_MILLIS = 1000L
+        // LocationProviderManager.MAX_CURRENT_LOCATION_AGE_MS
+        private const val CURRENT_LOCATION_MAX_AGE_MILLIS = 30_000L
         private val PROPERTIES = ProviderPropertiesUnbundled.create(false, false, false, false, true, true, true, Criteria.POWER_LOW, Criteria.ACCURACY_COARSE)
     }
 }
