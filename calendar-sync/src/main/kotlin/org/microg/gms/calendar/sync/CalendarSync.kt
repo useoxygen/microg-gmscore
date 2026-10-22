@@ -34,8 +34,12 @@ interface CalendarStore {
     fun checkpoint(calendar: String, value: String)
     fun reconcileCalendars(present: Set<String>) {}
 }
-/** [skipped]: events that could not be read; [failedCalendars]: calendars whose events could not be fetched or applied. */
-data class CalendarReport(val events: Int, val conflicts: Int, val skipped: Int = 0, val failedCalendars: Int = 0)
+/**
+ * [skipped]: events that could not be read; [failedCalendars]: calendars whose events could not be fetched or applied, and
+ * [failure] the first of their errors (the others' counts still stand).
+ */
+data class CalendarReport(val events: Int, val conflicts: Int, val skipped: Int = 0, val failedCalendars: Int = 0,
+    val failure: Exception? = null)
 
 /** The owner turned synchronization off, or the sync was cancelled: stops the whole run, never one calendar. */
 class SyncStopped : IllegalStateException("Calendar synchronization stopped")
@@ -43,8 +47,8 @@ class SyncStopped : IllegalStateException("Calendar synchronization stopped")
 /**
  * All pages are admitted before applying a calendar or pruning missing owned rows. Never uploads.
  * Each calendar stands alone: an event that cannot be read is skipped (a stored copy is kept) and a calendar that fails
- * leaves the others to sync; the first such failure is thrown once every calendar was tried. Authorization, rate limits
- * and the owner's off switch still stop the whole run.
+ * leaves the others to sync, its error returned in the report. Authorization, rate limits and the owner's off switch still
+ * stop the whole run (thrown).
  */
 class CalendarSync(private val api: CalendarApi, private val store: CalendarStore, private val enabled: () -> Boolean) {
     fun sync(): CalendarReport {
@@ -79,8 +83,7 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
         }
         consent()
         store.reconcileCalendars(calendars.filterNot { it.deleted }.map { it.id }.toSet())
-        failure?.let { throw it }
-        return CalendarReport(count, conflicts, skipped, failedCalendars)
+        return CalendarReport(count, conflicts, skipped, failedCalendars, failure)
     }
 
     private fun syncCalendar(calendar: RemoteCalendar, consent: () -> Unit): CalendarReport {
@@ -136,9 +139,10 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
             conflicts += store.reconcile(calendar, events.map { it.id }.toSet() + unreadable)
         }
         consent()
-        // A conflict must remain retrievable after the owner resolves a local change, and a skipped event is fetched
-        // again by the next sync rather than passed by a newer checkpoint.
-        if (conflicts == 0 && unreadable.isEmpty()) store.checkpoint(calendar.id, nextCheckpoint)
+        // A conflict must remain retrievable after the owner resolves a local change. A skipped event does not hold the
+        // checkpoint (that would refetch the whole calendar on every sync): its stored copy stays, and Google returns it
+        // again the next time it changes.
+        if (conflicts == 0) store.checkpoint(calendar.id, nextCheckpoint)
         return CalendarReport(stored, conflicts, unreadable.size)
     }
 }
@@ -177,9 +181,10 @@ class GoogleCalendarApi(private val transport: HttpTransport) : CalendarApi {
         val events = mutableListOf<RemoteEvent>()
         val unreadable = mutableListOf<String>()
         for (i in 0 until (items?.length() ?: 0)) {
-            val row = items!!.optJSONObject(i) ?: continue
+            // An entry without an id cannot be kept out of reconciliation: the page is refused, nothing is deleted.
+            val row = checkNotNull(items!!.optJSONObject(i)) { "Calendar entry is not an object" }
             try { events += parseEvent(row, calendar) }
-            catch (_: Exception) { row.optString("id").takeIf { it.isNotBlank() }?.let { unreadable += it } }
+            catch (e: Exception) { unreadable += row.optString("id").takeIf { it.isNotBlank() } ?: throw e }
         }
         return EventPage(events, body.optString("nextPageToken").takeIf { it.isNotBlank() },
             body.optString("nextSyncToken").takeIf { it.isNotBlank() }, unreadable)
@@ -187,11 +192,12 @@ class GoogleCalendarApi(private val transport: HttpTransport) : CalendarApi {
     companion object {
         private val knownZones = TimeZone.getAvailableIDs().toSet()
         /** Google writes some event zones as a fixed offset ("GMT-07:00"), which getAvailableIDs does not list. */
-        private val offsetZone = Regex("GMT[+-]\\d{1,2}(:?\\d{2})?")
+        private val offsetZone = Regex("GMT[+-](\\d{1,2})(?::?(\\d{2}))?")
         /** A named zone as is, a GMT offset as Java names it, else the calendar's zone, else UTC. */
         fun zoneOf(zone: String, calendarZone: String): String = when {
             zone in knownZones -> zone
-            offsetZone.matches(zone) -> TimeZone.getTimeZone(zone).id
+            offsetZone.matchEntire(zone)?.let { m -> m.groupValues[1].toInt() <= 18 && (m.groupValues[2].ifEmpty { "0" }).toInt() < 60 } == true ->
+                TimeZone.getTimeZone(zone).id
             calendarZone in knownZones -> calendarZone
             else -> "UTC"
         }

@@ -83,8 +83,8 @@ class CalendarSyncTest {
     }
     @Test fun laterPageFailureCannotDeleteOrAdvanceCheckpoint() {
         val store = Store(); store.rows["keep"] = event("keep")
-        try { CalendarSync(api { _, page -> if (page == null) EventPage(listOf(event()), "next", null) else throw CalendarRequestException(503) }, store) { true }.sync(); fail() }
-        catch (_: CalendarRequestException) { }
+        val report = CalendarSync(api { _, page -> if (page == null) EventPage(listOf(event()), "next", null) else throw CalendarRequestException(503) }, store) { true }.sync()
+        assertTrue(report.failure is CalendarRequestException); assertEquals(1, report.failedCalendars)
         assertEquals(setOf("keep"), store.rows.keys); assertNull(store.token); assertEquals(0, store.prunes)
     }
     @Test fun expiredCheckpointRefetchesBeforeReconciling() {
@@ -116,8 +116,8 @@ class CalendarSyncTest {
     }
     @Test fun repeatedPageTokenFailsWithoutPruning() {
         val store = Store()
-        try { CalendarSync(api { _, _ -> EventPage(emptyList(), "same", null) }, store) { true }.sync(); fail() }
-        catch (_: IllegalStateException) { }
+        val report = CalendarSync(api { _, _ -> EventPage(emptyList(), "same", null) }, store) { true }.sync()
+        assertTrue(report.failure is IllegalStateException)
         assertEquals(0, store.prunes)
     }
 
@@ -130,8 +130,11 @@ class CalendarSyncTest {
         assertEquals(utc.millis, compact.millis); assertEquals("GMT+02:00", compact.zone)
         val unknown = GoogleCalendarApi.parseTime(JSONObject("""{"dateTime":"2026-10-21T10:00:00-07:00","timeZone":"Mars/Olympus"}"""), "America/Los_Angeles")
         assertEquals(utc.millis, unknown.millis); assertEquals("America/Los_Angeles", unknown.zone)
+        // Java would quietly read an out-of-range offset as GMT: it takes the calendar's zone instead.
+        val outOfRange = GoogleCalendarApi.parseTime(JSONObject("""{"dateTime":"2026-10-21T10:00:00","timeZone":"GMT+25:00"}"""), "America/Los_Angeles")
+        assertEquals(utc.millis, outOfRange.millis); assertEquals("America/Los_Angeles", outOfRange.zone)
     }
-    @Test fun unreadableEventIsSkippedKeptAndRetriedWithoutBlockingTheCalendar() {
+    @Test fun unreadableEventIsSkippedAndItsStoredCopyKeptWithoutBlockingTheCalendar() {
         val api = GoogleCalendarApi(HttpTransport { _, url, _ ->
             HttpReply(200, if (url.contains("calendarList")) """{"items":[{"id":"primary","timeZone":"UTC"}]}"""
                 else """{"items":[{"id":"good","start":{"date":"2026-10-06"},"end":{"date":"2026-10-07"}},{"id":"bad","start":{"dateTime":"not a time"}}],"nextSyncToken":"new"}""")
@@ -139,8 +142,20 @@ class CalendarSyncTest {
         val store = Store(); store.rows["bad"] = event("bad")
         val report = CalendarSync(api, store) { true }.sync()
         assertEquals(1, report.events); assertEquals(1, report.skipped); assertEquals(0, report.failedCalendars)
-        // The stored copy of the unreadable event stays, and the checkpoint waits so the next sync reads it again.
-        assertEquals(setOf("good", "bad"), store.rows.keys); assertNull(store.token)
+        // The stored copy of the unreadable event stays; the checkpoint moves on, so the calendar is not refetched every sync.
+        assertEquals(setOf("good", "bad"), store.rows.keys); assertEquals("new", store.token)
+    }
+    @Test fun anEntryWithoutAnIdRefusesTheCalendarWithoutDeleting() {
+        for (entry in listOf(""" "not an object" """, """{"start":{"dateTime":"not a time"}}""")) {
+            val api = GoogleCalendarApi(HttpTransport { _, url, _ ->
+                HttpReply(200, if (url.contains("calendarList")) """{"items":[{"id":"primary","timeZone":"UTC"}]}"""
+                    else """{"items":[{"id":"good","start":{"date":"2026-10-06"},"end":{"date":"2026-10-07"}},$entry],"nextSyncToken":"new"}""")
+            })
+            val store = Store(); store.rows["keep"] = event("keep")
+            val report = CalendarSync(api, store) { true }.sync()
+            assertNotNull(report.failure); assertEquals(1, report.failedCalendars)
+            assertEquals(setOf("keep"), store.rows.keys); assertNull(store.token); assertEquals(0, store.prunes)
+        }
     }
     private class MultiStore : CalendarStore {
         val tokens = mutableMapOf<String, String>()
@@ -163,7 +178,8 @@ class CalendarSyncTest {
     @Test fun aFailingCalendarLeavesTheOthersToSyncAndIsReported() {
         val store = MultiStore()
         val api = twoCalendars { error("Calendar data could not be applied") }
-        try { CalendarSync(api, store) { true }.sync(); fail() } catch (_: IllegalStateException) { }
+        val report = CalendarSync(api, store) { true }.sync()
+        assertTrue(report.failure is IllegalStateException); assertEquals(1, report.failedCalendars); assertEquals(1, report.events)
         assertEquals(listOf("primary", "holidays"), api.attempted)
         assertEquals(setOf("holiday"), store.rows["holidays"]); assertEquals("h1", store.tokens["holidays"])
         assertNull(store.rows["primary"]); assertNull(store.tokens["primary"])

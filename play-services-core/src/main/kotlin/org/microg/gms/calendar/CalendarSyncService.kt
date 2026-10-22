@@ -51,7 +51,9 @@ class CalendarSyncService : Service() {
                 result.stats.numSkippedEntries += report.skipped
                 prefs.status = when { report.conflicts > 0 -> "conflict"; report.skipped > 0 -> "partial"; else -> "success" }
                 if (report.skipped > 0) Log.w(TAG, "Calendar sync skipped ${report.skipped} unreadable events")
-                if (report.conflicts == 0) prefs.lastSuccess = System.currentTimeMillis()
+                if (report.conflicts == 0 && report.failure == null) prefs.lastSuccess = System.currentTimeMillis()
+                // A calendar that failed: the others' counts above stand, and its error sets the status.
+                report.failure?.let { throw it }
             } catch (e: CalendarRequestException) {
                 if (e.status == 401) AccountManager.get(this@CalendarSyncService).invalidateAuthToken(account.type, token)
                 val authorization = e.status == 401 || e.status == 403 && !e.rateLimited
