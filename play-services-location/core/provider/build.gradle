@@ -24,6 +24,7 @@ dependencies {
     implementation "com.android.volley:volley:$volleyVersion"
 
     implementation 'org.microg:address-formatter:0.3.1'
+    testImplementation "junit:junit:4.13.2"
 }
 
 android {
