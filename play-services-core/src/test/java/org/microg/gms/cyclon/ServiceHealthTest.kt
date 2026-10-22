@@ -71,6 +71,11 @@ class ServiceHealthTest {
         ContactHealthObservation(enabled, true, contactHealthReason(status), success)
     @Test fun optionalCalendarHasSeparatePermissionAndPrivateReport() {
         assertEquals(HealthState.OFF, calendarHealth(emptyList(),true,false).state)
+        // A partial calendar sync (skipped unreadable events) needs attention, keeps its last success and ranks below errors.
+        assertEquals(HealthReason.SYNC_PARTIAL, contactHealthReason("partial"))
+        val partial = calendarHealth(listOf(account(true,"partial",123)),true,true)
+        assertEquals(HealthState.ATTENTION, partial.state); assertEquals(HealthReason.SYNC_PARTIAL, partial.reason); assertEquals(123L, partial.lastSuccessAt)
+        assertEquals(HealthReason.NETWORK, calendarHealth(listOf(account(true,"partial",123), account(true,"network",123)),true,true).reason)
         assertEquals(HealthReason.CALENDAR_PERMISSION, calendarHealth(listOf(account(true,"success",123)),true,false).reason)
         assertEquals(HealthState.PAUSED, calendarHealth(listOf(account(true,"success",123)),false,true).state)
         assertTrue(ServiceHealthSnapshot(servicesVersionCode=252432039,androidApi=36,

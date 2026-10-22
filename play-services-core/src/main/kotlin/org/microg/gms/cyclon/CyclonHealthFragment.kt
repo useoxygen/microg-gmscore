@@ -156,6 +156,7 @@ private fun reasonText(reason: HealthReason): Int = when (reason) {
     HealthReason.SYNC_PAUSED -> R.string.cyclon_health_sync_paused
     HealthReason.SYNC_PENDING -> R.string.cyclon_health_sync_pending
     HealthReason.SYNC_SUCCESS -> R.string.cyclon_health_sync_success
+    HealthReason.SYNC_PARTIAL -> R.string.cyclon_health_sync_partial
     HealthReason.CONTACT_PERMISSION -> R.string.cyclon_health_contacts_permission
     HealthReason.AUTHORIZATION -> R.string.contacts_sync_authorization
     HealthReason.NETWORK -> R.string.contacts_sync_network
