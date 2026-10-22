@@ -120,4 +120,64 @@ class CalendarSyncTest {
         catch (_: IllegalStateException) { }
         assertEquals(0, store.prunes)
     }
+
+    @Test fun offsetZonesFromGoogleParseAndUnknownZonesFallBack() {
+        // Google writes some event zones as fixed offsets, which TimeZone.getAvailableIDs does not list (Prometheus, 10-22).
+        val utc = GoogleCalendarApi.parseTime(JSONObject("""{"dateTime":"2026-10-21T17:00:00Z"}"""), "UTC")
+        val offset = GoogleCalendarApi.parseTime(JSONObject("""{"dateTime":"2026-10-21T10:00:00-07:00","timeZone":"GMT-07:00"}"""), "America/Los_Angeles")
+        assertEquals(utc.millis, offset.millis); assertEquals("GMT-07:00", offset.zone)
+        val compact = GoogleCalendarApi.parseTime(JSONObject("""{"dateTime":"2026-10-21T19:00:00+02:00","timeZone":"GMT+2"}"""), "UTC")
+        assertEquals(utc.millis, compact.millis); assertEquals("GMT+02:00", compact.zone)
+        val unknown = GoogleCalendarApi.parseTime(JSONObject("""{"dateTime":"2026-10-21T10:00:00-07:00","timeZone":"Mars/Olympus"}"""), "America/Los_Angeles")
+        assertEquals(utc.millis, unknown.millis); assertEquals("America/Los_Angeles", unknown.zone)
+    }
+    @Test fun unreadableEventIsSkippedKeptAndRetriedWithoutBlockingTheCalendar() {
+        val api = GoogleCalendarApi(HttpTransport { _, url, _ ->
+            HttpReply(200, if (url.contains("calendarList")) """{"items":[{"id":"primary","timeZone":"UTC"}]}"""
+                else """{"items":[{"id":"good","start":{"date":"2026-10-06"},"end":{"date":"2026-10-07"}},{"id":"bad","start":{"dateTime":"not a time"}}],"nextSyncToken":"new"}""")
+        })
+        val store = Store(); store.rows["bad"] = event("bad")
+        val report = CalendarSync(api, store) { true }.sync()
+        assertEquals(1, report.events); assertEquals(1, report.skipped); assertEquals(0, report.failedCalendars)
+        // The stored copy of the unreadable event stays, and the checkpoint waits so the next sync reads it again.
+        assertEquals(setOf("good", "bad"), store.rows.keys); assertNull(store.token)
+    }
+    private class MultiStore : CalendarStore {
+        val tokens = mutableMapOf<String, String>()
+        val rows = mutableMapOf<String, MutableSet<String>>()
+        override fun calendar(calendar: RemoteCalendar) { rows.getOrPut(calendar.id) { mutableSetOf() } }
+        override fun checkpoint(calendar: String) = tokens[calendar]
+        override fun checkpoint(calendar: String, value: String) { tokens[calendar] = value }
+        override fun event(calendar: RemoteCalendar, event: RemoteEvent): Boolean { rows.getOrPut(calendar.id) { mutableSetOf() } += event.id; return true }
+        override fun reconcile(calendar: RemoteCalendar, present: Set<String>) = 0
+    }
+    private fun twoCalendars(first: (RemoteCalendar) -> EventPage) = object : CalendarApi {
+        val calendars = listOf(RemoteCalendar("primary", "Main", "UTC", "#64748b", emptyList()), RemoteCalendar("holidays", "Holidays", "UTC", "#64748b", emptyList()))
+        val attempted = mutableListOf<String>()
+        override fun calendars(page: String?) = CalendarPage(calendars, null)
+        override fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?): EventPage {
+            attempted += calendar.id
+            return if (calendar.id == "primary") first(calendar) else EventPage(listOf(event("holiday")), null, "h1")
+        }
+    }
+    @Test fun aFailingCalendarLeavesTheOthersToSyncAndIsReported() {
+        val store = MultiStore()
+        val api = twoCalendars { error("Calendar data could not be applied") }
+        try { CalendarSync(api, store) { true }.sync(); fail() } catch (_: IllegalStateException) { }
+        assertEquals(listOf("primary", "holidays"), api.attempted)
+        assertEquals(setOf("holiday"), store.rows["holidays"]); assertEquals("h1", store.tokens["holidays"])
+        assertNull(store.rows["primary"]); assertNull(store.tokens["primary"])
+    }
+    @Test fun authorizationRateLimitsAndTheOffSwitchStillStopTheWholeRun() {
+        for (failure in listOf(CalendarRequestException(401), CalendarRequestException(429), CalendarRequestException(403, rateLimited = true))) {
+            val store = MultiStore()
+            val api = twoCalendars { throw failure }
+            try { CalendarSync(api, store) { true }.sync(); fail() } catch (e: CalendarRequestException) { assertSame(failure, e) }
+            assertEquals(listOf("primary"), api.attempted); assertTrue(store.tokens.isEmpty())
+        }
+        var enabled = true
+        val api = twoCalendars { enabled = false; EventPage(emptyList(), null, "p1") }
+        try { CalendarSync(api, MultiStore()) { enabled }.sync(); fail() } catch (_: SyncStopped) { }
+        assertEquals(listOf("primary"), api.attempted)
+    }
 }

@@ -6,6 +6,7 @@ import android.accounts.*
 import android.app.Service
 import android.content.*
 import android.os.Bundle
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.microg.gms.calendar.sync.*
@@ -47,7 +48,9 @@ class CalendarSyncService : Service() {
                 }.sync()
                 result.stats.numUpdates += report.events
                 result.stats.numConflictDetectedExceptions += report.conflicts
-                prefs.status = if (report.conflicts > 0) "conflict" else "success"
+                result.stats.numSkippedEntries += report.skipped
+                prefs.status = when { report.conflicts > 0 -> "conflict"; report.skipped > 0 -> "partial"; else -> "success" }
+                if (report.skipped > 0) Log.w(TAG, "Calendar sync skipped ${report.skipped} unreadable events")
                 if (report.conflicts == 0) prefs.lastSuccess = System.currentTimeMillis()
             } catch (e: CalendarRequestException) {
                 if (e.status == 401) AccountManager.get(this@CalendarSyncService).invalidateAuthToken(account.type, token)
@@ -63,13 +66,18 @@ class CalendarSyncService : Service() {
                 prefs.status = "network"; result.stats.numIoExceptions++
             } catch (_: SecurityException) {
                 if (prefs.enabled) { prefs.status = "permission"; result.stats.numAuthExceptions++ }
-            } catch (_: Exception) {
-                if (prefs.enabled && !Thread.currentThread().isInterrupted) { prefs.status = "local"; result.stats.numParseExceptions++ }
+            } catch (e: Exception) {
+                // The kind only: no event content, account or token is logged.
+                if (prefs.enabled && !Thread.currentThread().isInterrupted) {
+                    Log.w(TAG, "Calendar sync could not apply a calendar: ${e.javaClass.simpleName}")
+                    prefs.status = "local"; result.stats.numParseExceptions++
+                }
             }
         }
     } }
     override fun onBind(intent: Intent) = adapter.syncAdapterBinder
     companion object {
+        private const val TAG = "CyclonCalendarSync"
         const val SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
         fun calendarToken(context: Context, account: Account): String {
             val future = AccountManager.get(context).getAuthToken(account, "oauth2:$SCOPE", null, false, null, null)
