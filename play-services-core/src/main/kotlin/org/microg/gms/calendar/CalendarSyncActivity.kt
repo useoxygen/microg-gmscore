@@ -75,6 +75,7 @@ class CalendarSyncActivity : ComponentActivity() {
                             permissions.any { ContextCompat.checkSelfPermission(this@CalendarSyncActivity, it) != PackageManager.PERMISSION_GRANTED } -> R.string.cyclon_calendar_permissions
                             prefs.status == "success" -> R.string.cyclon_calendar_success
                             prefs.status == "conflict" -> R.string.cyclon_calendar_conflict
+                            prefs.status == "partial" -> R.string.cyclon_calendar_partial
                             prefs.status == "authorization" -> R.string.contacts_sync_authorization
                             prefs.status == "network" -> R.string.contacts_sync_network
                             prefs.status == "local" -> R.string.cyclon_calendar_local

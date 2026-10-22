@@ -6,7 +6,7 @@ package org.microg.gms.cyclon
 internal enum class HealthState { OFF, PAUSED, READY, CONNECTED, ATTENTION, UNKNOWN }
 internal enum class HealthReason {
     DISABLED, UNREADABLE, CONNECTED, DISCONNECTED, NO_ACCOUNTS, SYNC_PAUSED,
-    SYNC_PENDING, SYNC_SUCCESS, CONTACT_PERMISSION, AUTHORIZATION, NETWORK, LOCAL, CONFLICT, UNCERTAIN,
+    SYNC_PENDING, SYNC_SUCCESS, SYNC_PARTIAL, CONTACT_PERMISSION, AUTHORIZATION, NETWORK, LOCAL, CONFLICT, UNCERTAIN,
     LOCATION_READY, LOCATION_PERMISSION, REGISTRATION_PENDING, REGISTRATION_RECORDED, CALENDAR_PERMISSION
 }
 internal data class HealthReading(val state: HealthState, val reason: HealthReason, val lastSuccessAt: Long? = null)
@@ -32,8 +32,10 @@ internal fun contactsHealth(accounts: List<ContactHealthObservation>?, masterSyn
     if (masterSync == null || active.any { it.scheduled == null }) return unknownHealth
     if (permitted == false) return HealthReading(HealthState.ATTENTION, HealthReason.CONTACT_PERMISSION, success)
     if (permitted == null) return unknownHealth
+    // A partial sync completed but skipped unreadable entries: worth a look, after the errors that stop a sync.
     val errors = setOf(HealthReason.AUTHORIZATION, HealthReason.NETWORK, HealthReason.LOCAL, HealthReason.CONFLICT, HealthReason.UNCERTAIN)
     active.firstOrNull { it.status in errors }?.let { return HealthReading(HealthState.ATTENTION, it.status, success) }
+    if (active.any { it.status == HealthReason.SYNC_PARTIAL }) return HealthReading(HealthState.ATTENTION, HealthReason.SYNC_PARTIAL, success)
     if (active.any { it.status == HealthReason.UNREADABLE }) return unknownHealth
     return HealthReading(HealthState.READY, if (success == null) HealthReason.SYNC_PENDING else HealthReason.SYNC_SUCCESS, success)
 }
@@ -44,6 +46,7 @@ internal fun contactHealthReason(stored: String): HealthReason = when (stored) {
     "network" -> HealthReason.NETWORK
     "local" -> HealthReason.LOCAL
     "conflict" -> HealthReason.CONFLICT
+    "partial" -> HealthReason.SYNC_PARTIAL
     "uncertain" -> HealthReason.UNCERTAIN
     "" -> HealthReason.SYNC_PENDING
     else -> HealthReason.UNREADABLE

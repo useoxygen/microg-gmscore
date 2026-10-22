@@ -77,6 +77,9 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
     private var challengeScript = ""
     private var helper by mutableStateOf(false)
     private var resumed = false
+    private var manualReloads = 0
+    private var expiryReloads = 0
+    private var reloadedAt = 0L
     private var challengeSince = 0L
     private val puzzle by lazy { EnrollmentPuzzle(challengeScript, resources.displayMetrics.density, ::observeNote) }
     private var transientRetries = 0
@@ -168,7 +171,7 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                                 modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp), shape = EnrollmentShape, border = BorderStroke(1.dp, colors.outline),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface)) {
                                 Text(stringResource(R.string.cyclon_enrollment_manual))
-                            } else if (registrationPage && !completed && !busy) OutlinedButton(onClick = { resumeRegistration() },
+                            } else if (registrationPage && !completed && !busy) OutlinedButton(onClick = { manualReloads++; resumeRegistration() },
                                 modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp), shape = EnrollmentShape, border = BorderStroke(1.dp, colors.outlineVariant),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.onSurface)) {
                                 Text(stringResource(R.string.cyclon_enrollment_check))
@@ -358,9 +361,13 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
 
     private fun evaluate(view: WebView, submit: Boolean) {
         if (!isRegistration(view.url)) return
+        // Google ignores a re-check of an expired puzzle; the page reloads itself for a new one. Only while the owner
+        // is looking (a paused screen gets one on resume), a bounded number of times plus one per Check again.
+        val reload = resumed && expiryReloads < AUTO_RELOADS + manualReloads
         view.evaluateJavascript(script.replace("__CYCLON_ID__", "\"$id\"")
             .replace("__CYCLON_ACCOUNT__", JSONObject.quote(accountName))
-            .replace("__CYCLON_SUBMIT__", submit.toString())) { result ->
+            .replace("__CYCLON_SUBMIT__", submit.toString())
+            .replace("__CYCLON_RELOAD__", reload.toString())) { result ->
             if (isFinishing || isDestroyed || browser !== view || !isRegistration(view.url)) return@evaluateJavascript
             val phase = runCatching { JSONTokener(result).nextValue() as? String }.getOrNull()
             if (phase != lastPhase) { Log.i("CyclonEnrollment", "Registration phase $phase"); lastPhase = phase }
@@ -381,6 +388,19 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
                     status = if (helper) R.string.cyclon_enrollment_assisting else R.string.cyclon_enrollment_challenge
                 }
                 "verification" -> { busy = false; status = R.string.cyclon_enrollment_verifying }
+                "reload_started" -> {
+                    expiryReloads++; reloadedAt = android.os.SystemClock.elapsedRealtime(); puzzle.reset()
+                    busy = true; status = R.string.cyclon_enrollment_verifying
+                }
+                // Only a used-up allowance ends assistance, leaving Check again as the owner's action; an expiry seen
+                // while paused just waits for the reload on resume.
+                "expired" -> {
+                    if (expiryReloads >= AUTO_RELOADS + manualReloads) { helper = false; puzzle.reset() }
+                    busy = false; status = R.string.cyclon_enrollment_expired
+                }
+                // The old page answers until the reload commits; a reload that never does is a page error.
+                "reloading" -> if (android.os.SystemClock.elapsedRealtime() - reloadedAt > RELOAD_TIMEOUT_MS) failBrowser()
+                    else { busy = true; status = R.string.cyclon_enrollment_verifying }
                 "rejected" -> { busy = false; status = R.string.cyclon_enrollment_needs_help; job?.cancel() }
                 // Keep checking: the account label can be read mid-render. Nothing is filled or clicked until it matches.
                 "account_mismatch" -> { busy = false; status = R.string.cyclon_enrollment_choose_web }
@@ -429,6 +449,9 @@ class EnrollmentActivity : ComponentActivity(), EnrollmentChallengeHost {
         // Outlast Cyclon's own assistant bounds (twelve minutes, 30-second model calls) so normal solving never hits these.
         internal const val POLL_WINDOW_MS = 20 * 60_000L
         internal const val ASSIST_WINDOW_MS = 14 * 60_000L
+        /** Page reloads for a fresh puzzle after Google expires an unsolved one (about two minutes each) before asking the owner. */
+        internal const val AUTO_RELOADS = 3
+        internal const val RELOAD_TIMEOUT_MS = 30_000L
         internal val TRANSIENT_ERRORS = setOf(WebViewClient.ERROR_CONNECT, WebViewClient.ERROR_IO,
             WebViewClient.ERROR_TIMEOUT, WebViewClient.ERROR_HOST_LOOKUP, WebViewClient.ERROR_UNKNOWN)
         internal fun allowed(uri: Uri): Boolean = uri.scheme == "https" && uri.userInfo == null &&

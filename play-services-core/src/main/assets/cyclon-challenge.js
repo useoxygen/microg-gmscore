@@ -6,7 +6,13 @@
   const accountLabel=identity&&identity.getAttribute('aria-label');
   const signedIn=typeof accountLabel==='string'&&/\(([^()]*)\)(?:,[^()]*)?\s*$/.exec(accountLabel);
   if(!signedIn||signedIn[1]!==account)return null;
-  const visible=e=>!!e&&e.getClientRects().length>0;
+  // An expired challenge keeps its layout box while Google hides it with visibility and opacity.
+  const visible=e=>{
+    if(!e||e.getClientRects().length===0)return false;
+    const view=e.ownerDocument&&e.ownerDocument.defaultView;
+    for(let n=e;n&&view;n=n.parentElement){const s=view.getComputedStyle(n);if(s.visibility!=='visible'||parseFloat(s.opacity)===0)return false}
+    return true;
+  };
   for(const frame of document.querySelectorAll('iframe')) {
     try {
       const url=new URL(frame.src);

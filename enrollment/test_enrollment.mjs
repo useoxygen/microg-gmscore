@@ -19,7 +19,7 @@ function fixture() {
   const input = new Input(), response = {value:''};
   const visible = text => ({innerText:text, getClientRects:()=>[1]});
   const state = {input, response, messages:[], ids:[], clicks:0, frames:[], window:{},
-    location:{origin:'https://www.google.com',pathname:'/android/uncertified/'},
+    reloads:0, location:{origin:'https://www.google.com',pathname:'/android/uncertified/',reload:()=>state.reloads++},
     label:'Google Account: Fixture (' + account + ')'};
   state.button = {...visible('Register'), type:'submit', getAttribute:()=>null, disabled:false, click:()=>state.clicks++};
   state.document = {
@@ -27,8 +27,9 @@ function fixture() {
     querySelectorAll: selector => selector === 'input' ? [input] : selector === 'iframe' ? state.frames :
       selector === 'button' ? [state.button] : selector.includes('button') ? [] : selector.includes('listItem') ? state.ids.map(visible) : state.messages.map(visible)
   };
-  state.run = (submit=false, suppliedId=id) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
-    .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit)),
+  state.run = (submit=false, suppliedId=id, reload=false) => runInNewContext(script.replace('__CYCLON_ID__',JSON.stringify(suppliedId))
+    .replace('__CYCLON_ACCOUNT__',JSON.stringify(account)).replace('__CYCLON_SUBMIT__',String(submit))
+    .replace('__CYCLON_RELOAD__',String(reload)),
     {...state, HTMLInputElement:Input, Event:class {constructor(type){this.type=type}}, URL});
   return state;
 }
@@ -69,8 +70,41 @@ test('different account, lookalike origin and invalid IDs cannot write',()=>{
 test('checkbox is attempted once and failures stay interactive',()=>{
   const f=fixture(); let clicked=0;
   f.frames=[{src:'https://www.google.com/recaptcha/api2/anchor',dataset:{},contentDocument:{
-    querySelector:()=>({getAttribute:()=> 'false',click:()=>clicked++})}}];
+    querySelector:()=>({getAttribute:()=> 'false',classList:{contains:()=>false},click:()=>clicked++})}}];
   f.run(); f.run(); assert.equal(clicked,1); assert.equal(f.clicks,0);
+});
+function expiring(f) {
+  const anchor={src:'https://www.google.com/recaptcha/api2/anchor',dataset:{cyclonAttempted:'true'},clicks:0,expired:true,
+    getClientRects:()=>[1]};
+  anchor.contentDocument={querySelector:()=>({getAttribute:()=>'false',classList:{contains:c=>c==='recaptcha-checkbox-expired'&&anchor.expired},
+    click:()=>{anchor.clicks++;anchor.expired=false}})};
+  // Google hides an expired challenge with visibility and opacity on an ancestor; its frame keeps a layout box.
+  const container={parentElement:null};
+  const page={defaultView:{getComputedStyle:n=>n===container&&anchor.expired?{visibility:'hidden',opacity:'0'}:{visibility:'visible',opacity:'1'}}};
+  const puzzle={getClientRects:()=>[1]};
+  const bframe={src:'https://www.google.com/recaptcha/api2/bframe',dataset:{},getClientRects:()=>[1],ownerDocument:page,
+    parentElement:container,contentDocument:{querySelector:()=>puzzle}};
+  f.frames=[anchor,bframe];
+  return {anchor,bframe};
+}
+test('a hidden expired challenge is reported as expired without clicking the box again',()=>{
+  const f=fixture(), {anchor}=expiring(f);
+  assert.equal(f.run(),'expired'); assert.equal(f.run(),'expired'); assert.equal(anchor.clicks,0); assert.equal(f.clicks,0);
+  anchor.expired=false; assert.equal(f.run(),'challenge');
+});
+test('a fresh page attempts its checkbox once, as before',()=>{
+  const f=fixture(), {anchor}=expiring(f); anchor.dataset={}; anchor.expired=false;
+  assert.equal(f.run(),'challenge'); f.run(); assert.equal(anchor.clicks,1);
+});
+test('an expired page reloads itself once when allowed; queued polls of it start nothing more',()=>{
+  const f=fixture(), {anchor}=expiring(f);
+  assert.equal(f.run(false,id,true),'reload_started'); assert.equal(f.reloads,1);
+  assert.equal(f.run(false,id,true),'reloading'); assert.equal(f.run(false,id,true),'reloading');
+  assert.equal(f.reloads,1); assert.equal(anchor.clicks,0); assert.equal(f.clicks,0);
+});
+test('a page marked for reload reports reloading and acts on nothing',()=>{
+  const f=fixture(), {anchor}=expiring(f); f.response.value='opaque'; f.window.__cyclonEnrollmentReloading=true;
+  assert.equal(f.run(true),'reloading'); assert.equal(anchor.clicks,0); assert.equal(f.clicks,0); assert.equal(f.input.value,'');
 });
 test('Google rejection is distinct from CAPTCHA completion',()=>{
   const f=fixture(); f.response.value='opaque'; f.messages=['Uh oh. Something went wrong. Please try again.'];
