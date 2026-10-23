@@ -154,12 +154,28 @@ they do not invoke Compose click callbacks or disable the secure window.
 On source **63697035**, all seven isolated checks and three read-only account/worker checks
 passed again. The manager's account case also passed through injected taps: open without
 a screen lock, enable account sync, display the approved invalid-domain fixture's realm and
-username, no secret input fields, and `FLAG_SECURE` retained. The background test confirmed
-the grant was cleared, but its next open action timed out. It remains unaccepted. A revised
-test uses ordinary Settings/task switching, explicit focus waits and metadata-only touch/state
-diagnostics. It compiles; its next signed run is pending owner Google Cloud reauthentication.
-Each completed run restored and read back the original Services build without clearing data
-and removed its temporary test APK. No password or preference writes ran in this round.
+username, no secret input fields, and `FLAG_SECURE` retained. Its background/reopen case
+timed out. After owner Google Cloud reauthentication, matching-signer product **5d6c8e55**
+passed the seven isolated cases, three read-only account/worker cases and manager listing
+again. A real Settings/task-switch reopen test also timed out on that product.
+
+Focused fixture **d62e23d3** captured only input/lock-state metadata: the manager was
+resumed, focused and unlocked, but no touch reached its window callback in the failing step.
+Fixture **db090afa** waits for stable input focus before injecting motion events. Against the
+**same 5d6c8e55 product APK**, its lifecycle case passed (one test, **6.801 seconds**): explicit
+Open passwords, stop behind Settings, return to a cleared grant, open again, recreate to a
+cleared grant and open again. No product access or overlay check changed for that pass.
+No-lock manager listing and this lifecycle path are device-accepted; provider/configured-lock
+and wider background/recovery acceptance remain open.
+
+The tested product APK SHA-256 is
+`8c32b8a69b35abdb0d7f1d4a9e62eb73e98e354b4fd6f1b879e8769ecd3372c9`;
+the passing lifecycle fixture APK SHA-256 is
+`94ba45d816c54f9c15981d939d279c22422d74a0ac2eb71e355d2fffc035f669`.
+Each completed run restored the original Services build without clearing data and removed
+its temporary test APK. Final live readback also matched the original APK bytes, SHA-256
+`f516ddc5d66e2a8b48cfe754cdd2511f93e5594b56ba17ec35c7777f302b7f17`.
+No password or preference cloud writes ran in this review round.
 
 | Surface | Gap / required proof |
 | --- | --- |
@@ -172,7 +188,7 @@ and removed its temporary test APK. No password or preference writes ran in this
 | Password management | Search, note/name edits, moving between stores, import/export, blocked-site settings and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
-| Phone | Signed private installation, isolated cases and historical native synthetic CRUD/restoration passed. Secondary-process reads, a scheduled worker and no-lock account listing through injected taps passed. Manager background/reopen/recreation, provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |
+| Phone | Signed private installation, isolated cases and historical native synthetic CRUD/restoration passed. Secondary-process reads, a scheduled worker, no-lock account listing and manager background/reopen/recreation through injected taps passed. Provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |
 | Official interoperability | Read a credential produced by official Chrome, then verify native edits/deletion and a locally produced credential with official Chrome. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks
