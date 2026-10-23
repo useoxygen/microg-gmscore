@@ -117,6 +117,10 @@ with identical payloads remain distinct; deduplication by payload hash would mis
 State schema v4 reads v1/v2/v3 and makes older writers refuse the new obligations.
 Host tests cover interruption/reopen, retry, domain separation, incomplete pagination,
 locked keys and malformed/overflow state. This remains pending native push acceptance.
+The Pixel's read-only bridge subsequently reported MCS disconnected before any remote test
+edit, despite an existing FCM token. Enabling password sync now requests the normal GCM
+reconnect route, which retains the existing global/per-network opt-outs and check-in policy.
+It does not use a forced reconnect or change messaging settings. Native acceptance is pending.
 
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
@@ -139,7 +143,7 @@ The management screen adds metadata-only search, account holder name/default-not
 and never-save site controls. Passwords and notes are masked in the editor. Never-save rules
 are rechecked under the vault lock before automatic save; manual management remains available.
 Separate Compose dialog windows now have their own secure-window and obscured-touch guard.
-Host validation has passed 57 password-sync and 41 Core tests; product and instrumentation
+Host validation has passed 59 password-sync and 41 Core tests; product and instrumentation
 APKs compile. The matching-signer 0e9c8653 build passed all nine isolated Android cases.
 Its initial metadata-editor run left an uncertain fixture restoration; the encrypted restore
 checkpoint survived. On product 2756e591, fixture 6dcec757 recovered the exact synthetic
@@ -158,6 +162,15 @@ adapter remains unaccepted and is being investigated separately through bounded 
 The standalone note-deletion case will be rerun. The real server-push
 test timed out (97.123 seconds); an FCM token alone is not push-delivery acceptance.
 Original Services was restored without clearing data and temporary test packages removed.
+On product **6ea691ca** with fixture **6fd24225**, all nine isolated cases, standalone note
+deletion/no-resurrection (11.8 seconds), seven native cases in `:ui` (32.249 seconds) and
+all three manager cases (22.031 seconds) passed. The exact password-update fixture was also
+corrected: its legacy restore input omitted field 20, so partial-client merging correctly
+retained the newer modification time while restoring the password value. Guarded recovery
+restored the original bytes (6.948 seconds); future fixture cleanup bypasses partial-client
+merge through authorized synthetic recreation, preserving Chrome-local metadata.
+The push precondition remained disconnected (33.593 seconds), and five bounded read-only
+GetPassword request shapes returned status 5 or 3; those two cells remain unaccepted.
 Username/site identity changes, moving stores, import/export and password checkup remain open.
 
 ## Remaining parity and acceptance
@@ -269,7 +282,7 @@ No password or preference cloud writes ran in this review round.
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |
 | Encryption recovery | Synthetic host cases cover keystore/trusted/custom derivation and keybag rotation. Real account recovery, stale-key refresh, registration, enable/rotate/clear RPCs and cross-device recovery are not accepted. |
 | Conflict recovery UI | Conflicts and uncertain changes are retained. Owner selection of local/remote resolution, retry/drop, and vault-reset recovery still need UI and tests. |
-| Password management | Metadata search, note/name editing and blocked-site settings are implemented and host-tested; device/editor acceptance is pending. Username/site identity edits, moving stores, import/export and checkup/breach service parity remain. |
+| Password management | Metadata search, name/note editing and note deletion/no-resurrection passed on the designated phone, with exact fixture restoration. Blocked-site controls and atomic automatic-save rejection are implemented; the latter passed an isolated Android case. Username/site identity edits, moving stores, import/export and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
 | Phone | Signed private installation, isolated cases and historical native synthetic CRUD/restoration passed. Secondary-process reads, a scheduled worker, no-lock account listing and manager background/reopen/recreation through injected taps passed. Provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |

@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import com.google.android.gms.BuildConfig
@@ -13,6 +14,14 @@ import org.microg.gms.gcm.RegisterRequest
 
 /** App-scoped push registration, while every account retains its own encrypted SyncEntities identity. */
 internal object PasswordDeviceRegistration {
+    fun requestPushConnection(context: Context) {
+        if (!GcmPrefs.get(context).isEnabled) return
+        // The normal receiver owns check-in and per-network consent. Do not force a
+        // connection, change messaging settings or replace another subsystem's token.
+        context.sendBroadcast(Intent(context, org.microg.gms.gcm.TriggerReceiver::class.java)
+            .setAction("org.microg.gms.gcm.RECONNECT"))
+    }
+
     fun info(context: Context, previous: DeviceRegistration?): SyncDeviceInfo {
         val packageManager = context.packageManager
         val formFactor = when {

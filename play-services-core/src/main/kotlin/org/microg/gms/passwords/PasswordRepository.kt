@@ -43,6 +43,7 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
             val auth = authManager()
             auth.setPermitted(true)
             authManager(CHROMESYNC_SCOPE).setPermitted(true)
+            PasswordDeviceRegistration.requestPushConnection(context)
             RemoteWorkManager.getInstance(context).enqueueUniquePeriodicWork("password-periodic-$marker", ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<PasswordSyncWorker>(1, TimeUnit.HOURS).setInputData(workDataOf("account" to account.name))
                     .setConstraints(network()).build()).get(30, TimeUnit.SECONDS)

@@ -99,7 +99,12 @@ class PasswordNativeSyncAndroidTest {
                 "resource-client" to (Proto.field(1, name) + Proto.field(3, client)),
                 "parent-resource" to (Proto.field(1, parent) + Proto.field(2, name)),
                 "parent-local-id" to (Proto.field(1, parent) + Proto.field(2, name.substringAfterLast('/'))),
-                "parent-resource-client" to (Proto.field(1, parent) + Proto.field(2, name) + Proto.field(3, client)))
+                "parent-resource-client" to (Proto.field(1, parent) + Proto.field(2, name) + Proto.field(3, client)),
+                "local-id" to Proto.field(1, name.substringAfterLast('/')),
+                "client-tag" to Proto.field(1, original.id),
+                "parent-client-tag" to (Proto.field(1, parent) + Proto.field(2, original.id)),
+                "user-password-id" to Proto.field(1, "users/me/passwords/" + name.substringAfterLast('/')),
+                "user-password-tag" to Proto.field(1, "users/me/passwords/" + original.id))
             val results = ArrayList<String>()
             val keys = VaultKeys.unlock(state.metadata!!)
             val transport = nativeTransport(repository)
@@ -171,6 +176,14 @@ class PasswordNativeSyncAndroidTest {
             }
             val connectionDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while (!connected() && System.nanoTime() < connectionDeadline) Thread.sleep(100)
+            @Suppress("DEPRECATION")
+            val network = (context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).activeNetworkInfo
+            val messaging = org.microg.gms.gcm.GcmPrefs.get(context)
+            InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+                putString("passwordPushConnection", "enabled=${messaging.isEnabled},networkConnected=${network?.isConnected == true}," +
+                    "networkAllowed=${messaging.isEnabledFor(network)}," +
+                    "checkinPresent=${org.microg.gms.checkin.LastCheckinInfo.read(context).lastCheckin > 0},connected=${connected()}")
+            })
             assertTrue("Push delivery capability unavailable: read-only MCS bridge reports disconnected", connected())
             val received = AtomicInteger(); val matching = AtomicInteger(); val relevant = AtomicInteger(); val invalid = AtomicInteger()
             val observer = object : BroadcastReceiver() {

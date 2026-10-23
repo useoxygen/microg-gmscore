@@ -78,6 +78,15 @@ class PasswordResourceCodecTest {
         assertNotNull(PasswordResourceCodec.read(acknowledged, keys).encodedNotes)
         assertEquals(0, keys.decrypt(Proto.decode(acknowledged).one(10)).size)
     }
+    @Test fun partialClientsRetainTheModificationFieldTheyDoNotSend() {
+        val legacy = PasswordData.decode(Proto.decode(item().encode()).replace(20, null).encode())
+        val changed = legacy.withPassword("after", 2345L)
+        val restored = changed.mergeFrom(legacy)
+        assertEquals(legacy.password, restored.password)
+        assertEquals(Proto.decode(changed.encode()).integer(20), Proto.decode(restored.encode()).integer(20))
+        assertNull(Proto.decode(legacy.encode()).integer(20))
+        assertFalse(legacy.encode().contentEquals(restored.encode()))
+    }
     @Test fun changedPasswordsKeepOnlyExplicitIncomingPhishingIssuesAndBlockedWritesRequireEmptyUsername() = withKeys { keys ->
         val issues = Proto.field(1, Proto.integer(1, 1)) + Proto.field(4, Proto.integer(1, 2))
         val previous = PasswordData.decode(Proto.decode(item().encode()).replace(19, issues).encode())
