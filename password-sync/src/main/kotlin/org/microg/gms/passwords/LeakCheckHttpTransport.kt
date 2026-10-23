@@ -62,7 +62,10 @@ class LeakCheckHttpTransport(private val token: () -> String, private val check:
                     out.toByteArray()
                 }
                 check()
-                val status = (response.trailers()["grpc-status"] ?: response.header("grpc-status"))?.toIntOrNull() ?: throw ProtocolException()
+                // Cached/interceptor responses can have an explicit status header without an exchange
+                // that supplies trailers. Missing both forms still cannot authorize success.
+                val trailerStatus = try { response.trailers()["grpc-status"] } catch (_: IllegalStateException) { null }
+                val status = (trailerStatus ?: response.header("grpc-status"))?.toIntOrNull() ?: throw ProtocolException()
                 if (status != 0) throw PasswordRpcException(status, false)
                 return GooglePasswordTransport.decodeFrame(raw, response.header("grpc-encoding"))
             }

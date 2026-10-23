@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.microg.gms.auth.credentials.provider.PasskeyReauthUi
+import org.microg.gms.auth.credentials.provider.encodeBase64Url
 import org.microg.gms.auth.folsom.ui.GenericActivity
 import org.microg.gms.cyclon.CyclonMaterialTheme
 import org.microg.gms.fido.core.*
@@ -130,9 +131,10 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
                     owner = authenticate(verify)
                     proof
                 })
+                val credentialId = result.second.rawId?.takeIf { it.size in 1..1024 } ?: throw VaultLockedException()
                 // Post-create PRF recovery is a separate read: its reauth must never repeat the mutation.
                 val output = if (!request.create || prf == null) null else PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
-                    vault.withSecret(result.first ?: throw VaultLockedException(), options.rpId, listOf(result.second.rawId), owner, rapt) { item, secret ->
+                    vault.withSecret(result.first ?: throw VaultLockedException(), options.rpId, listOf(credentialId), owner, rapt) { item, secret ->
                         secret.prf(prf ?: throw VaultLockedException(), item.credentialId).use(SyncedPasskeyPrf::output)
                     }
                 } }, reauthenticate = { lookup ->
@@ -140,7 +142,7 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
                     owner = authenticate(verify)
                     proof
                 })
-                val response = if (output == null) result.second else credential(result.second.rawId, result.second.response,
+                val response = if (output == null) result.second else credential(credentialId, result.second.response,
                     AuthenticationExtensionsClientOutputs(null, null, AuthenticationExtensionsCredPropsOutputs(true), output, null))
                 withContext(Dispatchers.IO) { vault.parent() }
                 owner()

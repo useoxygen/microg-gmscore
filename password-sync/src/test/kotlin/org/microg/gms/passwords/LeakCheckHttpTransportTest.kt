@@ -46,7 +46,8 @@ class LeakCheckHttpTransportTest {
                     .header("Location", "https://untrusted.invalid/").body(ByteArray(5).toResponseBody()).build()
             }.build()
             val transport = LeakCheckHttpTransport({ "fixture-token" }, {}, {}, client)
-            assertThrows(Exception::class.java) { transport.invoke(LeakCheckMethod.MATCHES, byteArrayOf()) }
+            val failure = assertThrows(Exception::class.java) { transport.invoke(LeakCheckMethod.MATCHES, byteArrayOf()) }
+            if (code == 200) assertTrue(failure is ProtocolException)
             assertEquals(1, calls)
         }
     }

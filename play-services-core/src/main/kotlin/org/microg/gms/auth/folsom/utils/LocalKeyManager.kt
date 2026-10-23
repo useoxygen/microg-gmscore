@@ -430,9 +430,10 @@ class LocalKeyManager(private val context: Context) {
                         if (previous.pair != null && (state.pair == null || !MessageDigest.isEqual(previous.pair, state.pair)))
                             throw TinkEncryptionException("Recovery key changed")
                         var pairs = account.accountKeyPairs
-                        if (state.attempt?.phase == EnrollmentPhase.ENROLLED) {
+                        val attempt = state.attempt
+                        if (attempt?.phase == EnrollmentPhase.ENROLLED) {
                             val pair = state.pair ?: throw TinkEncryptionException("Recovery key unavailable")
-                            if (state.attempt.accountId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+                            if (attempt.accountId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
                             val public = EnrollmentWire.publicKey(pair)
                             val existing = pairs.filter { it.keyPairType == 1 }
                             if (existing.size > 1) throw TinkEncryptionException("Ambiguous recovery key")
