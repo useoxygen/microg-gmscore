@@ -45,6 +45,9 @@ password pagination uses field 3. Both use separate durable mutation journals.
   settings callbacks still need device/server acceptance.
 - Nigori PBKDF2/scrypt, default keystore wrapping, trusted-vault shared-key derivation,
   custom derived keys/passphrase unlock, and reading older entries after keybag rotation.
+  Trusted-vault unlock now retries once with freshly retrieved shared keys after a stale
+  local keybag, following `bfgu`'s bounded retrieval behavior. This is host-tested; real
+  trusted-vault recovery and rotation acceptance is still pending.
   Both legacy ciphertext-MAC and IV+ciphertext-MAC formats are readable. Legacy compatibility
   does not authenticate the IV; the tests deliberately distinguish their tamper envelopes.
 - Google identity is bound to AccountManager's stable Google user ID; OAuth is requested

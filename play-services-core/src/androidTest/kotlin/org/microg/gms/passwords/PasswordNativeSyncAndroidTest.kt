@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.accounts.AccountManager
+import android.os.Bundle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.Constraints
@@ -27,6 +28,24 @@ import java.util.concurrent.TimeUnit
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun inspectInterruptedSyntheticFixtureJournalWithoutReportingContents() {
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        val selected = arguments.getString("passwordLiveAccount")
+        assumeTrue(!selected.isNullOrBlank())
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        val state = repository.store.locked { it.load() }
+        val checkpoint = AndroidVaultStore(context, "password-fixture-metadata-restore/" + account.name)
+            .locked { it.load().chromeLocalData["original"] }
+        val messages = Bundle().apply {
+            putString("passwordFixtureJournal", state.mutations.joinToString(",") { "${it.kind}:${it.phase}" }.ifEmpty { "empty" })
+            putInt("passwordFixturePreferenceJournalCount", state.preferenceMutations.size)
+            putBoolean("passwordFixtureMetadataCheckpoint", checkpoint != null)
+            putBoolean("passwordFixtureEnabled", repository.enabled)
+        }
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, messages)
+    }
+
     @Test fun actualServerPushRefreshesTheApprovedSyntheticLoginWithoutManualRefresh() {
         assumeTrue(arguments.getString("passwordLivePush") == "cyc654")
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")

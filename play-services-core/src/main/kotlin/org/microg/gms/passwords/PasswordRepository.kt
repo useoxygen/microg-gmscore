@@ -219,11 +219,13 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
 
     private fun unlock(metadata: ByteArray, customKey: ByteArray? = null): VaultKeys {
         val type = Proto.decode(Proto.decode(metadata).one(3)).integer(2)
-        val shared = if (type == 5L) runBlocking {
-            LocalKeyManager.getInstance(context).getLocalKeysOrSync(context, account.name, "chromesync", "password-sync")
-                .mapNotNull { it.keyMaterial?.toByteArray() }
-        } else emptyList()
-        return try { VaultKeys.unlock(metadata, shared, customKey = customKey) } finally { shared.forEach { it.fill(0) } }
+        return if (type == 5L) VaultKeys.unlockTrustedVault(metadata) { force ->
+            checkEnabled()
+            runBlocking {
+                LocalKeyManager.getInstance(context).getLocalKeysOrSync(context, account.name, "chromesync", "password-sync", forceRefresh = force)
+                    .mapNotNull { it.keyMaterial?.toByteArray() }
+            }
+        } else VaultKeys.unlock(metadata, customKey = customKey)
     }
     private fun registration(): DeviceTokenProvider {
         val info = PasswordDeviceRegistration.info(context, store.locked { it.load().deviceRegistration })

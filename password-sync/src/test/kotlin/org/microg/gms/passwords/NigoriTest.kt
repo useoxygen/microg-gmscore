@@ -98,4 +98,39 @@ class NigoriTest {
         assertArrayEquals(current.name(), Proto.decode(keys.encrypt(bytes("new value"))).one(1))
         keys.destroy(); old.destroy(); current.destroy()
     }
+
+    @Test fun staleTrustedVaultKeysRefreshOnceWithoutChangingEncryptionMetadata() {
+        val shared = bytes("new shared key")
+        val current = NigoriKey.derive(Base64.getEncoder().encode(shared))
+        val metadata = Proto.field(3, Proto.field(1, current.encrypt(Proto.field(2, current.export()))) + Proto.integer(2, 5))
+        val attempts = ArrayList<Boolean>(); val copies = ArrayList<ByteArray>()
+        val keys = VaultKeys.unlockTrustedVault(metadata) { force ->
+            attempts.add(force)
+            listOf((if (force) shared.copyOf() else bytes("old shared key")).also(copies::add))
+        }
+        assertEquals(listOf(false, true), attempts)
+        assertTrue(copies.all { key -> key.all { it == 0.toByte() } })
+        assertArrayEquals(bytes("private"), keys.decrypt(current.encrypt(bytes("private"))))
+        keys.destroy(); current.destroy(); shared.fill(0)
+    }
+
+    @Test fun unavailableTrustedKeysRemainLockedAndCurrentKeysAvoidNetworkRefresh() {
+        val shared = bytes("current shared key")
+        val current = NigoriKey.derive(Base64.getEncoder().encode(shared))
+        val metadata = Proto.field(3, Proto.field(1, current.encrypt(Proto.field(2, current.export()))) + Proto.integer(2, 5))
+        val attempts = ArrayList<Boolean>()
+        VaultKeys.unlockTrustedVault(metadata) { force -> attempts.add(force); listOf(shared.copyOf()) }.destroy()
+        assertEquals(listOf(false), attempts)
+        attempts.clear()
+        assertThrows(VaultLockedException::class.java) {
+            VaultKeys.unlockTrustedVault(metadata) { force -> attempts.add(force); emptyList() }
+        }
+        assertEquals(listOf(false, true), attempts)
+        var reads = 0
+        assertThrows(ProtocolException::class.java) {
+            VaultKeys.unlockTrustedVault(Proto.field(3, Proto.integer(2, 4))) { reads++; emptyList() }
+        }
+        assertEquals(0, reads)
+        current.destroy(); shared.fill(0)
+    }
 }

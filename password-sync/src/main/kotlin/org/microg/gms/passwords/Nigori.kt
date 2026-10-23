@@ -96,6 +96,18 @@ class VaultKeys private constructor(private val keys: Map<String, NigoriKey>, va
     override fun toString(): String = "VaultKeys[redacted]"
 
     companion object {
+        /** Google retries key retrieval after marking stale keys; never reset the vault. */
+        fun unlockTrustedVault(metadata: ByteArray, load: (forceRefresh: Boolean) -> List<ByteArray>): VaultKeys {
+            if (Proto.decode(Proto.decode(metadata).one(3)).integer(2) != 5L) throw ProtocolException()
+            repeat(2) { attempt ->
+                val shared = load(attempt > 0)
+                try { return unlock(metadata, trustedVaultKeys = shared) }
+                catch (_: VaultLockedException) { /* One bounded fresh retrieval after a stale local keybag. */ }
+                finally { shared.forEach { it.fill(0) } }
+            }
+            throw VaultLockedException()
+        }
+
         fun keyForPassphrase(metadata: ByteArray, password: ByteArray): NigoriKey {
             val specifics = Proto.decode(Proto.decode(metadata).one(3))
             if (specifics.integer(2) !in setOf(1L, 3L, 4L)) throw VaultLockedException()
