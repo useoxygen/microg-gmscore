@@ -41,7 +41,8 @@ password pagination uses field 3. Both use separate durable mutation journals.
   pagination, durable launch/reconciliation fences, offline coalescing and version conflicts.
   Settings do not require Nigori keys. Chrome transactions 5/6 use the settings callback's
   presence flag and nullable value. Background work attempts both independent sync domains.
-  This newer preference path has compile/host proof only until separately tested on-device.
+  Native preference list/cache reopening is accepted; preference writes and Chrome's Binder
+  settings callbacks still need device/server acceptance.
 - Nigori PBKDF2/scrypt, default keystore wrapping, trusted-vault shared-key derivation,
   custom derived keys/passphrase unlock, and reading older entries after keybag rotation.
   Both legacy ciphertext-MAC and IV+ciphertext-MAC formats are readable. Legacy compatibility
@@ -100,10 +101,25 @@ The human UI check reached the manager's screen-lock-required state; opening the
 does not establish owner authentication or listing/fill acceptance. Chrome's Settings entry
 opens the manager, but that is not an official Chrome producer round trip.
 
+Source **fe124f61** passed 33 password-sync host tests, 34 Core host tests, all seven
+isolated Android tests and all four opt-in native account cases (17.674 seconds for the
+latter). The added live case accepts read-only priority-preference retrieval and encrypted
+cache reopening; it does not establish a nonempty preference result or preference writes.
+Password CRUD again restored the exact approved fixture payload and checked unrelated
+records. Native fill now also rejects disagreement between the stored signon realm and
+origin URL, with a failing-before/passing-after legacy-IV modification regression.
+
+After testing, the original Services APK **0.3.17.252432-114 (cf93b15)** was restored and
+its active version read back without clearing app data. The temporary instrumentation APK
+was removed, this thread released the Pixel session, and the signing VM was stopped.
+The private development build is no longer active on the phone. A PIN, pattern or password
+is required by this implementation's owner UI before viewing/filling credentials; the native
+sync checks passed without a screen lock. Owner UI acceptance remains open.
+
 | Surface | Gap / required proof |
 | --- | --- |
 | Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, stable nonce/client token, invalidation transport and reconnect handling are not connected. Current password writes use empty client-token fields, which the earlier PoC server accepted. |
-| Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native/server/official-client acceptance, management controls and provider behavior still need verification. |
+| Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native list/cache reopening passed; preference writes, official-client callbacks, management controls and provider behavior still need verification. |
 | Affiliations | Verified Digital Asset Links, branding and grouping are not implemented; no eTLD or package-name shortcut is used to authorize fills. |
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |
 | Encryption recovery | Synthetic host cases cover keystore/trusted/custom derivation and keybag rotation. Real account recovery, stale-key refresh, registration, enable/rotate/clear RPCs and cross-device recovery are not accepted. |
