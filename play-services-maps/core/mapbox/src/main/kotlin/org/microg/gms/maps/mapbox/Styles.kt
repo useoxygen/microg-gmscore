@@ -103,7 +103,9 @@ fun getStyle(
             Style.Builder().fromUri("file:/${temporaryFile.absolutePath}")
         } catch (e: IOException) {
             e.printStackTrace()
-            Style.Builder().fromUri(getFallbackStyleOnlineUri(mapType))
+            // The online fallback styles are mapbox:// URIs, which abort the host app without a Mapbox key.
+            if (BuildConfig.MAPBOX_KEY.isEmpty()) Style.Builder().fromJson(styleJson.toString())
+            else Style.Builder().fromUri(getFallbackStyleOnlineUri(mapType))
         }
     } else {
         Style.Builder().fromJson(styleJson.toString())
