@@ -45,10 +45,13 @@ class PasswordManagerAndroidTest {
     private val open get() = context.getString(R.string.passwords_open)
     private val onDevice get() = context.getString(R.string.passwords_on_device)
     private val touchFlags = CopyOnWriteArrayList<Int>()
+    private val touchPoints = CopyOnWriteArrayList<String>()
+    private var tapBounds = "unavailable"
 
     private inner class RecordingCallback(callback: android.view.Window.Callback) : WindowCallbackWrapper(callback) {
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
             touchFlags.add(event.flags)
+            touchPoints.add("${event.actionMasked}:${event.x},${event.y}")
             return super.dispatchTouchEvent(event)
         }
     }
@@ -87,18 +90,24 @@ class PasswordManagerAndroidTest {
     private fun openManager(scenario: ActivityScenario<PasswordManagerActivity>) {
         waitForFocus(scenario)
         touchFlags.clear()
+        touchPoints.clear()
         tap(compose.onNodeWithText(open))
         try {
             compose.waitUntil(timeoutMillis = 30_000) {
                 compose.onAllNodes(hasText(onDevice) and isEnabled()).fetchSemanticsNodes().size == 1
             }
-        } catch (failure: Exception) {
+        } catch (failure: ComposeTimeoutException) {
             var state = "unavailable"
             scenario.onActivity { activity ->
                 val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
                 val field = PasswordOwnerActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+                val managerState = listOf("unlocked", "busy").associateWith { name ->
+                    val delegate = PasswordManagerActivity::class.java.getDeclaredField("${name}\$delegate").apply { isAccessible = true }
+                    (delegate.get(activity) as androidx.compose.runtime.State<*>).value as Boolean
+                }
                 state = "foreground=${field.getBoolean(activity)}, focus=${activity.window.decorView.hasWindowFocus()}, " +
-                    "secure=${keyguard.isDeviceSecure}, keyguard=${keyguard.isKeyguardLocked}, touchFlags=${touchFlags.takeLast(8)}"
+                    "secure=${keyguard.isDeviceSecure}, keyguard=${keyguard.isKeyguardLocked}, deviceLocked=${keyguard.isDeviceLocked}, state=$managerState, " +
+                    "tapBounds=$tapBounds, touchFlags=${touchFlags.takeLast(8)}, touchPoints=${touchPoints.takeLast(8)}"
             }
             throw AssertionError("Open did not complete: $state", failure)
         }
@@ -106,6 +115,7 @@ class PasswordManagerAndroidTest {
 
     private fun tap(node: SemanticsNodeInteraction) {
         val bounds = node.assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInWindow
+        tapBounds = bounds.toString()
         // Inject through Android's input dispatcher, including the activity's obscured-touch guard.
         // Compose's performClick/semantics actions dispatch directly into its view/callback.
         onView(withId(android.R.id.content)).perform(GeneralClickAction(Tap.SINGLE,
