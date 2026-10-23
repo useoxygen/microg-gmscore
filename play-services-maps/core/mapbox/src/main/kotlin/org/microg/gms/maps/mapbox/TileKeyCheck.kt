@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.WeakHashMap
 
 /**
  * Checks, once per process and at most every [RECHECK_MS], whether Stadia still serves tiles for our key. A rejected
@@ -23,19 +24,27 @@ object TileKeyCheck {
         private set
     private var checkedAt = 0L
     private var running = false
-    private val listeners = mutableListOf<() -> Unit>()
+    // Live maps to restyle when the key becomes rejected; weak, so a map that is never destroyed properly isn't kept.
+    private val subscribers = WeakHashMap<Any, () -> Unit>()
     private val main = Handler(Looper.getMainLooper())
 
-    /** Starts a check if due; [onRejected] runs on the main thread if this check finds the key rejected. */
-    fun check(onRejected: (() -> Unit)? = null) {
+    /** [onRejected] runs on the main thread each time the key turns from working to rejected, until [unsubscribe]. */
+    fun subscribe(owner: Any, onRejected: () -> Unit) {
+        if (BuildConfig.STADIA_KEY.isEmpty()) return
+        synchronized(this) { subscribers[owner] = onRejected }
+        check()
+    }
+
+    fun unsubscribe(owner: Any) {
+        synchronized(this) { subscribers.remove(owner) }
+    }
+
+    /** Starts a check unless one is running or the last answer is recent. */
+    fun check() {
         if (BuildConfig.STADIA_KEY.isEmpty()) return
         synchronized(this) {
-            onRejected?.let { listeners += it }
             val now = SystemClock.elapsedRealtime()
-            if (running || (checkedAt != 0L && now - checkedAt < RECHECK_MS)) {
-                if (!running) listeners.clear()
-                return
-            }
+            if (running || (checkedAt != 0L && now - checkedAt < RECHECK_MS)) return
             running = true
         }
         Thread({
@@ -52,19 +61,17 @@ object TileKeyCheck {
                 Log.d(TAG, "Tile key check failed: $e")
                 null
             }
-            val rejected = code in REJECTED
-            val wasRejected = stadiaRejected
             val notify: List<() -> Unit>
             synchronized(this) {
                 running = false
+                val wasRejected = stadiaRejected
                 if (code != null) {
                     checkedAt = SystemClock.elapsedRealtime()
-                    stadiaRejected = rejected
+                    stadiaRejected = code in REJECTED
                 }
-                notify = if (rejected && !wasRejected) listeners.toList() else emptyList()
-                listeners.clear()
+                notify = if (stadiaRejected && !wasRejected) subscribers.values.toList() else emptyList()
             }
-            if (rejected) Log.w(TAG, "Stadia rejected the tile key (HTTP $code); using OpenFreeMap")
+            if (code in REJECTED) Log.w(TAG, "Stadia rejected the tile key (HTTP $code); using OpenFreeMap")
             notify.forEach { main.post(it) }
         }, "GmsMapTileKeyCheck").start()
     }

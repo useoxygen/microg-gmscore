@@ -214,6 +214,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
             }
 
             postUpdateSnapshot()
+            TileKeyCheck.subscribe(this) { postUpdateSnapshot() }
 
             created = true
         }
@@ -608,6 +609,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     }
 
     override fun onDestroy() {
+        TileKeyCheck.unsubscribe(this)
         view.removeView(map)
     }
 
