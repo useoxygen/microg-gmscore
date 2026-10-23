@@ -99,8 +99,9 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
         val entry = withContext(Dispatchers.IO) {
             val vault: PasswordVault = selected.account?.let { PasswordRepository(this@PasswordAutofillActivity, it) }
                 ?: DevicePasswordVault(this@PasswordAutofillActivity)
+            val matcher = PasswordAffiliationMatcher(this@PasswordAutofillActivity, vault)
             vault.list()
-                .singleOrNull { it.id == selected.tag && it.data.canFillRealm(selected.realm) } ?: throw VaultLockedException()
+                .singleOrNull { it.id == selected.tag && matcher.canFill(it.data, selected.realm) } ?: throw VaultLockedException()
         }
         requireOwner()
         val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply { setTextViewText(android.R.id.text1, getString(R.string.passwords_fill)) }

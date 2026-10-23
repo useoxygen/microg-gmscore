@@ -157,6 +157,9 @@ android {
         manifestPlaceholders = [appLabel:"@string/cyclon_services_name"]
         resValue "string", "package_id", "com.google.android.gms"
 
+        // Dedicated affiliation service admission, never borrowed from another Google API.
+        buildConfigField "String", "PASSWORD_AFFILIATION_API_KEY", groovy.json.JsonOutput.toJson(localProperties.get("password.affiliationApiKey", "").toString())
+
         buildConfigField "String", "SAFETYNET_KEY", "\"${localProperties.get("safetynet.key", "")}\""
         buildConfigField "String", "RECAPTCHA_SITE_KEY", "\"${localProperties.get("recaptcha.siteKey", "")}\""
         buildConfigField "String", "RECAPTCHA_SECRET", "\"${localProperties.get("recaptcha.secret", "")}\""

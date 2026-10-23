@@ -5,6 +5,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Collections
+import java.util.Base64
 
 /** Canonical affiliation identity. A display group never grants credential-sharing authority. */
 class AffiliationFacet private constructor(val id: String, val kind: Kind) {
@@ -35,6 +36,8 @@ class AffiliationFacet private constructor(val id: String, val kind: Kind) {
             while (hash.length % 4 != 0) hash += "="
             val padding = hash.indexOf('=')
             if (padding >= 0 && (hash.length - padding > 2 || hash.substring(padding).any { it != '=' })) throw ProtocolException()
+            val digest = try { Base64.getUrlDecoder().decode(hash) } catch (_: IllegalArgumentException) { throw ProtocolException() }
+            if (digest.size != 32 || Base64.getUrlEncoder().encodeToString(digest) != hash) throw ProtocolException()
             return AffiliationFacet("android://$hash@$name", Kind.ANDROID)
         }
         private fun Char.isAsciiAlphaNumeric() = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
@@ -81,6 +84,18 @@ class AffiliationResponse private constructor(sharing: List<AffiliationSet>, gro
     }
     fun groupedFacets(requested: AffiliationFacet): List<AffiliationFacetInfo> =
         groups.singleOrNull { group -> group.facets.any { it.facet == requested } }?.facets ?: emptyList()
+
+    fun info(facet: AffiliationFacet): AffiliationFacetInfo? = groups.asSequence().flatMap { it.facets.asSequence() }
+        .firstOrNull { it.facet == facet } ?: sharing.asSequence().flatMap { it.facets.asSequence() }.firstOrNull { it.facet == facet }
+
+    /** PSL equivalence is a display hint. It is deliberately absent from credentialSharingFacets. */
+    fun isGrouped(requested: AffiliationFacet, candidate: AffiliationFacet): Boolean {
+        if (requested == candidate || groupedFacets(requested).any { it.facet == candidate }) return true
+        val domain = AffiliationDomains.mainDomain(requested, pslExtensions) ?: return false
+        val candidateDomain = AffiliationDomains.mainDomain(candidate, pslExtensions) ?: return false
+        if (domain == candidateDomain) return true
+        return groupedFacets(requested).any { AffiliationDomains.mainDomain(it.facet, pslExtensions) == candidateDomain }
+    }
 
     override fun toString() = "AffiliationResponse[redacted]"
     companion object {
@@ -165,14 +180,41 @@ object AffiliationLookup {
     }
 }
 
-/** Exact-match subset of Google's ioxh wrapper; broader affiliation remains unadvertised. */
+/** Chrome has distinct affiliated-password (ioxh) and display-info (ioxi) wrappers. */
 object ChromeAffiliatedPassword {
     fun exact(chromePassword: ByteArray, requested: AffiliationFacet): ByteArray? {
+        return affiliated(chromePassword, requested, null)
+    }
+    fun affiliated(chromePassword: ByteArray, requested: AffiliationFacet, response: AffiliationResponse?, verifiedSharing: Boolean = false): ByteArray? {
         val data = PasswordData.decode(Proto.decode(chromePassword).one(1))
         val actual = runCatching { AffiliationFacet.parse(data.realm) }.getOrNull() ?: return null
-        if (actual != requested) return null
-        return Proto.field(1, chromePassword) +
-            Proto.integer(3, if (actual.kind == AffiliationFacet.Kind.HTTP) 0 else 1) + Proto.integer(4, 1)
+        val sharing = actual.kind != AffiliationFacet.Kind.HTTP && requested.kind != AffiliationFacet.Kind.HTTP &&
+            (actual == requested || verifiedSharing || response?.credentialSharingFacets(requested)?.contains(actual) == true)
+        val grouped = actual == requested || response?.isGrouped(requested, actual) == true
+        if (!sharing && !grouped) return null
+        return uiInfo(chromePassword, response) + Proto.integer(3, if (sharing) 1 else 0) + Proto.integer(4, if (grouped) 1 else 0)
+    }
+    fun uiInfo(chromePassword: ByteArray, response: AffiliationResponse?): ByteArray {
+        val data = PasswordData.decode(Proto.decode(chromePassword).one(1))
+        val facet = runCatching { AffiliationFacet.parse(data.realm) }.getOrNull()
+        val brand = facet?.let { response?.info(it)?.branding }
+        return Proto.field(1, chromePassword) + (brand?.let {
+            Proto.field(2, Proto.field(1, it.name) + (it.iconUrl?.let { url -> Proto.field(2, url) } ?: byteArrayOf()))
+        } ?: byteArrayOf())
+    }
+}
+
+/** Uses OkHttp's embedded public suffix list and server additions; never authorizes a fill. */
+object AffiliationDomains {
+    fun mainDomain(facet: AffiliationFacet, extensions: Set<String> = emptySet()): String? {
+        if (facet.kind == AffiliationFacet.Kind.ANDROID) return null
+        val url = facet.id.toHttpUrlOrNull() ?: return null
+        val host = url.host
+        val normal = url.topPrivateDomain() ?: return host
+        val extension = extensions.filter { host == it || host.endsWith(".$it") }.maxByOrNull { it.length } ?: return normal
+        if (host == extension) return host
+        val prefix = host.removeSuffix(".$extension")
+        return prefix.substringAfterLast('.') + "." + extension
     }
 }
 
@@ -181,6 +223,7 @@ class AffiliationSnapshot private constructor(private val response: ByteArray, p
     val fetchedMillis: Long, val expiresMillis: Long) {
     fun at(nowMillis: Long): AffiliationResponse? = if (nowMillis < fetchedMillis || nowMillis >= expiresMillis) null
         else AffiliationResponse.decode(response, requested)
+    fun covers(facets: Collection<AffiliationFacet>): Boolean = requested.toSet().containsAll(facets)
     fun encode(): ByteArray = requested.fold(Proto.integer(1, 1)) { out, facet -> out + Proto.field(2, facet.id) } +
         Proto.field(3, response) + Proto.integer(4, fetchedMillis) + Proto.integer(5, expiresMillis)
     override fun toString() = "AffiliationSnapshot[redacted]"

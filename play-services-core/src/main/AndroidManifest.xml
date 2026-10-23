@@ -145,6 +145,11 @@
     <uses-permission android:name="com.google.android.gms.auth.permission.GOOGLE_ACCOUNT_CHANGE" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Explicit owner opt-in Wi-Fi sync requires the matching privileged image allowlist. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.READ_WIFI_CREDENTIAL" />
+    <uses-permission android:name="android.permission.NETWORK_SETTINGS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -211,6 +216,8 @@
         android:allowBackup="true"
         android:forceQueryable="true"
         android:fullBackupOnly="true"
+        android:fullBackupContent="@xml/password_key_backup_rules"
+        android:dataExtractionRules="@xml/password_key_extraction_rules"
         android:icon="@mipmap/ic_cyclon_services"
         android:roundIcon="@mipmap/ic_cyclon_services"
         android:label="${appLabel}"
@@ -655,6 +662,19 @@
                 <action android:name="com.google.android.gms.auth.api.credentials.service.START" />
             </intent-filter>
         </service>
+
+        <activity android:name="org.microg.gms.auth.credentials.LegacyPasswordActivity"
+            android:exported="false" android:process=":ui" />
+
+        <provider android:name="org.microg.gms.passwords.PasswordAgentFillProvider"
+            android:authorities="com.google.android.gms.cyclon.password_fill"
+            android:exported="true" />
+        <activity android:name="org.microg.gms.passwords.PasswordAgentFillActivity"
+            android:exported="false" android:excludeFromRecents="true" />
+        <activity android:name="org.microg.gms.passwords.PasswordSharingActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordWifiSyncActivity"
+            android:exported="false" android:process=":ui" />
 
         <service android:name="org.microg.gms.auth.proxy.AuthProxyService">
             <intent-filter>

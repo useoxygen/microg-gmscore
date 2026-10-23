@@ -20,7 +20,7 @@ import org.microg.gms.common.Constants
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-class PasswordRepository(context: Context, val account: Account) : PasswordVault {
+class PasswordRepository(context: Context, val account: Account, private val expectedVaultParent: String? = null) : ManagedPasswordVault {
     private val context = context.applicationContext
     private val accounts = AccountManager.get(this.context)
     private val userId: String
@@ -64,10 +64,14 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
 
     override fun refresh(): SyncReceipt {
         checkEnabled()
-        val savedKey = store.locked { it.load().customKey }
+        val saved = store.locked { session -> session.load().let { it.customKey to it.trustedVaultKeys.map { raw -> raw.copyOf() } } }
         val registration = registration()
         val api = PasswordApi(authenticatedTransport())
-        return VaultSync(api, store, device = registration).synchronize { metadata -> unlock(metadata, savedKey) }.also { checkAccount() }
+        return try { VaultSync(api, store, device = registration).synchronize { metadata ->
+            checkSnapshotParent(metadata)
+            unlock(metadata, saved.first, saved.second)
+        }.also { checkAccount() } }
+        finally { saved.first?.fill(0); saved.second.forEach { it.fill(0) } }
     }
 
     override fun initializeEmptyVault() {
@@ -85,13 +89,14 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         return store.locked { session ->
             val state = session.load()
             val metadata = state.metadata ?: throw VaultLockedException()
-            val keys = unlock(metadata, state.customKey)
+            checkSnapshotParent(metadata)
+            val keys = unlock(metadata, state.customKey, state.trustedVaultKeys)
             try {
                 val visible = visibleRecords(state)
                 visible.map { (tag, entity) ->
                     val data = PasswordResourceCodec.read(entity, keys)
                     val chrome = Proto.field(1, data.encode()) + (state.chromeLocalData[tag]?.let { Proto.field(3, it) } ?: byteArrayOf())
-                    PasswordView(tag, data, chrome)
+                    PasswordView(tag, data, chrome, PasswordAffiliations.cachedDisplayInfo(state.affiliationCache, data.realm)?.name)
                 }
             } finally { keys.destroy() }
         }
@@ -108,7 +113,7 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         val tag = data.tag()
         store.locked { session ->
             val state = session.load()
-            val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey)
+            val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey, state.trustedVaultKeys)
             try {
                 if (automatic) for (raw in visibleRecords(state).values) {
                     val existing = PasswordResourceCodec.read(raw, keys)
@@ -147,6 +152,77 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         localEngine().enqueue(MutationKind.DELETE, data.tag())
         schedule()
     }
+
+    /** Read only the authenticated server snapshot, not optimistic local edits. */
+    override fun committed(tag: String): ByteArray? {
+        checkEnabled()
+        return store.locked { session ->
+            val state = session.load()
+            val raw = state.records.singleOrNull { Proto.decode(it).string(2) == tag } ?: return@locked null
+            checkSnapshotParent(state.metadata ?: throw VaultLockedException())
+            val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey, state.trustedVaultKeys)
+            try { Proto.field(1, PasswordResourceCodec.read(raw, keys).encode()) } finally { keys.destroy() }
+        }
+    }
+    override fun pending(tag: String): Boolean { checkEnabled(); return store.locked { it.load().mutations.any { mutation -> mutation.tag == tag } } }
+
+    override fun insertIfAbsent(chrome: ByteArray) = ownerChange(null, chrome, insert = true)
+    override fun editIfUnchanged(original: ByteArray, replacement: ByteArray) = ownerChange(original, replacement)
+    override fun deleteIfUnchanged(chrome: ByteArray) = ownerChange(chrome, null)
+    private fun ownerChange(original: ByteArray?, replacement: ByteArray?, insert: Boolean = false) {
+        checkEnabled()
+        val before = original?.let { PasswordData.decode(Proto.decode(it).one(1)) }
+        val after = replacement?.let { PasswordData.decode(Proto.decode(it).one(1)) }
+        val tag = (before ?: after ?: throw ProtocolException()).tag()
+        if (before != null && after != null && before.tag() != after.tag()) throw ConflictException()
+        store.locked { session ->
+            val state = session.load()
+            if (state.mutations.any { it.tag == tag } || state.pendingMetadata != null) throw PendingMutationException()
+            checkSnapshotParent(state.metadata ?: throw VaultLockedException())
+            val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey, state.trustedVaultKeys)
+            try {
+                val current = state.records.singleOrNull { Proto.decode(it).string(2) == tag }
+                val currentChrome = current?.let { Proto.field(1, PasswordResourceCodec.read(it, keys).encode()) }
+                if (insert && currentChrome != null) {
+                    if (PasswordTransferEngine.samePassword(currentChrome, replacement!!)) return@locked
+                    throw ConflictException()
+                }
+                if (!insert && (currentChrome == null || !PasswordTransferEngine.samePassword(currentChrome, original!!))) throw ConflictException()
+                val desired = after?.let { PasswordResourceCodec.encrypt(it, keys, current) }
+                localEngine().enqueue(session, when { after == null -> MutationKind.DELETE; current == null -> MutationKind.CREATE; else -> MutationKind.UPDATE }, tag, desired)
+            } finally { keys.destroy() }
+        }
+        schedule()
+    }
+
+    override fun pendingChanges(): List<PasswordPendingChange> {
+        checkEnabled()
+        return store.locked { session ->
+            val state = session.load()
+            val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey, state.trustedVaultKeys)
+            try { state.mutations.map { operation ->
+                val entity = operation.desired ?: state.records.singleOrNull { Proto.decode(it).string(2) == operation.tag }
+                PasswordPendingChange(operation.id, operation.kind, operation.phase, entity?.let { PasswordResourceCodec.read(it, keys).realm }.orEmpty())
+            } } finally { keys.destroy() }
+        }
+    }
+    override fun dropChange(id: String) { checkEnabled(); store.locked { VaultRecovery.drop(it, id) } }
+    override fun retryChange(id: String, acknowledgeUncertain: Boolean) {
+        checkEnabled()
+        refresh() // Reconcile before the owner explicitly authorizes a new attempt.
+        store.locked { session ->
+            val state = session.load()
+            if (state.mutations.none { it.id == id }) return@locked // Previous effect was observed.
+            val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey, state.trustedVaultKeys)
+            try { VaultRecovery.retry(session, id, keys, acknowledgeUncertain) } finally { keys.destroy() }
+        }
+        schedule()
+    }
+    override fun hasRemoteReset(): Boolean = store.locked { session ->
+        val state = session.load()
+        state.pendingMetadata?.let { pending -> state.metadata?.let { previous -> Proto.decode(pending).string(1) != Proto.decode(previous).string(1) } } == true
+    }
+    override fun acceptRemoteReset() { checkEnabled(); store.locked(VaultRecovery::acceptRemoteReset); schedule() }
 
     override fun setCustomKey(encryption: ByteArray, mac: ByteArray) {
         checkEnabled()
@@ -203,12 +279,27 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         schedule()
     }
 
-    private fun unlock(metadata: ByteArray, customKey: ByteArray? = null): VaultKeys {
+    fun needsTrustedVaultRecovery(): Boolean = store.locked { session ->
+        val state = session.load()
+        (state.pendingMetadata ?: state.metadata)?.let { Proto.decode(Proto.decode(it).one(3)).integer(2) == 5L } == true
+    }
+    /** A successful WebView result is insufficient: validate keys against this account's actual keybag before persisting. */
+    fun acceptTrustedVaultKeys(keys: List<ByteArray>, scheduleRefresh: Boolean = true) {
+        checkEnabled()
+        store.locked { VaultRecovery.acceptTrustedKeys(it, keys) }
+        if (scheduleRefresh) schedule()
+    }
+    private fun unlock(metadata: ByteArray, customKey: ByteArray? = null, cachedTrustedKeys: List<ByteArray> = emptyList()): VaultKeys {
         val type = Proto.decode(Proto.decode(metadata).one(3)).integer(2)
         return if (type == 5L) VaultKeys.unlockTrustedVault(metadata) { force ->
             checkEnabled()
-            runBlocking {
-                LocalKeyManager.getInstance(context).getLocalKeysOrSync(context, account.name, "chromesync", "password-sync", forceRefresh = force)
+            if (!force && cachedTrustedKeys.isNotEmpty()) cachedTrustedKeys.map { it.copyOf() } else runBlocking {
+                LocalKeyManager.getInstance(context).getLocalKeysOrSync(context, account.name, "chromesync", "password-sync", forceRefresh = force,
+                    validateLegacyKeys = { candidates ->
+                        val raw = candidates.mapNotNull { it.keyMaterial?.toByteArray() }
+                        try { runCatching { VaultKeys.unlock(metadata, trustedVaultKeys = raw).destroy() }.isSuccess }
+                        finally { raw.forEach { it.fill(0) } }
+                    })
                     .mapNotNull { it.keyMaterial?.toByteArray() }
             }
         } else VaultKeys.unlock(metadata, customKey = customKey)
@@ -219,19 +310,26 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         return DeviceRegistrationSync(transport, { info })
     }
 
-    private fun authenticatedTransport(scope: String = "https://www.googleapis.com/auth/login_manager",
+    private fun authenticatedTransport(scope: String = CHROMESYNC_SCOPE,
         host: String = "chromesyncpasswords-pa.googleapis.com"): PasswordTransport {
         val auth = authManager(scope)
         val session = PasswordOAuthSession({ checkEnabled(); auth.requestAuthWithBackgroundResolution(false).auth }, auth::invalidateAuthToken)
         return GooglePasswordTransport({ checkEnabled(); session.token() }, "https://$host/".toHttpUrl(), rejectedToken = session::reject)
     }
-    private fun authManager(scope: String = "https://www.googleapis.com/auth/login_manager") = AuthManager(context, account.name, Constants.GMS_PACKAGE_NAME,
+    internal fun sharingTransport(): PasswordTransport = authenticatedTransport()
+    internal fun sharingKeys(metadata: ByteArray, state: VaultState): VaultKeys = unlock(metadata, state.customKey, state.trustedVaultKeys)
+    internal fun verifyWifiAccess() = checkEnabled()
+    internal fun wifiDeviceRegistration(): DeviceTokenProvider = registration()
+    private fun authManager(scope: String = CHROMESYNC_SCOPE) = AuthManager(context, account.name, Constants.GMS_PACKAGE_NAME,
         "oauth2:$scope").apply {
         isGmsApp = true
         setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
     }
     private fun checkAccount() {
         if (!accounts.getAccountsByType("com.google").contains(account) || accounts.getUserData(account, "GoogleUserId") != userId) throw VaultLockedException()
+    }
+    private fun checkSnapshotParent(metadata: ByteArray) {
+        if (expectedVaultParent != null && Proto.decode(metadata).string(1) != expectedVaultParent) throw VaultResetException()
     }
     private fun checkEnabled() { checkAccount(); if (!enabled) throw VaultLockedException() }
     private fun localEngine() = VaultSync(PasswordApi(PasswordTransport { _, _ -> error("enqueue is local") }), store)
@@ -245,6 +343,6 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
     }
 }
 
-class PasswordView(val id: String, val data: PasswordData, val chromeBytes: ByteArray) {
+class PasswordView(val id: String, val data: PasswordData, val chromeBytes: ByteArray, val brandName: String? = null) {
     override fun toString(): String = "PasswordView[redacted]"
 }

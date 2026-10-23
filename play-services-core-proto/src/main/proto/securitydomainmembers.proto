@@ -49,7 +49,8 @@ message ListSecurityDomainMembersRequest {
   optional string parent = 1;
   repeated int32 view = 2 [packed = true];
   repeated string filter = 3;
-  optional int32 pageSize = 4;
+  // hzwp field4 is the member-selection enum, not a numeric page-size limit.
+  optional int32 memberSelection = 4;
   optional string pageToken = 6;
   optional FilterOptions filterOptions = 7;
   optional string requestId = 8;

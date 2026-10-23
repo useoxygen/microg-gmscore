@@ -7,15 +7,18 @@ package org.microg.gms.auth.folsom.utils
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.accounts.AccountManager
 import android.util.Log
+import android.util.AtomicFile
 import com.google.crypto.tink.Aead
 import com.google.crypto.tink.CleartextKeysetHandle
 import com.google.crypto.tink.JsonKeysetReader
-import com.google.crypto.tink.JsonKeysetWriter
 import com.google.crypto.tink.KeyTemplates
-import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.aead.AeadConfig
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
+import com.google.crypto.tink.integration.android.AndroidKeystoreKmsClient
+import com.google.crypto.tink.integration.android.SharedPrefKeysetReader
+import com.google.crypto.tink.integration.android.SharedPrefKeysetWriter
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.microg.gms.auth.folsom.AccountData
@@ -33,6 +36,9 @@ import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.Random
+import java.io.RandomAccessFile
+import java.io.InputStream
+import java.io.ByteArrayOutputStream
 
 private const val TAG = "LocalKeyManager"
 private const val STORE_DIR = "folsom"
@@ -42,17 +48,6 @@ private const val TINK_KEYSET_KEY = "folsom_aead_keyset"
 private const val TINK_MASTER_KEY_URI = "android-keystore://folsom_tink_master_key"
 private const val MAX_KEYS_PER_DOMAIN = 100
 private const val TIMESTAMP_JITTER_RANGE = 60000L
-
-private val SENSITIVE_DOMAINS = setOf(
-    "users/me/securitydomains/on_device_location_history",
-    "users/me/securitydomains/passwords",
-    "users/me/securitydomains/gpm_passkeys",
-    "users/me/securitydomains/chrome_signin",
-    "on_device_location_history",
-    "passwords",
-    "gpm_passkeys",
-    "chrome_signin"
-)
 
 private object StoredStatus {
     const val UNKNOWN = 0
@@ -71,60 +66,104 @@ class LocalKeyManager(private val context: Context) {
 
     private val random = Random()
 
-    @Volatile
-    private var cachedStore: FolsomKeyStore? = null
     private val storeLock = Any()
-
-    @Volatile
-    private var lastFileModifiedTime: Long = 0L
 
     private val aead: Aead by lazy {
         runCatching {
             AeadConfig.register()
-            AndroidKeysetManager.Builder()
+            val exists = context.getSharedPreferences(TINK_KEYSET_PREF_NAME, Context.MODE_PRIVATE).contains(TINK_KEYSET_KEY)
+            val legacyPlaintext = exists && runCatching {
+                CleartextKeysetHandle.read(SharedPrefKeysetReader(context, TINK_KEYSET_KEY, TINK_KEYSET_PREF_NAME))
+            }.isSuccess
+            // Create a missing master only for a new or verified cleartext keyset. Encrypted
+            // prefs with a missing master are key loss, never authority to replace that key.
+            val master = if (!exists || legacyPlaintext) AndroidKeystoreKmsClient.getOrGenerateNewAeadKey(TINK_MASTER_KEY_URI)
+                else AndroidKeystoreKmsClient().getAead(TINK_MASTER_KEY_URI)
+            val manager = AndroidKeysetManager.Builder()
                 .withSharedPref(context, TINK_KEYSET_KEY, TINK_KEYSET_PREF_NAME)
                 .withKeyTemplate(KeyTemplates.get("AES256_GCM"))
                 .withMasterKeyUri(TINK_MASTER_KEY_URI)
                 .build()
-                .keysetHandle.getPrimitive(Aead::class.java)
+            if (!manager.isUsingKeystore) throw TinkEncryptionException("Keystore protection unavailable")
+            // isUsingKeystore also returns true after Tink reads legacy plaintext prefs.
+            // Rewrite with the actual Keystore AEAD and strictly decrypt the persisted bytes.
+            FolsomProtectedKeyset.persist(manager.keysetHandle, master,
+                SharedPrefKeysetWriter(context, TINK_KEYSET_KEY, TINK_KEYSET_PREF_NAME),
+                { SharedPrefKeysetReader(context, TINK_KEYSET_KEY, TINK_KEYSET_PREF_NAME) })
         }.getOrElse { Log.e(TAG, "Failed to initialize AEAD", it); throw TinkEncryptionException("Failed to initialize", it) }
     }
 
-    private val fallbackAead: Aead? by lazy {
-        runCatching {
+    private val legacyFallbackAead: Aead? by lazy {
+        try {
             AeadConfig.register()
             val keysetFile = File(context.filesDir, "$STORE_DIR/tink_keyset.json")
-            (if (keysetFile.exists()) CleartextKeysetHandle.read(JsonKeysetReader.withFile(keysetFile))
-            else KeysetHandle.generateNew(KeyTemplates.get("AES256_GCM")).also { h ->
-                keysetFile.parentFile?.mkdirs()
-                CleartextKeysetHandle.write(h, JsonKeysetWriter.withFile(keysetFile))
-            }).getPrimitive(Aead::class.java)
-        }.onFailure { Log.e(TAG, "Failed to initialize fallback AEAD", it) }.getOrNull()
+            val file = AtomicFile(keysetFile)
+            if (!keysetFile.exists() && !File(keysetFile.path + ".bak").exists()) null else {
+                val raw = file.openRead().use(::boundedStoreRead)
+                try { FolsomProtectedKeyset.readOrProtectLegacyJson(raw, aead) { encrypted ->
+                    writeAtomic(file, encrypted)
+                    file.openRead().use(::boundedStoreRead)
+                } } finally { raw.fill(0) }
+            }
+        } catch (failure: Exception) { throw TinkEncryptionException("Legacy recovery keyset unavailable", failure) }
     }
 
-    private fun obtainAead(): Aead = runCatching { aead }
-        .getOrElse {
-            Log.w(TAG, "Primary AEAD unavailable, using fallback", it)
-            fallbackAead ?: throw TinkEncryptionException("No AEAD available")
-        }
+    private val protection by lazy { FolsomKeyProtection({ data, aad -> aead.encrypt(data, aad) },
+        { data, aad -> aead.decrypt(data, aad) },
+        { data, aad -> legacyFallbackAead?.decrypt(data, aad) ?: throw TinkEncryptionException("Legacy key unavailable") }) }
 
-    private fun readStore(): FolsomKeyStore = synchronized(storeLock) {
-        val currentModifiedTime = if (storeFile.exists()) storeFile.lastModified() else 0L
-        if (cachedStore != null && currentModifiedTime == lastFileModifiedTime) return@synchronized cachedStore!!
-        val store = runCatching { FolsomKeyStore.ADAPTER.decode(storeFile.readBytes()) }
-            .getOrElse { Log.e(TAG, "Failed to read store file, creating new one", it); FolsomKeyStore() }
-            .takeIf { storeFile.exists() } ?: FolsomKeyStore()
-        cachedStore = store; lastFileModifiedTime = currentModifiedTime; store
+    private fun readStore(): FolsomKeyStore = lockedStore { readStoreUnlocked() }
+
+    // AtomicFile.openRead may delete a staged .new file, so readers take the writer's OS lock too.
+    private fun readStoreUnlocked(): FolsomKeyStore {
+        if (!storeFile.exists() && !File(storeFile.path + ".bak").exists()) return FolsomKeyStore()
+        legacyFallbackAead // Protect old standalone keysets before accepting any store contents.
+        val raw = AtomicFile(storeFile).openRead().use(::boundedStoreRead)
+        val encrypted = FolsomStoreEnvelope.protected(raw)
+        val plain = if (encrypted) FolsomStoreEnvelope.open(raw, aead) else raw
+        try {
+            val store = FolsomKeyStore.ADAPTER.decode(plain)
+            // Preserve/quarantine all legacy provenance, but never leave its raw keys on new writes.
+            if (!encrypted) writeStore(store)
+            return store
+        } finally { plain.fill(0) }
     }
 
     private fun writeStore(store: FolsomKeyStore) = synchronized(storeLock) {
-        runCatching { storeFile.parentFile?.mkdirs(); storeFile.writeBytes(store.encode()); cachedStore = store }
-            .onFailure { Log.e(TAG, "Failed to write store file", it) }
-            .getOrElse { throw IOException("Failed to write store", it) }
+        legacyFallbackAead
+        val plain = store.encode()
+        val protected = try { FolsomStoreEnvelope.seal(plain, aead) } finally { plain.fill(0) }
+        writeAtomic(AtomicFile(storeFile), protected)
     }
 
-    private inline fun updateStore(transform: (FolsomKeyStore) -> FolsomKeyStore) {
-        synchronized(storeLock) { writeStore(transform(readStore())) }
+    private fun writeAtomic(file: AtomicFile, protected: ByteArray) {
+        val stream = file.startWrite()
+        try { stream.write(protected); file.finishWrite(stream) }
+        catch (failure: Exception) { file.failWrite(stream); throw IOException("Failed to write store", failure) }
+    }
+
+    private fun boundedStoreRead(input: InputStream): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) return output.toByteArray()
+            if (output.size() + count > FolsomStoreEnvelope.MAX_BYTES + 1024) throw TinkEncryptionException("Recovery store too large")
+            output.write(buffer, 0, count)
+        }
+    }
+
+    private inline fun <T> lockedStore(action: () -> T): T = synchronized(storeLock) {
+            RandomAccessFile(File(context.noBackupFilesDir, "folsom-store.lock"), "rw").use { lock ->
+                lock.channel.lock().use {
+                    action()
+                }
+            }
+    }
+
+    private inline fun updateStore(transform: (FolsomKeyStore) -> FolsomKeyStore) = lockedStore {
+        val before = readStoreUnlocked(); val after = transform(before)
+        if (after !== before) writeStore(after)
     }
 
     private fun FolsomKeyStore.findAccount(obfuscatedId: String): AccountData? = accounts.find { it.key == obfuscatedId }?.value_
@@ -180,14 +219,7 @@ class LocalKeyManager(private val context: Context) {
         else -> DomainStatus.UNKNOWN_ERROR
     }
 
-    private fun cipher(encrypt: Boolean, data: ByteArray, aad: ByteArray = ByteArray(0)): ByteArray = runCatching {
-        obtainAead().let { if (encrypt) it.encrypt(data, aad) else it.decrypt(data, aad) }
-    }.getOrElse { throw TinkEncryptionException(if (encrypt) "Encryption" else "Decryption" + " failed", it) }
-
-    private fun encrypt(plaintext: ByteArray, aad: ByteArray = ByteArray(0)) = cipher(true, plaintext, aad)
-    private fun decrypt(ciphertext: ByteArray, aad: ByteArray = ByteArray(0)) = cipher(false, ciphertext, aad)
     private fun addJitter(timestamp: Long): Long = if (timestamp == 0L) 0L else timestamp - (random.nextFloat() * TIMESTAMP_JITTER_RANGE).toLong()
-    private fun isSensitiveDomain(domainId: String): Boolean = SENSITIVE_DOMAINS.any { domainId.contains(it) || it.contains(domainId) }
 
     fun getDomainStatus(accountName: String, domainId: String): DomainStatus {
         val obfuscatedId = obfuscateAccountName(accountName)
@@ -197,12 +229,34 @@ class LocalKeyManager(private val context: Context) {
         return (domain.recoverabilityStatus ?: 0).toDomainStatus()
     }
 
-    fun getKeysForDomain(accountName: String, domainId: String): List<Keys> {
+    private fun stableAccountId(accountName: String): String {
+        val manager = AccountManager.get(context)
+        val account = manager.getAccountsByType("com.google").singleOrNull { it.name == accountName }
+            ?: throw TinkEncryptionException("Account unavailable")
+        return manager.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() }
+            ?: throw TinkEncryptionException("Account identity unavailable")
+    }
+    fun getKeysForDomain(accountName: String, domainId: String, validateLegacyKeys: ((List<Keys>) -> Boolean)? = null): List<Keys> {
         val obfuscatedId = obfuscateAccountName(accountName)
-        val store = readStore()
-        val account = store.findAccount(obfuscatedId) ?: return emptyList()
-        val domain = account.findDomain(domainId) ?: return emptyList()
-        return decryptKeys(domain.keys, domainId)
+        val userId = stableAccountId(accountName)
+        var result = emptyList<Keys>()
+        updateStore { store ->
+            val account = store.findAccount(obfuscatedId) ?: return@updateStore store
+            val domain = account.findDomain(domainId) ?: return@updateStore store
+            if (account.googleUserId != null && account.googleUserId != userId || domain.googleUserId != null && domain.googleUserId != userId)
+                throw TinkEncryptionException("Recovery keys belong to a removed account")
+            val recovered = protection.read(domainId, domain.keys)
+            val bound = FolsomAccountProtection.canRead(account.googleUserId, domain.googleUserId, userId,
+                if (account.googleUserId == null && domain.googleUserId == null) validateLegacyKeys?.invoke(recovered.keys) == true else false)
+            // An unbound legacy key remains encrypted and quarantined until authenticated
+            // metadata (or new exact-account recovery) establishes its provenance.
+            if (bound) result = recovered.keys
+            if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Account changed during recovery")
+            if (recovered.migrate || bound && domain.googleUserId == null) store.updateAccount(obfuscatedId, account.updateDomain(domainId,
+                domain.copy(keys = protection.protect(domainId, recovered.keys), googleUserId = if (bound) userId else domain.googleUserId))) else store
+        }
+        if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Account changed during recovery")
+        return result
     }
 
     private fun hasValidKeys(accountName: String, domainId: String): Boolean = runCatching {
@@ -240,51 +294,51 @@ class LocalKeyManager(private val context: Context) {
         }
     }
 
-    fun saveKeysForDomain(accountName: String, domainId: String, keys: List<Keys>, callerPackage: String? = null) {
+    fun saveKeysForDomain(accountName: String, domainId: String, keys: List<Keys>, callerPackage: String? = null, expectedUserId: String? = null) {
         val obfuscatedId = obfuscateAccountName(accountName)
+        val userId = stableAccountId(accountName)
+        if (expectedUserId != null && expectedUserId != userId) throw TinkEncryptionException("Recovery account changed")
         val keysToSave = keys.takeLast(MAX_KEYS_PER_DOMAIN).also {
             if (keys.size > MAX_KEYS_PER_DOMAIN) Log.w(TAG, "Truncating keys from ${keys.size} to $MAX_KEYS_PER_DOMAIN")
         }
         Log.d(TAG, "saveKeysForDomain: domainId=$domainId, keyCount=${keysToSave.size}, caller=$callerPackage")
         updateStore { store ->
-            val account = store.findAccount(obfuscatedId) ?: AccountData()
+            val account = store.findAccount(obfuscatedId)?.takeIf { it.googleUserId == null || it.googleUserId == userId } ?: AccountData(googleUserId = userId)
             val domain = account.findDomain(domainId) ?: DomainData()
             store.updateAccount(
                 obfuscatedId, account.updateDomain(
                     domainId, domain.copy(
                         keys = encryptKeysIfNeeded(domainId, keysToSave),
+                        googleUserId = userId,
                         lastModifiedTimestamp = System.currentTimeMillis()
                     )
                 )
-            )
-        }
-    }
-
-    private fun decryptKeys(encryptedKeys: List<Keys>, domainId: String): List<Keys> {
-        if (encryptedKeys.isEmpty()) return emptyList()
-        val aad = domainId.toByteArray()
-        return encryptedKeys.map { key ->
-            key.encryptedKeyMaterial?.takeIf { it.size > 0 }?.let { em ->
-                runCatching {
-                    key.copy(keyMaterial = decrypt(em.toByteArray(), aad).toByteString(), encryptedKeyMaterial = null)
-                }.getOrElse { throw TinkEncryptionException("Failed to decrypt key", it) }
-            } ?: key
+            ).also { if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Account changed during recovery") }
         }
     }
 
     private fun encryptKeysIfNeeded(domainId: String, keys: List<Keys>): List<Keys> {
-        if (keys.isEmpty() || !isSensitiveDomain(domainId)) return keys
-        val aad = domainId.toByteArray()
-        return keys.map { key ->
-            (key.keyMaterial ?: key.keyMetadata)?.takeIf { it.size > 0 }?.let { km ->
-                key.copy(keyMaterial = null, encryptedKeyMaterial = encrypt(km.toByteArray(), aad).toByteString())
-            } ?: key
-        }
+        return protection.protect(domainId, keys)
     }
 
     private fun getAccountKeyPairs(accountName: String): List<KeyPair> {
         val obfuscatedId = obfuscateAccountName(accountName)
-        return readStore().findAccount(obfuscatedId)?.accountKeyPairs ?: emptyList()
+        val userId = stableAccountId(accountName)
+        return readStore().findAccount(obfuscatedId)?.takeIf { it.googleUserId == userId }?.accountKeyPairs ?: emptyList()
+    }
+
+    /** Called by account removal; active accounts are retained, including encrypted unbound migration inputs. */
+    fun purgeRemovedAccounts() {
+        updateStore { store ->
+            val manager = AccountManager.get(context)
+            fun discover() = manager.getAccountsByType("com.google").associate { account ->
+                obfuscateAccountName(account.name) to manager.getUserData(account, "GoogleUserId")
+            }
+            val present = discover()
+            val retained = FolsomAccountProtection.retainPresent(store, present)
+            if (discover() != present) throw TinkEncryptionException("Recovery accounts changed during cleanup")
+            retained
+        }
     }
 
     private fun getPhysicalDeviceKeyPair(accountName: String): KeyPair? {
@@ -341,14 +395,18 @@ class LocalKeyManager(private val context: Context) {
         accountName: String,
         domainId: String,
         sessionId: String,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        validateLegacyKeys: ((List<Keys>) -> Boolean)? = null
     ): List<Keys> = runCatching {
-        (if (forceRefresh) null else getKeysForDomain(accountName, domainId).takeIf { it.isNotEmpty() })
+        val userId = stableAccountId(accountName)
+        val result = (if (forceRefresh) null else getKeysForDomain(accountName, domainId, validateLegacyKeys).takeIf { it.isNotEmpty() })
             ?: loadSecurityDomainMembers(context, accountName, sessionId, domainId)
                 .members.takeIf { it.isNotEmpty() }
                 ?.let { extractKeysFromMembers(it, domainId, accountName) }
-                ?.also { saveKeysForDomain(accountName, domainId, it) }
+                ?.also { saveKeysForDomain(accountName, domainId, it, expectedUserId = userId) }
             ?: emptyList()
+        if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+        result
     }.getOrDefault(emptyList())
 
     private fun extractKeysFromMembers(
@@ -370,7 +428,7 @@ class LocalKeyManager(private val context: Context) {
         domainId: String,
         localKeyPairBytes: ByteArray
     ): List<Keys> = member.securityDomains
-        .filter { it.name?.contains(domainId) == true }
+        .filter { FolsomDomainPolicy.matches(it.name, domainId) }
         .flatMap { domain ->
             domain.trustedVaultKeys.mapNotNull { key -> decryptKey(key.epoch, key.wrappedKey, localKeyPairBytes) } +
                     domain.memberKeys.mapNotNull { key -> decryptKey(key.keyType, key.wrappedKey, localKeyPairBytes) }

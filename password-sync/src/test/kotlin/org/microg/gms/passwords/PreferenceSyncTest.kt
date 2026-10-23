@@ -210,11 +210,11 @@ class PreferenceSyncTest {
         val server = Server(); val store = Store(); val sync = engine(server, store)
         sync.synchronize(server.parent)
         sync.enqueue("credentials_enable_service", "true")
-        assertEquals(4L, Proto.decode(store.bytes).integer(1))
+        assertEquals(5L, Proto.decode(store.bytes).integer(1))
         val reopened = VaultState.decode(store.bytes)
         assertEquals(1, reopened.preferenceMutations.size)
         assertEquals("true", engine(server, store).value("credentials_enable_service"))
-        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 5)) }
+        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 6)) }
     }
 
     @Test fun unknownFieldsSurviveValueEditsAndAChangedVaultCannotReceiveOldQueuedSettings() {

@@ -13,13 +13,14 @@ object PasswordProvider {
         val tickets = PasswordRequestTickets(context)
         return vaults(context).flatMap { (account, repo) ->
             runCatching {
+                val matcher = PasswordAffiliationMatcher(context, repo)
                 if (!repo.enabled) emptyList() else repo.list().filter { entry ->
-                    caller.realms.any(entry.data::canFillRealm) &&
+                    caller.realms.any { matcher.canFill(entry.data, it) } &&
                         (option.allowedUserIds.isEmpty() || entry.data.username in option.allowedUserIds)
                 }.take(100).map { entry ->
                     PasswordCredentialEntry(context = context, username = entry.data.username,
                         displayName = entry.data.displayName.takeIf { it.isNotEmpty() },
-                        pendingIntent = tickets.issue(account, entry.id, entry.data.realm, caller.identity, false),
+                        pendingIntent = tickets.issue(account, entry.id, caller.realms.single(), caller.identity, false),
                         beginGetPasswordOption = option, isAutoSelectAllowed = false)
                 }
             }.getOrDefault(emptyList())

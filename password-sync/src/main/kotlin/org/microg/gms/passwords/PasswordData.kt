@@ -32,6 +32,20 @@ class PasswordData private constructor(private val proto: Proto) {
     fun withPassword(value: String, nowMillis: Long): PasswordData = if (value == password) this else PasswordData(
         proto.replace(8, value.toByteArray(Charsets.UTF_8)).replace(19, null)
             .replaceInteger(20, windowsMicros(nowMillis)))
+    /** An owner identity edit retains notes and future fields, but updates both web authorities. */
+    fun withIdentity(url: String, username: String): PasswordData {
+        if (username.length > 100_000) throw ProtocolException()
+        if (url == origin && username == this.username) return this
+        // Android facets cannot be changed into a web credential through a text field.
+        if (realm.startsWith("android://")) {
+            if (url != origin) throw ProtocolException()
+            return decode(proto.replace(6, username.toByteArray(Charsets.UTF_8)).encode())
+        }
+        val realm = webRealm(url)
+        return decode(proto.replace(2, realm.toByteArray(Charsets.UTF_8))
+            .replace(3, url.toByteArray(Charsets.UTF_8)).replace(4, url.toByteArray(Charsets.UTF_8))
+            .replace(6, username.toByteArray(Charsets.UTF_8)).encode())
+    }
     fun withDisplayName(value: String): PasswordData {
         if (value.length > 100_000) throw ProtocolException()
         return if (value == displayName) this else PasswordData(proto.replace(15, value.toByteArray(Charsets.UTF_8)))

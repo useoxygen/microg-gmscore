@@ -97,7 +97,6 @@ open class PasswordAndPasskeyService : CredentialProviderService() {
         var entries = Database(this).getKnownRegistrationInfo(options.rpId)
             .filter { it.transport == Transport.SCREEN_LOCK } // TODO: Also show known remote credentials?
             .filter { info -> options.allowList.isNullOrEmpty() || options.allowList!!.any { it.id.encodeBase64Url() == info.credential } }
-            .also { Log.d(TAG, "Found ${it.size} credentials for rpId: ${options.rpId}") }
             .mapNotNull { credentialInfo ->
                 createSignInCredentialEntry(credentialInfo, option, !options.allowList.isNullOrEmpty())
             }
@@ -113,7 +112,7 @@ open class PasswordAndPasskeyService : CredentialProviderService() {
             )
         }
 
-        entries
+        entries + SyncedPasskeyProvider.entries(this, option, request)
     }.getOrElse { e ->
         Log.e(TAG, "Error handling public key credential request", e)
         emptyList()
@@ -172,6 +171,7 @@ open class PasswordAndPasskeyService : CredentialProviderService() {
 
         callback.onResult(BeginCreateCredentialResponse.Builder()
             .addCreateEntry(CreateEntry(options.user.name, pendingIntent))
+            .apply { SyncedPasskeyProvider.createEntries(this@PasswordAndPasskeyService, request).forEach { addCreateEntry(it) } }
             .build()
             .also { Log.d(TAG, "Returning create credential response for passkey") })
 

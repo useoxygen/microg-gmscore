@@ -44,7 +44,13 @@ class VaultState(
     val preferenceMutations: MutableList<Mutation> = ArrayList(),
     var preferenceParent: String? = null,
     var deviceRegistration: DeviceRegistration? = null,
-    var invalidations: SyncInvalidations = SyncInvalidations()
+    var invalidations: SyncInvalidations = SyncInvalidations(),
+    var affiliationCache: ByteArray? = null,
+    val ownerTransfers: MutableList<PasswordTransferOperation> = ArrayList(),
+    var directAffiliationProofs: ByteArray? = null,
+    val trustedVaultKeys: MutableList<ByteArray> = ArrayList(),
+    var sharingJournal: ByteArray? = null,
+    var wifiSync: ByteArray? = null
 ) {
     fun encode(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -55,8 +61,8 @@ class VaultState(
             out.write(value, 0, value.size)
         }
         // Earlier writers must refuse unknown durable registration/journal fields rather
-        // than erase them on their next save. v4 also fences durable refresh obligations.
-        append(Proto.integer(1, 4))
+        // than erase them on their next save. v5 fences affiliation, transfer, sharing and Wi-Fi journals.
+        append(Proto.integer(1, 5))
         metadata?.let { append(Proto.field(2, it)) }
         records.forEach { append(Proto.field(3, it)) }
         mutations.forEach { append(Proto.field(4, it.encode())) }
@@ -69,12 +75,19 @@ class VaultState(
         preferenceParent?.let { append(Proto.field(11, it)) }
         deviceRegistration?.let { append(Proto.field(12, it.encode())) }
         append(Proto.field(13, invalidations.encode()))
+        affiliationCache?.let { append(Proto.field(14, it)) }
+        ownerTransfers.forEach { append(Proto.field(15, it.encode())) }
+        directAffiliationProofs?.let { append(Proto.field(16, it)) }
+        if (trustedVaultKeys.size > 100 || trustedVaultKeys.any { it.size !in 16..4096 }) throw ProtocolException()
+        trustedVaultKeys.forEach { append(Proto.field(17, it)) }
+        sharingJournal?.let { append(Proto.field(18, it)) }
+        wifiSync?.let { append(Proto.field(19, it)) }
         return out.toByteArray()
     }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
-            if (proto.integer(1) !in setOf(1L, 2L, 3L, 4L)) throw ProtocolException()
+            if (proto.integer(1) !in setOf(1L, 2L, 3L, 4L, 5L)) throw ProtocolException()
             val state = VaultState(proto.optional(2), proto.bytes(3).toMutableList(),
                 proto.bytes(4).map(Mutation::decode).toMutableList(), proto.integer(5) ?: 0)
             proto.bytes(6).forEach { raw -> Proto.decode(raw).let { state.chromeLocalData[it.string(1)] = it.one(2) } }
@@ -85,6 +98,14 @@ class VaultState(
             state.preferenceParent = proto.optionalString(11)
             state.deviceRegistration = proto.optional(12)?.let(DeviceRegistration::decode)
             state.invalidations = proto.optional(13)?.let(SyncInvalidations::decode) ?: SyncInvalidations()
+            state.affiliationCache = proto.optional(14)
+            state.ownerTransfers.addAll(proto.bytes(15).map(PasswordTransferOperation::decode))
+            state.directAffiliationProofs = proto.optional(16)
+            state.trustedVaultKeys.addAll(proto.bytes(17))
+            state.sharingJournal = proto.optional(18)
+            state.wifiSync = proto.optional(19)
+            if (state.trustedVaultKeys.size > 100 || state.trustedVaultKeys.any { it.size !in 16..4096 }) throw ProtocolException()
+            if (state.ownerTransfers.size > 1000 || state.ownerTransfers.map { it.id }.toSet().size != state.ownerTransfers.size) throw ProtocolException()
             if (state.mutations.map { it.id }.toSet().size != state.mutations.size) throw ProtocolException()
             if (state.preferenceMutations.map { it.id }.toSet().size != state.preferenceMutations.size) throw ProtocolException()
             state
@@ -141,7 +162,11 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
         val metadata = api.metadata()
         val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
         val oldParent = state.metadata?.let { Proto.decode(it).string(1) }
-        if (oldParent != null && oldParent != parent && state.mutations.isNotEmpty()) throw VaultResetException()
+        if (oldParent != null && oldParent != parent && state.mutations.isNotEmpty()) {
+            state.pendingMetadata = metadata
+            session.save(state)
+            throw VaultResetException()
+        }
         val keys = try { unlock(metadata) } catch (failure: VaultLockedException) {
             // Keep the previous authenticated cache while making new encryption metadata available to owner recovery.
             state.pendingMetadata = metadata

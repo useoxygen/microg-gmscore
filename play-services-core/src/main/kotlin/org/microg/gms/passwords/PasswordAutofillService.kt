@@ -30,8 +30,9 @@ class PasswordAutofillService : AutofillService() {
                     try {
                         if (repo.enabled) {
                             val entries = repo.list()
+                            val matcher = PasswordAffiliationMatcher(this@PasswordAutofillService, repo)
                             if (entries.none { it.data.blocked && it.data.realm == target.realm }) canSave = true
-                            entries.filter { it.data.canFillRealm(target.realm) }.take(100).forEach { entry ->
+                            entries.filter { matcher.canFill(it.data, target.realm) }.take(100).forEach { entry ->
                                 val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
                                     setTextViewText(android.R.id.text1, getString(R.string.passwords_fill))
                                 }

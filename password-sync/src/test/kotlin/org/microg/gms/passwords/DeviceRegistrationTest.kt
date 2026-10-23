@@ -126,7 +126,7 @@ class DeviceRegistrationTest {
             val state = VaultState.decode(old)
             state.deviceRegistration = DeviceRegistration(parent, ByteArray(16))
             val next = state.encode()
-            assertEquals(4L, Proto.decode(next).integer(1))
+            assertEquals(5L, Proto.decode(next).integer(1))
             assertEquals(parent, VaultState.decode(next).preferenceParent)
             assertEquals(16, VaultState.decode(next).deviceRegistration!!.nonce.size)
             assertEquals("fixture-operation", VaultState.decode(next).mutations.single().id)

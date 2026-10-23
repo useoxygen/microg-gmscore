@@ -21,6 +21,9 @@ class PasswordAccountRemovedReceiver : BroadcastReceiver() {
 
 class PasswordAccountCleanupWorker(context: Context, parameters: WorkerParameters) : Worker(context, parameters) {
     override fun doWork(): Result { return try {
+        PasswordOwnerOperations.purgeRemovedAccounts(applicationContext)
+        SyncedPasskeyVault.purgeRemovedAccounts(applicationContext)
+        org.microg.gms.auth.folsom.utils.LocalKeyManager.getInstance(applicationContext).purgeRemovedAccounts()
         val accounts = AccountManager.get(applicationContext)
         val active = accounts.getAccountsByType("com.google").map { account ->
             val id = accounts.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() } ?: return Result.retry()

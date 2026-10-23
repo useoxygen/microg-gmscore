@@ -23,6 +23,7 @@ import org.microg.gms.auth.AuthManager
 import org.microg.gms.auth.folsom.SECURITY_WEB_BASE_URL
 import org.microg.gms.auth.folsom.buildKeyDeliveryInfo
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
+import org.microg.gms.passwords.TrustedVaultRecoveryPolicy
 import org.microg.gms.profile.Build.VERSION.SDK_INT
 import java.net.URLEncoder
 import java.util.Locale
@@ -38,6 +39,8 @@ class FolsomWebViewHelper(
         webView.settings.apply {
             javaScriptEnabled = true
             allowFileAccess = false
+            allowContentAccess = false
+            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             databaseEnabled = false
             setNeedInitialFocus(false)
             useWideViewPort = false
@@ -52,7 +55,7 @@ class FolsomWebViewHelper(
     ) {
         webView.webViewClient = object : WebViewClientCompat() {
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceErrorCompat) {
-                Log.w(TAG, "Error loading: ${error.description}")
+                Log.w(TAG, "Recovery page load failed")
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -66,9 +69,10 @@ class FolsomWebViewHelper(
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                Log.d(TAG, "Navigating to $url")
-                return url.toUri().host?.endsWith("google.com") != true
+                return !TrustedVaultRecoveryPolicy.navigationAllowed(url)
             }
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                !TrustedVaultRecoveryPolicy.navigationAllowed(request.url.toString())
         }
     }
 
@@ -77,7 +81,7 @@ class FolsomWebViewHelper(
             val authUrl = withContext(Dispatchers.IO) {
                 getAuthenticatedUrl(targetUrl)
             }
-            if (authUrl != null) {
+            if (authUrl != null && TrustedVaultRecoveryPolicy.navigationAllowed(authUrl)) {
                 setupCookies()
                 webView.loadUrl(authUrl)
             } else {
@@ -100,7 +104,7 @@ class FolsomWebViewHelper(
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             if (SDK_INT >= 21) {
-                setAcceptThirdPartyCookies(webView, true)
+                setAcceptThirdPartyCookies(webView, false)
             }
         }
     }

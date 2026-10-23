@@ -92,10 +92,27 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
                         6 -> repository.setPreference(settingName!!, settingValue!!)
                         7 -> {
                             val requested = AffiliationFacet.parse(requestedFacet ?: throw ProtocolException())
-                            values = repository.list(true).mapNotNull { ChromeAffiliatedPassword.exact(it.chromeBytes, requested) }
+                            val entries = repository.list(true)
+                            try {
+                                val facets = entries.mapNotNull { runCatching { AffiliationFacet.parse(it.data.realm) }.getOrNull() }.toSet() + requested
+                                val response = (repository as? PasswordRepository)?.let {
+                                    PasswordAffiliations(this@ChromePasswordService, it).lookup(facets)
+                                }
+                                val matcher = PasswordAffiliationMatcher(this@ChromePasswordService, repository)
+                                values = entries.mapNotNull { entry -> ChromeAffiliatedPassword.affiliated(entry.chromeBytes, requested, response,
+                                    verifiedSharing = matcher.canFill(entry.data, requested.id + "/")) }
+                            } finally { entries.forEach { it.chromeBytes.fill(0) } }
                         }
-                        // This response has a distinct UI-info wrapper. Do not advertise affiliation enrichment yet.
-                        8 -> values = repository.list(true).map { Proto.field(1, it.chromeBytes) }
+                        8 -> {
+                            val entries = repository.list(true)
+                            try {
+                                val facets = entries.mapNotNull { runCatching { AffiliationFacet.parse(it.data.realm) }.getOrNull() }.toSet()
+                                val response = (repository as? PasswordRepository)?.let {
+                                    PasswordAffiliations(this@ChromePasswordService, it).lookup(facets)
+                                }
+                                values = entries.map { ChromeAffiliatedPassword.uiInfo(it.chromeBytes, response) }
+                            } finally { entries.forEach { it.chromeBytes.fill(0) } }
+                        }
                         9 -> repository.setCustomKey(encKey ?: throw ProtocolException(), macKey ?: throw ProtocolException())
                     }
                 } catch (_: VaultLockedException) { status = Status(4) }

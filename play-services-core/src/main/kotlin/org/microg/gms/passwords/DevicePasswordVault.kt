@@ -5,7 +5,7 @@ import android.content.Context
 import java.security.SecureRandom
 
 /** Chrome's null account denotes a separate, local-only vault; it never selects a Google account. */
-class DevicePasswordVault private constructor(private val store: AndroidVaultStore) : PasswordVault {
+class DevicePasswordVault private constructor(internal val store: AndroidVaultStore) : ManagedPasswordVault {
     constructor(context: Context) : this(AndroidVaultStore(context, "local-passwords-v1"))
     internal constructor(context: Context, fixtureIdentity: String) : this(AndroidVaultStore(context, fixtureIdentity))
     override val enabled = true
@@ -55,6 +55,35 @@ class DevicePasswordVault private constructor(private val store: AndroidVaultSto
         val state = session.load()
         state.records.removeAll { Proto.decode(it).string(2) == tag }; state.chromeLocalData.remove(tag)
         session.save(state)
+    }
+    override fun committed(tag: String): ByteArray? = list().singleOrNull { it.id == tag }?.chromeBytes
+    override fun pending(tag: String) = false
+    override fun insertIfAbsent(chrome: ByteArray) = ownerChange(null, chrome, insert = true)
+    override fun editIfUnchanged(original: ByteArray, replacement: ByteArray) = ownerChange(original, replacement)
+    override fun deleteIfUnchanged(chrome: ByteArray) = ownerChange(chrome, null)
+    private fun ownerChange(original: ByteArray?, replacement: ByteArray?, insert: Boolean = false) = store.locked { session ->
+        val before = original?.let { PasswordData.decode(Proto.decode(it).one(1)) }
+        val after = replacement?.let { PasswordData.decode(Proto.decode(it).one(1)) }
+        val tag = (before ?: after ?: throw ProtocolException()).tag()
+        if (before != null && after != null && before.tag() != after.tag()) throw ConflictException()
+        val state = session.load(); initialize(state)
+        val keys = VaultKeys.unlock(state.metadata!!, customKey = state.customKey)
+        try {
+            val current = state.records.singleOrNull { Proto.decode(it).string(2) == tag }
+            val currentChrome = current?.let { Proto.field(1, PasswordResourceCodec.read(it, keys).encode()) }
+            if (insert && currentChrome != null) {
+                if (PasswordTransferEngine.samePassword(currentChrome, replacement!!)) return@locked
+                throw ConflictException()
+            }
+            if (!insert && (currentChrome == null || !PasswordTransferEngine.samePassword(currentChrome, original!!))) throw ConflictException()
+            state.records.removeAll { Proto.decode(it).string(2) == tag }
+            if (after == null) state.chromeLocalData.remove(tag)
+            else {
+                state.records.add(PasswordResourceCodec.encrypt(after, keys, current ?: (Proto.field(1, "local/$tag") + Proto.field(2, tag))))
+                replacement?.let(Proto::decode)?.optional(3)?.let { state.chromeLocalData[tag] = it }
+            }
+            session.save(state)
+        } finally { keys.destroy() }
     }
     override fun setCustomKey(encryption: ByteArray, mac: ByteArray) { throw UnsupportedOperationException() }
     override fun unlockPassphrase(password: ByteArray) { throw UnsupportedOperationException() }

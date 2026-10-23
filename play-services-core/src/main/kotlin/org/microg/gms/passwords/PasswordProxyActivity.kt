@@ -47,7 +47,8 @@ class PasswordProxyActivity : PasswordOwnerActivity() {
                         repo.upsert(Proto.field(1, data.encode()))
                         Intent().also { PendingIntentHandler.setCreateCredentialResponse(it, CreatePasswordResponse()) }
                     } else {
-                        val entry = repo.list().singleOrNull { it.id == ticket.tag && it.data.canFillRealm(ticket.realm) }
+                        val matcher = PasswordAffiliationMatcher(this@PasswordProxyActivity, repo)
+                        val entry = repo.list().singleOrNull { it.id == ticket.tag && matcher.canFill(it.data, ticket.realm) }
                             ?: throw VaultLockedException()
                         if (get!!.credentialOptions.filterIsInstance<GetPasswordOption>().none {
                             it.allowedUserIds.isEmpty() || entry.data.username in it.allowedUserIds

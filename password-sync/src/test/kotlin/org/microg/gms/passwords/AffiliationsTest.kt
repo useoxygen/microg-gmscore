@@ -154,4 +154,38 @@ class AffiliationsTest {
         val insecureRow = Proto.decode(ChromeAffiliatedPassword.exact(insecure, http)!!)
         assertEquals(0L, insecureRow.integer(3)); assertEquals(1L, insecureRow.integer(4))
     }
+
+    @Test fun groupingOnlyRowsCarryBrandingButCannotAuthorizeAChromeFill() {
+        val branding = Proto.field(2, Proto.field(1, "Fixture app") + Proto.field(2, "https://static.example.invalid/icon"))
+        val raw = Proto.field(1, group(web)) + Proto.field(2, Proto.field(1, facet(web)) + Proto.field(1, facet(app, branding)))
+        val response = AffiliationResponse.decode(raw, listOf(web, app))
+        val chrome = Proto.field(1, PasswordData.create(app.id + "/", "", "fixture", "value", 1234).encode()) +
+            Proto.field(3, byteArrayOf(1, 2, 3))
+        val row = Proto.decode(ChromeAffiliatedPassword.affiliated(chrome, web, response)!!)
+        assertArrayEquals(chrome, row.one(1))
+        assertEquals(0L, row.integer(3)); assertEquals(1L, row.integer(4))
+        assertEquals("Fixture app", Proto.decode(row.one(2)).string(1))
+        val ui = Proto.decode(ChromeAffiliatedPassword.uiInfo(chrome, response))
+        assertArrayEquals(row.one(2), ui.one(2)); assertNull(ui.integer(3)); assertNull(ui.integer(4))
+    }
+
+    @Test fun pslExtensionsSeparateTenantsAndNeverGrantSharingAuthority() {
+        val first = AffiliationFacet.parse("https://login.first.slack.com")
+        val sameTenant = AffiliationFacet.parse("https://www.first.slack.com")
+        val otherTenant = AffiliationFacet.parse("https://second.slack.com")
+        val response = AffiliationResponse.decode(Proto.field(3, "slack.com"), listOf(first, sameTenant, otherTenant))
+        assertEquals("first.slack.com", AffiliationDomains.mainDomain(first, response.pslExtensions))
+        assertTrue(response.isGrouped(first, sameTenant)); assertFalse(response.isGrouped(first, otherTenant))
+        assertEquals(setOf(first), response.credentialSharingFacets(first))
+        assertEquals("example.co.uk", AffiliationDomains.mainDomain(AffiliationFacet.parse("https://login.example.co.uk")))
+        assertEquals("127.0.0.1", AffiliationDomains.mainDomain(AffiliationFacet.parse("https://127.0.0.1")))
+        assertNull(AffiliationDomains.mainDomain(app))
+    }
+
+    @Test fun androidCertificateFacetsRequireCanonicalSha256Digests() {
+        for (value in listOf("android://YWJjZA==@com.example", "android://" + "A".repeat(44) + "@com.example",
+            app.id.replace("Hh8=", "Hh9="))) {
+            assertThrows(ProtocolException::class.java) { AffiliationFacet.parse(value) }
+        }
+    }
 }

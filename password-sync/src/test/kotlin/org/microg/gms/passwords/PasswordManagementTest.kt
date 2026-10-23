@@ -6,6 +6,19 @@ import org.junit.Test
 
 class PasswordManagementTest {
     private fun item() = PasswordData.create("https://example.invalid/", "https://example.invalid/login", "fixture-user", "fixture-password", 1234L)
+    @Test fun ownerIdentityChangesBothAuthoritiesAndRetainsNotesAndFutureFields() {
+        val original = PasswordData.decode(Proto.decode(item().withDefaultNote("fixture note", 1234L).encode())
+            .replace(500, byteArrayOf(7)).encode())
+        val updated = original.withIdentity("https://other.invalid:8443/login", "new fixture user")
+        assertEquals("https://other.invalid:8443/", updated.realm)
+        assertEquals("https://other.invalid:8443/login", updated.origin)
+        assertEquals(updated.origin, Proto.decode(updated.encode()).string(4))
+        assertNotEquals(original.tag(), updated.tag())
+        assertEquals(original.password, updated.password); assertEquals("fixture note", updated.defaultNote!!.value)
+        assertArrayEquals(byteArrayOf(7), Proto.decode(updated.encode()).one(500))
+        assertTrue(updated.canFillRealm(updated.realm)); assertFalse(updated.canFillRealm(original.realm))
+        assertThrows(ProtocolException::class.java) { original.withIdentity("javascript:fixture", "new user") }
+    }
     @Test fun noteAndDisplayNameEditsKeepIdentityIssuesTimestampsAndUnknownFields() {
         val named = Proto.field(1, "other-note") + Proto.field(2, "other-value") + Proto.field(500, byteArrayOf(9))
         val unnamed = Proto.field(1, "") + Proto.field(2, "old-value") + Proto.integer(3, 7) + Proto.integer(4, 1) + Proto.field(501, byteArrayOf(8))
