@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
 import com.google.android.gms.common.api.Status
+import com.google.android.gms.common.internal.safeparcel.SafeParcelWriter
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,7 +48,14 @@ class SwitchSupportBinderTest {
                 }
             }
             call(EmptySetupStateBinder(Binder.getCallingUid(), target), if (target) TARGET_DESCRIPTOR else POST_DESCRIPTOR,
-                if (target) 21 else 7) { writeStrongBinder(callback); writeInt(0) }.recycle()
+                if (target) 21 else 7) {
+                    writeStrongBinder(callback)
+                    writeInt(1)
+                    writeInt(-204102970) // ApiMetadata's non-SafeParcel prefix, observed on the phone
+                    val start = SafeParcelWriter.writeObjectHeader(this)
+                    SafeParcelWriter.write(this, 2, false)
+                    SafeParcelWriter.finishObjectHeader(this, start)
+                }.recycle()
             assertTrue(received)
         }
     }

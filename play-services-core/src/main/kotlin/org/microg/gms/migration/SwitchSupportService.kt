@@ -57,7 +57,7 @@ internal class EmptySetupStateBinder(uid: Int, private val target: Boolean) :
         // Target tx21: quick-start restore info. PostSetup tx7: third-party restore info.
         if (code != if (target) 21 else 7) return false
         val callback = requireNotNull(data.readStrongBinder()) { "Missing setup-state callback" }
-        data.skipSafeParcelable() // attribution
+        data.skipApiMetadata()
         data.requireEnd()
         sendCallback(callback, PAIR_CALLBACK, 6) {
             writeNullable(Status.SUCCESS)

@@ -3,10 +3,13 @@
 package org.microg.gms.migration
 
 import android.app.Service
+import android.accounts.Account
+import android.content.ComponentName
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
 import android.os.Parcel
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import org.microg.gms.common.GooglePackagePermission
 import org.microg.gms.common.PackageUtils
@@ -50,17 +53,46 @@ class MigrateHelperService : Service() {
 internal class EmptyMigrateHelper(uid: Int) : MigrationBinder(HELPER, uid) {
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
         when (code) {
+            1 -> {
+                val callback = requireNotNull(data.readStrongBinder())
+                data.requireEnd()
+                sendCallback(callback, VOID_CALLBACK, 1)
+            }
             2, 8 -> {
                 data.readString() // requested restore artifact; none have been staged
                 val callback = requireNotNull(data.readStrongBinder())
                 data.requireEnd()
                 sendCallback(callback, BOOLEAN_CALLBACK, 1) { writeInt(0) }
             }
-            7 -> {
+            6, 7 -> {
                 val callback = requireNotNull(data.readStrongBinder())
                 data.requireEnd()
                 // Google restore metadata generation is unavailable. Failure, never fabricated files.
                 sendCallback(callback, VOID_CALLBACK, 2)
+            }
+            3 -> {
+                data.readString()
+                val file = if (data.readInt() != 0) ParcelFileDescriptor.CREATOR.createFromParcel(data) else null
+                try {
+                    val callback = requireNotNull(data.readStrongBinder())
+                    data.requireEnd()
+                    sendCallback(callback, VOID_CALLBACK, 2) // bytes were not staged
+                } finally { file?.close() }
+            }
+            4, 5, 11 -> {
+                data.readString()
+                val callback = requireNotNull(data.readStrongBinder())
+                data.requireEnd()
+                sendCallback(callback, VOID_CALLBACK, if (code == 11) 1 else 2)
+            }
+            9, 10 -> {
+                if (data.readInt() != 0) Account.CREATOR.createFromParcel(data)
+                repeat(if (code == 9) 3 else 5) { data.createByteArray() }
+                if (code == 10) { data.readInt(); data.createByteArray() }
+                if (data.readInt() != 0) ComponentName.CREATOR.createFromParcel(data)
+                val callback = requireNotNull(data.readStrongBinder())
+                data.requireEnd()
+                sendCallback(callback, VOID_CALLBACK, 2) // credential recovery is unsupported
             }
             else -> return false
         }

@@ -27,10 +27,24 @@ internal fun Parcel.requireEnd() { require(dataAvail() == 0) { "Unexpected migra
 /** Skip only a nullable SafeParcelable, validating every field boundary. Never deserialize arbitrary classes. */
 internal fun Parcel.skipSafeParcelable() {
     if (readInt() == 0) return
+    skipSafeObject()
+}
+
+internal fun Parcel.skipApiMetadata() {
+    if (dataAvail() == 0) return // compatibility encoding omits even the presence flag
+    val present = readInt()
+    if (present == 0) return
+    require(present == 1 && readInt() == -204102970) { "Invalid API metadata marker" }
+    skipSafeObject()
+}
+
+private fun Parcel.skipSafeObject() {
     val end = SafeParcelReader.readObjectHeader(this)
     while (dataPosition() < end) {
+        val start = dataPosition()
+        require(end - start >= 4) { "Truncated migration field header" }
         SafeParcelReader.skip(this, SafeParcelReader.readHeader(this))
-        require(dataPosition() <= end) { "Migration field exceeds its object" }
+        require(dataPosition() >= start + 4 && dataPosition() <= end) { "Migration field exceeds its object" }
     }
     require(dataPosition() == end)
 }

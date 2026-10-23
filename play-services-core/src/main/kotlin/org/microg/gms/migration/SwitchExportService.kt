@@ -57,7 +57,7 @@ internal class ExportStateBinder(uid: Int, private val wifi: Boolean) :
         if (code != 1 && code != 2) return false
         val callback = requireNotNull(data.readStrongBinder())
         data.readString()
-        data.skipSafeParcelable() // attribution
+        data.skipApiMetadata()
         data.requireEnd()
         sendCallback(callback, SOURCE_XOS_CALLBACK, code) {
             writeNullable(Status(17, "Android-source XOS export is unavailable"))
