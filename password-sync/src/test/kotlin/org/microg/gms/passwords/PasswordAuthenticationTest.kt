@@ -87,6 +87,19 @@ class PasswordAuthenticationTest {
         assertEquals(1, f.server.requestCount); assertTrue(f.rejected.isEmpty())
     }
 
+    @Test fun slowResponseCannotHoldTheAccountLockPastTheReferenceRpcDeadline() = Fixture().use { f ->
+        // Each byte arrives within readTimeout. Only a whole-call deadline bounds this response.
+        f.server.enqueue(success(ByteArray(24)).throttleBody(1, 1, TimeUnit.SECONDS))
+        val started = System.nanoTime()
+        val failure = assertThrows(PasswordRpcException::class.java) {
+            f.transport().invoke(PasswordMethod.CREATE, byteArrayOf())
+        }
+        val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+        assertTrue("Deadline did not bound the complete RPC", elapsed in 8_000..20_000)
+        assertTrue(failure.outcomeUnknown)
+        assertEquals(1, f.server.requestCount); assertTrue(f.rejected.isEmpty())
+    }
+
     @Test fun redirectCannotMoveTheBearerOrTriggerAuthenticationRecovery() = Fixture().use { f ->
         MockWebServer().use { other ->
             other.start()

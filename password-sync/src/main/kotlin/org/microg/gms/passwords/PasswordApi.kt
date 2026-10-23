@@ -38,7 +38,8 @@ class GooglePasswordTransport(
 ) : PasswordTransport {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
+        .readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS).build()
 
     init {
         require(endpoint.scheme == "https" && endpoint.host in PasswordMethod.values().map { it.host }.toSet() && endpoint.port == 443)

@@ -5,7 +5,7 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
-Current verified scope: 78 password-sync and 41 Core host tests; twenty isolated/native/UI
+Current verified scope: 79 password-sync and 41 Core host tests; twenty isolated/native/UI
 cases on product 6ea691ca with fixture 6fd24225; and actual Google server push on product
 4bf07f7e. These are separate gates, not full parity. Original Services is restored after
 private testing. The remaining table below and JSON acceptance flags remain authoritative.
@@ -149,6 +149,13 @@ or redirects are never replayed. Ten host cases exercise actual HTTP responses, 
 unchanged mutation bytes, scope isolation, disconnects and missing native credentials. All
 78 sync and 41 Core tests pass and both Android APKs compile. Native rejected-token recovery
 has an opt-in read-only fixture and remains pending execution.
+
+The reference `jcpp`/`bfdu` also puts a ten-second deadline on each password/SyncEntities
+RPC. The transport now bounds the whole HTTP call, including a slowly arriving response
+body, rather than relying only on individual read/write timeouts. A throttled-response
+regression failed before the fix and passes afterward. A deadline after a mutation launch
+retains an uncertain outcome and does not trigger token renewal or replay. All 79 sync and
+41 Core host tests pass; both Android APKs compile. This deadline change is not yet installed.
 
 The installed official Chrome 145 client opened Google's web Password Manager, which listed
 the single authorized synthetic realm created by this implementation. Opening its details
