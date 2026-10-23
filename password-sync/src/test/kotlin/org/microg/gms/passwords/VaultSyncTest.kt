@@ -6,6 +6,18 @@ import org.junit.Test
 import java.util.Base64
 
 class VaultSyncTest {
+    @Test fun oversizedStateCannotReplaceTheLastReopenableJournal() {
+        val store = Store()
+        val before = store.persisted.copyOf()
+        store.locked { session ->
+            val oversized = session.load()
+            repeat(33) { oversized.chromeLocalData["fixture-$it"] = ByteArray(512 * 1024) }
+            assertThrows(ProtocolException::class.java) { session.save(oversized) }
+        }
+        assertArrayEquals(before, store.persisted)
+        assertTrue(store.state().mutations.isEmpty())
+    }
+
     private class Store : VaultStore {
         var persisted = VaultState().encode()
         var beforeSave: ((VaultState) -> Unit)? = null

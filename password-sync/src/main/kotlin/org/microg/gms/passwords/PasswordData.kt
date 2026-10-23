@@ -48,9 +48,9 @@ class PasswordData private constructor(private val proto: Proto) {
             if (nowMillis < 0 || nowMillis > (Long.MAX_VALUE / 1000 - 11_644_473_600_000L)) throw ProtocolException()
             return (nowMillis + 11_644_473_600_000L) * 1000
         }
-        private fun escapePath(value: String): String {
+        internal fun escapePath(value: String): String {
             val out = StringBuilder()
-            val escaped = " \"#%:<>?[\\]^`{|}'"
+            val escaped = " \"#%:<>?[\\]^`{|}"
             for (byte in value.toByteArray(Charsets.UTF_8)) {
                 val n = byte.toInt() and 255
                 val ch = n.toChar()

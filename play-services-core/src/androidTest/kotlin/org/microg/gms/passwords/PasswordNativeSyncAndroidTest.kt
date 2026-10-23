@@ -49,6 +49,41 @@ class PasswordNativeSyncAndroidTest {
         }
     }
 
+    @Test fun nativeDeleteRecreateAndRestoreTheSingleApprovedSyntheticLogin() {
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        withFixture { repository, original ->
+            val checkpoint = AndroidVaultStore(context, "password-fixture-recreate/" + repository.account.name)
+            val saved = checkpoint.locked { it.load().chromeLocalData["original"] }
+            val restore = saved ?: original.chromeBytes.also { bytes ->
+                checkpoint.locked { session -> session.save(VaultState(chromeLocalData = hashMapOf("original" to bytes))) }
+            }
+            val data = PasswordData.decode(Proto.decode(restore).one(1))
+            assertTrue("Restore input is outside the approved fixture", isFixture(data) && data.tag() == original.id)
+            try {
+                repository.delete(original.chromeBytes)
+                val deleted = repository.refresh()
+                assertTrue("Delete needs reconciliation", deleted.conflicts == 0 && deleted.indeterminate == 0)
+                repository.refresh()
+                assertTrue("Synthetic delete was not visible remotely", repository.list(false).none { it.id == original.id })
+            } finally {
+                // Reconcile a lost response before deciding whether re-creation is necessary.
+                repository.refresh()
+                assertTrue("Uncertain delete retained; encrypted restoration input preserved",
+                    repository.store.locked { it.load().mutations.isEmpty() })
+                val current = repository.list(false).singleOrNull { it.id == original.id }
+                if (current == null || !same(current.data.encode(), data.encode())) {
+                    repository.upsert(restore)
+                    val recreated = repository.refresh()
+                    assertTrue("Re-creation needs reconciliation", recreated.conflicts == 0 && recreated.indeterminate == 0)
+                }
+                repository.refresh()
+                val restored = repository.list(false).single { it.id == original.id }
+                assertTrue("Exact synthetic payload restoration is unverified", same(data.encode(), restored.data.encode()))
+                checkpoint.clear()
+            }
+        }
+    }
+
     private fun withFixture(block: (PasswordRepository, PasswordView) -> Unit) {
         val selected = arguments.getString("passwordLiveAccount")
         assumeTrue(!selected.isNullOrBlank())

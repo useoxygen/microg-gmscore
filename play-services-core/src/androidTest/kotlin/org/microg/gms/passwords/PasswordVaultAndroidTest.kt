@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.database.sqlite.SQLiteDatabase
 import android.os.Build
+import android.net.Uri
 import androidx.credentials.provider.CallingAppInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -26,6 +27,19 @@ class PasswordVaultAndroidTest {
     private fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it.toInt() and 255) }
     private fun fixtureState(marker: String) = VaultState(chromeLocalData = hashMapOf("fixture" to marker.toByteArray()))
+
+    @Test fun clientTagMatchesGooglesAndroidUriEncodingForPunctuationAndUnicode() {
+        assumeTrue(Build.VERSION.SDK_INT >= 28)
+        val origin = "https://example.invalid/a'b"
+        val realm = "https://example.invalid/"
+        val username = (32..127).map(Int::toChar).joinToString("") + "é😀"
+        val escaped = listOf(origin, "", username, "", realm).joinToString("|") {
+            Uri.encode(it, "!$&'()*+,-./;=@_~ ").replace(" ", "%20")
+        }
+        val expected = android.util.Base64.encodeToString(MessageDigest.getInstance("SHA-1")
+            .digest(Proto.field(45873, byteArrayOf()) + escaped.toByteArray(Charsets.UTF_8)), android.util.Base64.NO_WRAP)
+        assertEquals(expected, PasswordData.create(realm, origin, username, "synthetic", 1234L).tag())
+    }
 
     @Test fun encryptedStateReopensAndNeverWritesPlaintextToDatabaseOrJournal() {
         assumeTrue(Build.VERSION.SDK_INT >= 28)

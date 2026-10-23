@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PasswordDataTest {
+    @Test fun apostrophesKeepTheSameIdentityAsChromiumAndGoogleServices() {
+        // Golden derived independently from Chromium EscapePath's published character map.
+        // GMS 26.11 berz/berh also preserve apostrophes in each client-tag component.
+        val item = PasswordData.create("https://example.invalid/", "https://example.invalid/a'b",
+            "o'connor: a|é%?", "synthetic", 1234L)
+        assertEquals("KG3E7tJ49J6YW0DzQ7EBDU2QWbo=", item.tag())
+    }
+
     private fun data(created: Long = 1234L, blocked: Boolean = false, issues: Boolean = false): PasswordData {
         val original = PasswordData.create("https://example.invalid/", "https://example.invalid/login", "synthetic", "test", created)
         var proto = Proto.decode(original.encode())

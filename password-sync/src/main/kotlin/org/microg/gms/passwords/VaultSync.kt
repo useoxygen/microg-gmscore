@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import java.security.MessageDigest
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 
 enum class MutationKind { CREATE, UPDATE, DELETE }
@@ -40,13 +41,24 @@ class VaultState(
     var customKey: ByteArray? = null,
     var pendingMetadata: ByteArray? = null
 ) {
-    fun encode(): ByteArray = Proto.integer(1, 1) + (metadata?.let { Proto.field(2, it) } ?: byteArrayOf()) +
-        records.fold(byteArrayOf()) { out, value -> out + Proto.field(3, value) } +
-        mutations.fold(byteArrayOf()) { out, value -> out + Proto.field(4, value.encode()) } +
-        Proto.integer(5, lastSyncMillis) + chromeLocalData.entries.fold(byteArrayOf()) { out, entry ->
-            out + Proto.field(6, Proto.field(1, entry.key) + Proto.field(2, entry.value)) } +
-        (customKey?.let { Proto.field(7, it) } ?: byteArrayOf()) +
-        (pendingMetadata?.let { Proto.field(8, it) } ?: byteArrayOf())
+    fun encode(): ByteArray {
+        val out = ByteArrayOutputStream()
+        fun append(value: ByteArray) {
+            // Reject before durable replacement: saving a state the decoder cannot reopen
+            // would strand its offline mutations. Streaming also avoids copying every prefix.
+            if (value.size > Proto.MAX_BYTES - out.size()) throw ProtocolException()
+            out.write(value, 0, value.size)
+        }
+        append(Proto.integer(1, 1))
+        metadata?.let { append(Proto.field(2, it)) }
+        records.forEach { append(Proto.field(3, it)) }
+        mutations.forEach { append(Proto.field(4, it.encode())) }
+        append(Proto.integer(5, lastSyncMillis))
+        chromeLocalData.forEach { (tag, value) -> append(Proto.field(6, Proto.field(1, tag) + Proto.field(2, value))) }
+        customKey?.let { append(Proto.field(7, it)) }
+        pendingMetadata?.let { append(Proto.field(8, it)) }
+        return out.toByteArray()
+    }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
