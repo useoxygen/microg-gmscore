@@ -5,7 +5,7 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
-Current verified scope: 92 password-sync and 41 Core host tests; twenty isolated/native/UI
+Current verified scope: 99 password-sync and 41 Core host tests; twenty isolated/native/UI
 cases on product 6ea691ca with fixture 6fd24225; and actual Google server push on product
 4bf07f7e. These are separate gates, not full parity. Original Services is restored after
 private testing. The remaining table below and JSON acceptance flags remain authoritative.
@@ -70,6 +70,9 @@ password pagination uses field 3. Both use separate durable mutation journals.
   has no version precondition; a race after the snapshot is therefore still possible.
 - Chrome first-party list/upsert/delete/custom-key calls use the correct callbacks and `value`
   DataHolder column, exact account, UID binding, and certificate-verified credential permission.
+  Delete accepts bare PasswordSpecificsData, while save accepts the Chrome wrapper. Acknowledged
+  deletion or a complete authenticated snapshot retires orphaned Chrome-local metadata;
+  incomplete snapshots, uncertain outcomes and queued offline writes retain it.
   Affiliation/UI-enrichment features are not advertised as complete.
 - Native management UI: local/device storage, account choice and opt-in sync, manual save,
   password/name/default-note edit, metadata search, never-save sites, delete and custom-passphrase unlock. Owner verification when a screen lock is set,
@@ -160,6 +163,14 @@ lifetime and successfully retrieved the same vault metadata. No Google login UI 
 This accepts fresh native token minting with the existing account grant; revocation,
 interactive recovery, lifetime/reboot coverage and Core agent access remain separate gates.
 
+The pinned `bexa` delete handler passes bare PasswordSpecificsData to `bfgl.g`, whereas
+`beyb` unwraps the Chrome save message. The matching public Chrome 145 dispatcher also sends
+bare specifics to removeLogin. Source **e088aa98** corrects this input contract and retires
+Chrome-local metadata only after authenticated deletion evidence. Two wire-contract and four
+metadata-lifecycle regressions failed before the fix; those six and an existing passing
+safety guard pass afterward. All 99 sync and 41 Core host tests pass and both APKs compile.
+These changes have not yet been installed or accepted through official Chrome.
+
 The reference `jcpp`/`bfdu` also puts a ten-second deadline on each password/SyncEntities
 RPC. The transport now bounds the whole HTTP call, including a slowly arriving response
 body, rather than relying only on individual read/write timeouts. A throttled-response
@@ -176,11 +187,18 @@ After owner verification, the official detail screen also displayed the expected
 username with the password masked. A phone-encrypted pre-edit checkpoint captured the
 original fixture and unrelated-record baseline. The first automated note Save did not
 produce the expected native readback; subsequent native comparison confirmed the original
-payload remained byte-exact. The test now retains one Services package for the complete
-round trip and uses the real UI process for instrumentation. The Google-produced note
-check is waiting for its explicit owner UI step. A separate helper can compare the masked
-editor's exact password value wholly on the phone, returning only booleans; it is compiled
-but has not yet run. Neither producer nor exact-secret interoperability is accepted yet.
+payload remained byte-exact. After the owner's manual note step, diagnostic fixture
+**845318ec** on product **c2d5b6f0** again found the original exact payload, unchanged
+password/identity, zero notes and no changed field numbers. No note content or credential
+value left the phone. This establishes the observed unchanged state, not the reason the
+web step did not produce an observable write. Guarded cleanup passed without a cloud
+mutation and cleared the encrypted checkpoint; unrelated records stayed unchanged. The
+original Services APK bytes were verified after restoration and the test APK was removed.
+The single-install session harness avoids unnecessary Services package churn during a
+future complete round trip and targets the real UI process. A separate helper can compare
+the masked editor's exact password value wholly on the phone, returning only booleans; it
+is compiled but has not yet run. Neither producer nor exact-secret interoperability is
+accepted yet. Reopening the web manager is not part of this completed diagnostic/cleanup.
 
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
@@ -215,6 +233,14 @@ A single unauthenticated public-facet lookup returned HTTP 403. Production servi
 account-encrypted cache integration, scheduled refresh, PSL-extension matching, branding UI
 and official-client acceptance remain open. A model/codec implementation is not completed
 affiliation functionality.
+
+The installed Chrome 145 client contains its own `vt8` feature inventory and `h04` service
+client for service 303. The public version gates select the affiliated-list and branding
+APIs at GMS version codes 232012000 and 233812000; this fork's 252432044 exceeds both.
+Chrome's basic `vt8` inventory does not contain FIRSTPARTY_PASSWORD_DELETE, so its absence
+from this service is not evidence that this Chrome version's delete path requires it.
+Affiliated/branding execution still requires real client evidence; no feature is promoted
+merely to satisfy a version gate.
 
 ## Password management and notes comparison
 
