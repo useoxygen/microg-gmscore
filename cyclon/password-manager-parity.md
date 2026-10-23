@@ -65,6 +65,18 @@ information also taken from Chromium's public sync protocol and Nigori tests.
 
 ## Remaining parity and acceptance
 
+On October 22, 2026 (PT), source **e0336ea5** was built, signed with the phone's existing
+dedicated microG identity and installed on the designated Pixel 7a without clearing app data.
+Six isolated Android tests passed after fixing a real SQLite initialization failure exposed
+by the first device run. Two explicitly selected native account checks also passed:
+metadata/list/decryption/cache reopen (3.015 seconds), and synthetic password update/readback/
+original-payload restoration (6.879 seconds). The latter persisted its restore input encrypted
+before launch, cleared it only after verified restoration, and compared all unrelated records.
+These checks used native account authentication; no account master token or password was
+exported to the host. They accept default-keystore reads and batch updates only. A separate
+repository instance is covered; process death, reboot and background scheduling are not yet
+accepted. The original installed APK was preserved for restoration after private testing.
+
 | Surface | Gap / required proof |
 | --- | --- |
 | Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, stable nonce/client token, invalidation transport and reconnect handling are not connected. Current password writes use empty client-token fields, which the earlier PoC server accepted. |
@@ -76,7 +88,7 @@ information also taken from Chromium's public sync protocol and Nigori tests.
 | Password management | Search, note/name edits, moving between stores, import/export, blocked-site settings and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
-| Phone | Compile and synthetic host proof are separate from signed installation, process death/reboot, account removal/revocation and scheduled/background acceptance. |
+| Phone | Signed private installation, six isolated Android cases and native synthetic read/update/restore passed. Process death/reboot, account removal/revocation and scheduled/background acceptance remain. |
 | Official interoperability | Read a credential produced by official Chrome, then verify native edits/deletion and a locally produced credential with official Chrome. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks
@@ -96,3 +108,9 @@ Compile is not execution. Run only on the designated development phone, after ch
 installed signer and preserving its current APK/data. Never uninstall/clear GmsCore data or
 replace a phone reserved by another active task. Sign test artifacts with the existing
 dedicated microG role; do not substitute a platform/releasekey or publish a development APK.
+
+`PasswordNativeSyncAndroidTest` is separately opt-in through instrumentation arguments. It is
+inert without an explicit account selector; its mutation case additionally requires the exact
+synthetic-only acknowledgement. It refuses an existing mutation journal and targets only the
+reserved invalid-domain fixture. Do not run it on an owner/customer account or treat its
+self-produced update as official Chrome interoperability proof.
