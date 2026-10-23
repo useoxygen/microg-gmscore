@@ -3,6 +3,10 @@
 package org.microg.gms.migration.upgrade
 
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -34,6 +38,7 @@ internal class AwareDataPath(context: Context, private val serviceName: String, 
         fun onFailure()
     }
     private val info = serviceInfo.copyOf()
+    private val appContext = context.applicationContext
     private val aware = context.getSystemService(WifiAwareManager::class.java)
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -42,6 +47,12 @@ internal class AwareDataPath(context: Context, private val serviceName: String, 
     private var requested = false
     private var closed = false
     private var ready = false
+    private var started = false
+    private var receiverRegistered = false
+    private val timeout = Runnable { fail() }
+    private val availability = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) { fail() }
+    }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             synchronized(this@AwareDataPath) {
@@ -49,9 +60,9 @@ internal class AwareDataPath(context: Context, private val serviceName: String, 
                 val details = capabilities.transportInfo as? WifiAwareNetworkInfo ?: return
                 val address = details.peerIpv6Addr ?: return
                 val port = details.port.takeIf { it in 1..65535 }
-                if (serverPort == null && port == null) return
+                if (serverPort == null && (port == null || details.transportProtocol != 6)) return
                 ready = true
-                handler.removeCallbacksAndMessages(null)
+                handler.removeCallbacks(timeout)
                 listener.onReady(network, address, port)
             }
         }
@@ -85,13 +96,17 @@ internal class AwareDataPath(context: Context, private val serviceName: String, 
     }
 
     @Synchronized fun start() {
-        check(!closed && session == null)
+        check(!closed && !started)
         require(serviceName.isNotBlank() && serviceName.length <= 255)
         require(passphrase.length in 8..63 && passphrase.all { it.code in 32..126 })
         require(serverPort == null || serverPort in 1..65535)
-        check(aware != null && aware.isAvailable) { "Wi-Fi Aware is unavailable" }
-        handler.postDelayed({ fail() }, 30_000)
+        started = true
         try {
+            ContextCompat.registerReceiver(appContext, availability,
+                IntentFilter(WifiAwareManager.ACTION_WIFI_AWARE_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+            receiverRegistered = true
+            check(aware != null && aware.isAvailable) { "Wi-Fi Aware is unavailable" }
+            handler.postDelayed(timeout, 30_000)
             aware.attach(object : AttachCallback() {
                 override fun onAttached(attached: WifiAwareSession) {
                     synchronized(this@AwareDataPath) {
@@ -123,15 +138,17 @@ internal class AwareDataPath(context: Context, private val serviceName: String, 
             connectivity.requestNetwork(request, networkCallback, handler, 20_000)
         } catch (e: Exception) { fail() }
     }
-    private fun fail() { synchronized(this) { if (!closed) { listener.onFailure(); close() } } }
+    private fun fail() { synchronized(this) { if (!closed) { close(); listener.onFailure() } } }
     @Synchronized override fun close() {
         if (closed) return
         closed = true
-        handler.removeCallbacksAndMessages(null)
+        handler.removeCallbacks(timeout)
+        if (receiverRegistered) runCatching { appContext.unregisterReceiver(availability) }
+        receiverRegistered = false
         if (requested) runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
         requested = false
-        discovery?.close()
-        session?.close()
+        runCatching { discovery?.close() }
+        runCatching { session?.close() }
         discovery = null
         session = null
     }

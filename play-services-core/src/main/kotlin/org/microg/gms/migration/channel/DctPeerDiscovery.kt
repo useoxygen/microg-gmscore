@@ -26,17 +26,19 @@ internal class DctPeerDiscovery(context: Context, private val network: Network, 
     private var discovering = false
     private var resolving = false
     private var closed = false
+    private val timeout = Runnable { fail() }
     private val resolution = object : NsdManager.ResolveListener {
         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-            synchronized(this@DctPeerDiscovery) { resolving = false; if (!closed) listener.onFailure() }
+            synchronized(this@DctPeerDiscovery) { resolving = false; fail() }
         }
         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
             synchronized(this@DctPeerDiscovery) {
                 resolving = false
                 if (closed || serviceInfo.serviceName != sessionId || serviceInfo.network != network) return
                 val address = serviceInfo.hostAddresses.filterIsInstance<Inet6Address>()
-                    .firstOrNull { !it.isAnyLocalAddress && !it.isMulticastAddress } ?: run { listener.onFailure(); return }
-                if (serviceInfo.port !in 1..65535) { listener.onFailure(); return }
+                    .firstOrNull { !it.isAnyLocalAddress && !it.isMulticastAddress } ?: run { fail(); return }
+                if (serviceInfo.port !in 1..65535) { fail(); return }
+                close()
                 listener.onResolved(network, address, serviceInfo.port)
             }
         }
@@ -62,13 +64,15 @@ internal class DctPeerDiscovery(context: Context, private val network: Network, 
         require(Build.VERSION.SDK_INT >= 34 && sessionId.length == 6)
         check(!discovering && !closed)
         discovering = true
+        handler.postDelayed(timeout, 30_000)
         try { manager.discoverServices("_dct._tcp", NsdManager.PROTOCOL_DNS_SD, network, executor, discovery) }
         catch (e: Exception) { close(); throw e }
     }
-    private fun fail() { synchronized(this) { if (!closed) { listener.onFailure(); close() } } }
+    private fun fail() { synchronized(this) { if (!closed) { close(); listener.onFailure() } } }
     @Synchronized override fun close() {
         if (closed) return
         closed = true
+        handler.removeCallbacks(timeout)
         if (resolving) runCatching { manager.stopServiceResolution(resolution) }
         if (discovering) runCatching { manager.stopServiceDiscovery(discovery) }
         resolving = false

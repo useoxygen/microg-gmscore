@@ -38,9 +38,9 @@ internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int
     fun control(offlineFrame: ByteArray): Call = request("/controls", "application/vnd.dct.control+proto", offlineFrame)
     fun capabilities(message: ByteArray): Call = request("/capabilities", "application/vnd.dct.control+proto", message)
     fun notifications(ack: Boolean = false): Call = request(if (ack) "/notifications?ack" else "/notifications", null, null)
-    fun request(path: String, contentType: String?, bytes: ByteArray?, headers: Map<String, String> = emptyMap()): Call =
+    fun request(path: String, contentType: String?, bytes: ByteArray?, headers: List<Pair<String, String>> = emptyList()): Call =
         request(path, bytes?.toRequestBody(contentType?.toMediaType()), headers)
-    fun request(path: String, body: RequestBody?, headers: Map<String, String> = emptyMap()): Call =
+    fun request(path: String, body: RequestBody?, headers: List<Pair<String, String>> = emptyList()): Call =
         client.newCall(DctHttpRequests.build(base, path, body, headers))
 
     override fun close() {
@@ -51,7 +51,7 @@ internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int
 }
 
 internal object DctHttpRequests {
-    fun build(base: HttpUrl, path: String, body: RequestBody?, headers: Map<String, String>): Request {
+    fun build(base: HttpUrl, path: String, body: RequestBody?, headers: List<Pair<String, String>>): Request {
         require(path.startsWith('/') && !path.startsWith("//") && '\\' !in path && path.none { it.code < 32 })
         val target = requireNotNull(base.resolve(path))
         require(target.scheme == "https" && target.host == base.host && target.port == base.port && target.fragment == null)

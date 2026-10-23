@@ -128,9 +128,11 @@ class MigrationLabActivity : Activity() {
             }
             Thread {
                 val result = runCatching {
-                    server.accept(10_000).use { /* open/close only; no data or authentication claimed */ }
+                    // The Activity's 15-second deadline closes this server and unblocks accept.
+                    // Bluetooth's local socket timeout is not supported on every implementation.
+                    server.accept().use { /* open/close only; no data or authentication claimed */ }
                     "PASS raw BLE CoC accepted and closed; IPv6 not exercised"
-                }.getOrElse { "BLOCKED raw BLE CoC peer: ${it.javaClass.simpleName}" }
+                }.getOrElse { "BLOCKED raw BLE CoC peer: ${it.javaClass.simpleName}: ${it.message}" }
                 Log.i("GmsSwitchLab", result)
                 runOnUiThread { finish() }
             }.start()

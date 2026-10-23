@@ -14,7 +14,7 @@ import java.io.InputStream
 internal class DctFilePart(val contentType: String, val length: Long, metadata: ByteArray,
                            val open: () -> InputStream) {
     val metadata = metadata.copyOf()
-    init { require(length >= 0); contentType.toMediaType() }
+    init { require(length >= 0 && contentType.none { it.code < 32 || it.code == 127 }); contentType.toMediaType() }
 }
 
 /** GMS requires a per-part Content-Length, which the resolved OkHttp multipart writer omits. */
@@ -34,6 +34,7 @@ internal object DctMultipart {
         return object : RequestBody() {
             override fun contentType() = "multipart/mixed; boundary=$boundary".toMediaType()
             override fun contentLength() = length
+            override fun isOneShot() = true
             override fun writeTo(sink: BufferedSink) {
                 snapshot.forEachIndexed { index, part ->
                     sink.write(headers[index])

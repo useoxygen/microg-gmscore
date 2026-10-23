@@ -12,8 +12,8 @@ import org.junit.Test
 class DctHttpRequestsTest {
     private val base = "https://[fe80::1]:10234/".toHttpUrl()
     @Test fun nullAndEmptyBodiesRemainGetAndPostRespectively() {
-        val get = DctHttpRequests.build(base, "/notifications?ack", null, emptyMap())
-        val post = DctHttpRequests.build(base, "/communications", byteArrayOf().toRequestBody(), emptyMap())
+        val get = DctHttpRequests.build(base, "/notifications?ack", null, emptyList())
+        val post = DctHttpRequests.build(base, "/communications", byteArrayOf().toRequestBody(), emptyList())
         assertEquals("GET", get.method)
         assertNull(get.body)
         assertEquals("ack", get.url.encodedQuery)
@@ -24,22 +24,23 @@ class DctHttpRequestsTest {
     @Test fun controlBodyHasNoAdditionalNearbyLengthPrefix() {
         val bytes = byteArrayOf(10, 2, 10, 0)
         val body = bytes.toRequestBody("application/vnd.dct.control+proto".toMediaType())
-        val request = DctHttpRequests.build(base, "/controls", body, emptyMap())
+        val request = DctHttpRequests.build(base, "/controls", body, emptyList())
         val encoded = Buffer().also { request.body!!.writeTo(it) }.readByteArray()
         assertArrayEquals(bytes, encoded)
         assertEquals("application/vnd.dct.control+proto", request.body!!.contentType().toString())
     }
     @Test fun applicationMetadataIsPreservedWithoutReplacingTransportHeaders() {
         val request = DctHttpRequests.build(base, "/_callback/communications", null,
-            mapOf("X-OS-Migration-Metadata" to "base64; CAE="))
+            listOf("X-OS-Migration-Metadata" to "base64; CAE=", "X-Test" to "a", "X-Test" to "b"))
         assertEquals("base64; CAE=", request.header("X-OS-Migration-Metadata"))
+        assertEquals(listOf("a", "b"), request.headers.values("X-Test"))
         assertThrows(IllegalArgumentException::class.java) {
-            DctHttpRequests.build(base, "/_callback", null, mapOf("Host" to "example.com"))
+            DctHttpRequests.build(base, "/_callback", null, listOf("Host" to "example.com"))
         }
     }
     @Test fun applicationPathsCannotRedirectToAnotherPeerOrInjectHeaders() {
         listOf("https://example.com/", "//example.com/", "/\\example.com/", "/x\r\nHost: example.com", "/#fragment").forEach { path ->
-            assertThrows(IllegalArgumentException::class.java) { DctHttpRequests.build(base, path, null, emptyMap()) }
+            assertThrows(IllegalArgumentException::class.java) { DctHttpRequests.build(base, path, null, emptyList()) }
         }
     }
 }
