@@ -36,6 +36,21 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun restoreInterruptedApprovedSyntheticPasswordUpdate() {
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        val selected = arguments.getString("passwordLiveAccount")
+        assumeTrue(!selected.isNullOrBlank())
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        val checkpoint = AndroidVaultStore(context, "password-fixture-restore/" + account.name)
+        assertTrue("No password update restore checkpoint", checkpoint.locked { it.load().chromeLocalData["original"] != null })
+        val wasEnabled = repository.enabled
+        try {
+            repository.setEnabled(true)
+            SyntheticMetadataRestore.restore(context, repository, checkpoint, chromeWrapper = true, passwordUpdate = true)
+        } finally { if (!wasEnabled) repository.setEnabled(false) }
+    }
+
     @Test fun nativeNotesBackupClearsWithoutResurrectionAndRestoresOriginal() {
         assumeTrue(arguments.getString("passwordLiveNotes") == "cyc654")
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
@@ -356,12 +371,7 @@ class PasswordNativeSyncAndroidTest {
                 val readback = PasswordRepository(context, repository.account).list(false).single { it.id == original.id }
                 assertTrue("Native update did not read back", same(changed.encode(), readback.data.encode()))
             } finally {
-                repository.upsert(restore)
-                val receipt = repository.refresh()
-                val restored = repository.list(false).single { it.id == data.tag() }
-                assertTrue("Synthetic fixture restoration is unverified", receipt.conflicts == 0 && receipt.indeterminate == 0 &&
-                    same(data.encode(), restored.data.encode()))
-                checkpoint.clear()
+                SyntheticMetadataRestore.restore(context, repository, checkpoint, chromeWrapper = true, passwordUpdate = true)
             }
         }
     }

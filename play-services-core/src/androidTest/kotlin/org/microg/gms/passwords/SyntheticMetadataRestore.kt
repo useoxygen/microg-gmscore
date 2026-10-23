@@ -13,9 +13,11 @@ import java.security.MessageDigest
 
 /** Synthetic-only cleanup. A cloud update may retain an omitted encrypted notes backup. */
 internal object SyntheticMetadataRestore {
-    fun restore(context: Context, repository: PasswordRepository, checkpoint: AndroidVaultStore) {
+    fun restore(context: Context, repository: PasswordRepository, checkpoint: AndroidVaultStore,
+        chromeWrapper: Boolean = false, passwordUpdate: Boolean = false) {
         val saved = checkpoint.locked { it.load() }
-        val raw = saved.chromeLocalData["original"] ?: error("No encrypted restore checkpoint")
+        val savedOriginal = saved.chromeLocalData["original"] ?: error("No encrypted restore checkpoint")
+        val raw = if (chromeWrapper) Proto.decode(savedOriginal).one(1) else savedOriginal
         val original = PasswordData.decode(raw)
         assertTrue("Restore input is outside the approved fixture", fixture(original))
         val tag = original.tag()
@@ -38,18 +40,22 @@ internal object SyntheticMetadataRestore {
             val data = current?.let { PasswordResourceCodec.read(it, keys) }
             val resuming = saved.chromeLocalData["recreate"] != null
             assertTrue("Unexpected remote deletion; checkpoint retained", data != null || resuming)
-            data?.let { assertOwnMetadataEdit(original, it) }
+            data?.let { assertOwnEdit(original, it, passwordUpdate) }
             val state = repository.store.locked { it.load() }
+            val local = if (chromeWrapper) Proto.decode(savedOriginal).optional(3) else state.chromeLocalData[tag]
             assertTrue("Unrelated journal cannot be resolved by a fixture", state.preferenceMutations.isEmpty() &&
                 state.mutations.all { it.tag == tag && (it.kind == MutationKind.UPDATE || resuming) })
-            state.mutations.mapNotNull { it.desired }.forEach { assertOwnMetadataEdit(original, PasswordResourceCodec.read(it, keys)) }
+            state.mutations.mapNotNull { it.desired }.forEach { assertOwnEdit(original, PasswordResourceCodec.read(it, keys), passwordUpdate) }
             // Only structural booleans leave the phone. No plaintext, hashes of passwords or account IDs.
             InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
                 putString("passwordFixtureRestoreShape", "mainOriginal=${current?.let { entity ->
                     val decrypted = keys.decrypt(Proto.decode(entity).one(6))
                     try { MessageDigest.isEqual(raw, decrypted) } finally { decrypted.fill(0) }
                 }},backupPresent=${current?.let { Proto.decode(it).optional(10) != null }}," +
-                    "normalizedOriginal=${data?.let { MessageDigest.isEqual(raw, it.encode()) }}")
+                    "normalizedOriginal=${data?.let { MessageDigest.isEqual(raw, it.encode()) }}," +
+                    "originalModifiedPresent=${Proto.decode(raw).integer(20) != null}," +
+                    "remoteModifiedPresent=${data?.let { Proto.decode(it.encode()).integer(20) != null }}," +
+                    "passwordRestored=${data?.let { it.password == original.password }}")
             })
             // The checkpoint commits the recreation intent before resolving the prior test edit.
             // Re-creation is explicitly authorized for this single synthetic fixture, and clears
@@ -82,8 +88,17 @@ internal object SyntheticMetadataRestore {
             repository.store.locked { session ->
                 val latest = session.load()
                 val freshKeys = VaultKeys.unlock(latest.metadata!!)
-                try { VaultSync(api, repository.store).enqueue(session, MutationKind.CREATE, tag,
-                    PasswordResourceCodec.encrypt(original, freshKeys)) }
+                try {
+                    val transaction = object : VaultSession {
+                        override fun load() = latest
+                        override fun save(state: VaultState) {
+                            if (local != null) state.chromeLocalData[tag] = local
+                            session.save(state)
+                        }
+                    }
+                    VaultSync(api, repository.store).enqueue(transaction, MutationKind.CREATE, tag,
+                        PasswordResourceCodec.encrypt(original, freshKeys))
+                }
                 finally { freshKeys.destroy() }
             }
             val receipt = repository.refresh()
@@ -101,10 +116,17 @@ internal object SyntheticMetadataRestore {
         } finally { keys.destroy() }
     }
 
-    private fun assertOwnMetadataEdit(original: PasswordData, changed: PasswordData) {
-        fun core(value: PasswordData) = Proto.decode(value.encode()).replace(15, null).replace(22, null).encode()
+    private fun assertOwnEdit(original: PasswordData, changed: PasswordData, passwordUpdate: Boolean) {
+        fun core(value: PasswordData) = Proto.decode(value.encode()).let {
+            if (passwordUpdate) it.replace(8, null).replace(20, null) else it.replace(15, null).replace(22, null)
+        }.encode()
         assertTrue("A non-metadata change requires separate reconciliation", fixture(changed) &&
             MessageDigest.isEqual(core(original), core(changed)))
+        if (passwordUpdate) {
+            assertTrue("Unrecognized synthetic password change", changed.password == original.password ||
+                Regex("synthetic-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").matches(changed.password))
+            return
+        }
         assertTrue("Unrecognized name change", changed.displayName == original.displayName ||
             changed.displayName.startsWith("cyc654-name-") || changed.displayName.startsWith("cyc654-remote-"))
         assertTrue("Unrecognized note change", changed.defaultNote?.value == original.defaultNote?.value ||
