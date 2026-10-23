@@ -2,7 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- Only the opt-in API 26+ UI fixture uses these; retain the product's minimum SDK. -->
-    <uses-sdk tools:overrideLibrary="androidx.compose.ui.test.junit4,androidx.compose.ui.test" />
+    <uses-sdk tools:overrideLibrary="androidx.compose.ui.test.junit4,androidx.compose.ui.test,
+        androidx.test.espresso.core,androidx.test.espresso.idling.resource,androidx.test.monitor,
+        androidx.test.runner,androidx.test.core,androidx.test.ext.junit,androidx.test.rules,
+        androidx.test.services.storage" />
     <!-- Exercise repository and UI in the actual secondary process. No process override in the product. -->
     <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner"
         android:targetPackage="com.google.android.gms"

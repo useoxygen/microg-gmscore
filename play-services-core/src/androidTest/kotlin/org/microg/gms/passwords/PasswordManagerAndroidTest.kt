@@ -6,14 +6,20 @@ import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.view.InputDevice
 import android.view.WindowManager
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.CoordinatesProvider
+import androidx.test.espresso.action.GeneralClickAction
+import androidx.test.espresso.action.Press
+import androidx.test.espresso.action.Tap
+import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.android.gms.R
 import com.google.android.gms.credential.manager.EXTRA_KEY_ACCOUNT_NAME
@@ -51,10 +57,22 @@ class PasswordManagerAndroidTest {
         Intent(context, PasswordManagerActivity::class.java).putExtra(EXTRA_KEY_ACCOUNT_NAME, selected))
 
     private fun openManager() {
-        compose.onNodeWithText(open).performSemanticsAction(SemanticsActions.OnClick) { action ->
-            assertTrue("Manager open action was not accepted", action())
+        tap(compose.onNodeWithText(open))
+        compose.waitUntil(timeoutMillis = 30_000) {
+            compose.onAllNodes(hasText(onDevice) and isEnabled()).fetchSemanticsNodes().size == 1
         }
-        compose.onNodeWithText(onDevice).assertExists()
+    }
+
+    private fun tap(node: SemanticsNodeInteraction) {
+        val bounds = node.assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInWindow
+        // Inject through Android's input dispatcher, including the activity's obscured-touch guard.
+        // Compose's performClick/semantics actions dispatch directly into its view/callback.
+        onView(withId(android.R.id.content)).perform(GeneralClickAction(Tap.SINGLE,
+            CoordinatesProvider { view ->
+                val location = IntArray(2)
+                view.rootView.getLocationOnScreen(location)
+                floatArrayOf(bounds.center.x + location[0], bounds.center.y + location[1])
+            }, Press.FINGER, InputDevice.SOURCE_TOUCHSCREEN, 0))
     }
 
     private fun assertNoSecretInputs() = compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
@@ -94,9 +112,8 @@ class PasswordManagerAndroidTest {
             launch(selected).use { scenario ->
                 openManager()
                 compose.onNodeWithText(selected + " ✓").assertExists()
-                if (!wasEnabled) compose.onNode(isToggleable()).performSemanticsAction(SemanticsActions.OnClick) { it() }
-                else compose.onNodeWithText(context.getString(R.string.passwords_refresh))
-                    .performSemanticsAction(SemanticsActions.OnClick) { it() }
+                if (!wasEnabled) tap(compose.onNode(isToggleable()))
+                else tap(compose.onNodeWithText(context.getString(R.string.passwords_refresh)))
                 compose.waitUntil(timeoutMillis = 30_000) {
                     compose.onAllNodesWithText("https://cyc651.example.invalid/").fetchSemanticsNodes().size == 1
                 }
