@@ -237,9 +237,14 @@ class LocalKeyManager(private val context: Context) {
             ?: throw TinkEncryptionException("Account identity unavailable")
     }
     fun getKeysForDomain(accountName: String, domainId: String, validateLegacyKeys: ((List<Keys>) -> Boolean)? = null): List<Keys> {
+        return keySnapshot(accountName, domainId, validateLegacyKeys).keys
+    }
+    private fun keySnapshot(accountName: String, domainId: String, validateLegacyKeys: ((List<Keys>) -> Boolean)? = null,
+        expectedUserId: String? = null): FolsomKeySnapshot {
         val obfuscatedId = obfuscateAccountName(accountName)
         val userId = stableAccountId(accountName)
-        var result = emptyList<Keys>()
+        if (expectedUserId != null && userId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+        var result = FolsomKeySnapshot(0, emptyList())
         updateStore { store ->
             val account = store.findAccount(obfuscatedId) ?: return@updateStore store
             val domain = account.findDomain(domainId) ?: return@updateStore store
@@ -250,13 +255,39 @@ class LocalKeyManager(private val context: Context) {
                 if (account.googleUserId == null && domain.googleUserId == null) validateLegacyKeys?.invoke(recovered.keys) == true else false)
             // An unbound legacy key remains encrypted and quarantined until authenticated
             // metadata (or new exact-account recovery) establishes its provenance.
-            if (bound) result = recovered.keys
+            result = FolsomKeySnapshot(FolsomStaleKeyPolicy.generation(domain), if (bound) recovered.keys else emptyList())
             if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Account changed during recovery")
             if (recovered.migrate || bound && domain.googleUserId == null) store.updateAccount(obfuscatedId, account.updateDomain(domainId,
                 domain.copy(keys = protection.protect(domainId, recovered.keys), googleUserId = if (bound) userId else domain.googleUserId))) else store
         }
         if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Account changed during recovery")
         return result
+    }
+
+    /** A successful stale mark is itself durable, even when no locally readable key remains. */
+    fun markKeysStale(accountName: String, domainId: String, expectedUserId: String? = null) {
+        val userId = stableAccountId(accountName)
+        if (expectedUserId != null && userId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+        prepareKeyRefresh(accountName, domainId, userId, expectedGeneration = null, force = true)
+    }
+    private fun prepareKeyRefresh(accountName: String, domainId: String, userId: String, expectedGeneration: Long?, force: Boolean): FolsomKeySnapshot {
+        val obfuscatedId = obfuscateAccountName(accountName)
+        var result: FolsomKeySnapshot? = null
+        updateStore { store ->
+            if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+            val account = store.findAccount(obfuscatedId) ?: AccountData(googleUserId = userId)
+            val domain = account.findDomain(domainId) ?: DomainData(googleUserId = userId)
+            if (account.googleUserId != null && account.googleUserId != userId || domain.googleUserId != null && domain.googleUserId != userId)
+                throw TinkEncryptionException("Recovery keys belong to a removed account")
+            val current = FolsomStaleKeyPolicy.generation(domain)
+            if (expectedGeneration != null && current != expectedGeneration) throw TinkEncryptionException("Recovery refresh changed")
+            val marked = if (force || !FolsomStaleKeyPolicy.stale(current)) FolsomStaleKeyPolicy.mark(domain) else domain
+            result = FolsomKeySnapshot(FolsomStaleKeyPolicy.generation(marked), emptyList())
+            if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+            if (marked === domain) store else store.updateAccount(obfuscatedId, account.updateDomain(domainId, marked))
+        }
+        if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+        return result ?: throw TinkEncryptionException("Recovery refresh unavailable")
     }
 
     private fun hasValidKeys(accountName: String, domainId: String): Boolean = runCatching {
@@ -295,22 +326,28 @@ class LocalKeyManager(private val context: Context) {
     }
 
     fun saveKeysForDomain(accountName: String, domainId: String, keys: List<Keys>, callerPackage: String? = null, expectedUserId: String? = null) {
+        writeKeysForDomain(accountName, domainId, keys, expectedUserId)
+    }
+    private fun writeKeysForDomain(accountName: String, domainId: String, keys: List<Keys>, expectedUserId: String?, expectedGeneration: Long? = null) {
         val obfuscatedId = obfuscateAccountName(accountName)
         val userId = stableAccountId(accountName)
         if (expectedUserId != null && expectedUserId != userId) throw TinkEncryptionException("Recovery account changed")
         val keysToSave = keys.takeLast(MAX_KEYS_PER_DOMAIN).also {
             if (keys.size > MAX_KEYS_PER_DOMAIN) Log.w(TAG, "Truncating keys from ${keys.size} to $MAX_KEYS_PER_DOMAIN")
         }
-        Log.d(TAG, "saveKeysForDomain: domainId=$domainId, keyCount=${keysToSave.size}, caller=$callerPackage")
+        if (!FolsomStaleKeyPolicy.usable(keysToSave)) throw TinkEncryptionException("Fresh recovery keys unavailable")
         updateStore { store ->
             val account = store.findAccount(obfuscatedId)?.takeIf { it.googleUserId == null || it.googleUserId == userId } ?: AccountData(googleUserId = userId)
             val domain = account.findDomain(domainId) ?: DomainData()
+            if (expectedGeneration != null && (FolsomStaleKeyPolicy.generation(domain) != expectedGeneration || !FolsomStaleKeyPolicy.stale(expectedGeneration)))
+                throw TinkEncryptionException("Recovery refresh changed")
             store.updateAccount(
                 obfuscatedId, account.updateDomain(
-                    domainId, domain.copy(
+                    domainId, FolsomStaleKeyPolicy.fresh(domain).copy(
                         keys = encryptKeysIfNeeded(domainId, keysToSave),
                         googleUserId = userId,
-                        lastModifiedTimestamp = System.currentTimeMillis()
+                        lastModifiedTimestamp = System.currentTimeMillis(),
+                        lastFetchTimestamp = addJitter(System.currentTimeMillis())
                     )
                 )
             ).also { if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Account changed during recovery") }
@@ -346,9 +383,10 @@ class LocalKeyManager(private val context: Context) {
         return keyPairs.find { it.keyPairType == 3 } ?: keyPairs.find { it.keyPairType == 1 }
     }
 
-    private fun buildKeyPairBytes(privateKey: ByteArray, publicKey: ByteArray): ByteArray = ByteArray(97).apply {
-        System.arraycopy(privateKey, 0, this, 0, minOf(privateKey.size, 32))
-        System.arraycopy(publicKey, 0, this, 32, minOf(publicKey.size, 65))
+    private fun buildKeyPairBytes(privateKey: ByteArray, publicKey: ByteArray): ByteArray {
+        require(publicKey.size == 65 && publicKey[0] == 4.toByte() && privateKey.size in setOf(32, 97)) { "Invalid recovery key pair" }
+        if (privateKey.size == 97) require(MessageDigest.isEqual(privateKey.copyOfRange(32, 97), publicKey)) { "Recovery key pair changed" }
+        return privateKey.copyOfRange(0, 32) + publicKey
     }
 
     fun computeDomainStatus(
@@ -367,7 +405,7 @@ class LocalKeyManager(private val context: Context) {
         }
         val hasKeys = members.any { member ->
             member.securityDomains.any { sd ->
-                sd.memberKeys.isNotEmpty() || sd.trustedVaultKeys.isNotEmpty()
+                FolsomDomainPolicy.matches(sd.name, domainId) && sd.memberKeys.isNotEmpty()
             }
         }
         if (!hasKeys) {
@@ -396,15 +434,22 @@ class LocalKeyManager(private val context: Context) {
         domainId: String,
         sessionId: String,
         forceRefresh: Boolean = false,
-        validateLegacyKeys: ((List<Keys>) -> Boolean)? = null
+        validateLegacyKeys: ((List<Keys>) -> Boolean)? = null,
+        expectedUserId: String? = null
     ): List<Keys> = runCatching {
         val userId = stableAccountId(accountName)
-        val result = (if (forceRefresh) null else getKeysForDomain(accountName, domainId, validateLegacyKeys).takeIf { it.isNotEmpty() })
-            ?: loadSecurityDomainMembers(context, accountName, sessionId, domainId)
-                .members.takeIf { it.isNotEmpty() }
-                ?.let { extractKeysFromMembers(it, domainId, accountName) }
-                ?.also { saveKeysForDomain(accountName, domainId, it, expectedUserId = userId) }
-            ?: emptyList()
+        if (expectedUserId != null && userId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+        val result = FolsomKeyRefresh(
+            read = { keySnapshot(accountName, domainId, validateLegacyKeys, userId) },
+            prepare = { snapshot, force -> prepareKeyRefresh(accountName, domainId, userId, snapshot.generation, force) },
+            fetch = {
+                if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+                val members = loadSecurityDomainMembers(context, accountName, sessionId, domainId)
+                if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+                extractKeysFromMembers(members.members, domainId, accountName, keySnapshot(accountName, domainId, validateLegacyKeys, userId).keys)
+            },
+            commit = { snapshot, keys -> writeKeysForDomain(accountName, domainId, keys, userId, snapshot.generation) }
+        ).load(forceRefresh)
         if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
         result
     }.getOrDefault(emptyList())
@@ -412,38 +457,19 @@ class LocalKeyManager(private val context: Context) {
     private fun extractKeysFromMembers(
         members: List<SecurityDomainMemberResponse>,
         domainId: String,
-        accountName: String
+        accountName: String,
+        known: List<Keys>
     ): List<Keys> = getPhysicalDeviceKeyPair(accountName)
         ?.let { keyPair ->
             val pubKey = keyPair.publicKey?.toByteArray()
             val priKey = keyPair.privateKey?.toByteArray()
             if (pubKey != null && priKey != null) {
-                members.find { it.name == computeMemberName(pubKey) }
-                    ?.let { decryptAllKeys(it, domainId, buildKeyPairBytes(priKey, pubKey)) }
+                val pair = buildKeyPairBytes(priKey, pubKey)
+                try { members.singleOrNull { it.name == computeMemberName(pubKey) }
+                    ?.let { FolsomMemberKeys.decode(it, domainId, pair, known) } }
+                finally { pair.fill(0); priKey.fill(0); pubKey.fill(0) }
             } else null
         } ?: emptyList()
-
-    private fun decryptAllKeys(
-        member: SecurityDomainMemberResponse,
-        domainId: String,
-        localKeyPairBytes: ByteArray
-    ): List<Keys> = member.securityDomains
-        .filter { FolsomDomainPolicy.matches(it.name, domainId) }
-        .flatMap { domain ->
-            domain.trustedVaultKeys.mapNotNull { key -> decryptKey(key.epoch, key.wrappedKey, localKeyPairBytes) } +
-                    domain.memberKeys.mapNotNull { key -> decryptKey(key.keyType, key.wrappedKey, localKeyPairBytes) }
-        }
-
-    private fun decryptKey(
-        version: Int?,
-        wrappedKey: ByteString?,
-        localKeyPairBytes: ByteArray
-    ): Keys? = runCatching {
-        version?.takeIf { it != 0 } ?: return@runCatching null
-        val wrappedKeyBytes = wrappedKey?.toByteArray() ?: return@runCatching null
-        val keyMaterial = SecureBox.unwrapKey(localKeyPairBytes, wrappedKeyBytes)
-        Keys(keyVersion = version, keyMaterial = ByteString.of(*keyMaterial))
-    }.getOrNull()
 
     companion object {
         @SuppressLint("StaticFieldLeak")

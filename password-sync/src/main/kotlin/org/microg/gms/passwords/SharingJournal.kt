@@ -4,7 +4,7 @@ package org.microg.gms.passwords
 import java.security.MessageDigest
 import java.util.UUID
 
-enum class SharingOperationKind { SEND, ACCEPT, DISMISS }
+enum class SharingOperationKind { SEND, ACCEPT, DISMISS, AUTOMATIC }
 enum class SharingOperationPhase {
     PREPARED, IMPORTED, LAUNCHED, INDETERMINATE, REFUSED, COMPLETE, OWNER_RESOLVED;
     val terminal get() = this in setOf(REFUSED, COMPLETE, OWNER_RESOLVED)
@@ -12,13 +12,15 @@ enum class SharingOperationPhase {
 
 class SharingOperation(val id: String, val kind: SharingOperationKind, val phase: SharingOperationPhase, val parent: String,
     val source: String, val sourceDigest: ByteArray, val request: ByteArray, val passwords: List<ByteArray> = emptyList(),
-    val receipt: ByteArray? = null, val ownerResolvedAtMillis: Long? = null) {
+    val receipt: ByteArray? = null, val ownerResolvedAtMillis: Long? = null, val invalidPasswordCount: Int = 0,
+    val invitationGuid: String? = null) {
     fun withPhase(value: SharingOperationPhase, receipt: ByteArray? = this.receipt) =
-        SharingOperation(id, kind, value, parent, source, sourceDigest, request, passwords, receipt, ownerResolvedAtMillis)
+        SharingOperation(id, kind, value, parent, source, sourceDigest, request, passwords, receipt, ownerResolvedAtMillis, invalidPasswordCount, invitationGuid)
     fun encode(): ByteArray = Proto.field(1, id) + Proto.integer(2, kind.ordinal.toLong()) + Proto.integer(3, phase.ordinal.toLong()) +
         Proto.field(4, parent) + Proto.field(5, source) + Proto.field(6, sourceDigest) + Proto.field(7, request) +
         passwords.fold(byteArrayOf()) { out, item -> out + Proto.field(8, item) } + (receipt?.let { Proto.field(9, it) } ?: byteArrayOf()) +
-        (ownerResolvedAtMillis?.let { Proto.integer(10, it) } ?: byteArrayOf())
+        (ownerResolvedAtMillis?.let { Proto.integer(10, it) } ?: byteArrayOf()) + Proto.integer(11, invalidPasswordCount.toLong()) +
+        (invitationGuid?.let { Proto.field(12, it) } ?: byteArrayOf())
     override fun toString() = "SharingOperation[redacted]"
     companion object {
         fun decode(raw: ByteArray): SharingOperation {
@@ -31,12 +33,16 @@ class SharingOperation(val id: String, val kind: SharingOperationKind, val phase
             if (runCatching { UUID.fromString(proto.string(1)) }.isFailure || source.isEmpty() || source.length > 4096 ||
                 source.any(Char::isISOControl) || digest.size != 32 || request.size > 1024 * 1024 || passwords.size > 100) throw ProtocolException()
             passwords.forEach { PasswordData.decode(Proto.decode(it).one(1)) }
-            if (kind != SharingOperationKind.ACCEPT && passwords.isNotEmpty()) throw ProtocolException()
+            if (kind !in setOf(SharingOperationKind.ACCEPT, SharingOperationKind.AUTOMATIC) && passwords.isNotEmpty()) throw ProtocolException()
             if (kind == SharingOperationKind.ACCEPT && passwords.isEmpty()) throw ProtocolException()
+            val invalid = proto.integer(11) ?: 0
+            if (invalid !in 0L..100L || kind != SharingOperationKind.AUTOMATIC && invalid != 0L || passwords.size + invalid > 100) throw ProtocolException()
+            val guid = proto.optionalString(12)
+            if (guid != null && (guid.length > 128 || runCatching { UUID.fromString(guid) }.isFailure)) throw ProtocolException()
             val resolvedAt = proto.integer(10)
             if (phase == SharingOperationPhase.OWNER_RESOLVED && (kind != SharingOperationKind.SEND || resolvedAt == null || resolvedAt <= 0) ||
                 phase != SharingOperationPhase.OWNER_RESOLVED && resolvedAt != null) throw ProtocolException()
-            return SharingOperation(proto.string(1), kind, phase, parent, source, digest, request, passwords, proto.optional(9), resolvedAt)
+            return SharingOperation(proto.string(1), kind, phase, parent, source, digest, request, passwords, proto.optional(9), resolvedAt, invalid.toInt(), guid)
         }
         fun digest(raw: ByteArray) = MessageDigest.getInstance("SHA-256").digest(raw)
     }
@@ -63,6 +69,8 @@ class SharingJournal(private val store: VaultStore) {
             val index = all.indexOfFirst { it.id == id }; if (index < 0) throw ConflictException()
             val old = all[index]
             if (old.phase !in expected || old.phase.terminal || phase == SharingOperationPhase.OWNER_RESOLVED ||
+                old.phase in setOf(SharingOperationPhase.LAUNCHED, SharingOperationPhase.INDETERMINATE) &&
+                phase !in setOf(SharingOperationPhase.INDETERMINATE, SharingOperationPhase.REFUSED, SharingOperationPhase.COMPLETE) ||
                 old.kind == SharingOperationKind.SEND && old.phase != SharingOperationPhase.PREPARED &&
                 phase !in setOf(SharingOperationPhase.INDETERMINATE, SharingOperationPhase.REFUSED, SharingOperationPhase.COMPLETE)) throw PendingMutationException()
             val updated = old.withPhase(phase, receipt ?: old.receipt)

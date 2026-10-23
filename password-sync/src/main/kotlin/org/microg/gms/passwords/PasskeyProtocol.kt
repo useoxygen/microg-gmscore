@@ -34,8 +34,8 @@ class PasskeyApi(private val transport: PasswordTransport) {
         Proto.field(1, checkedName(Proto.decode(resource).string(1))) + Proto.field(2, resource) + Proto.field(4, token))
     fun delete(resource: ByteArray, token: ByteArray) {
         val p = Proto.decode(resource)
-        transport.invoke(PasswordMethod.DELETE_WEBAUTHN, Proto.field(1, checkedName(p.string(1))) + Proto.field(4, token) +
-            (p.optional(8)?.let { Proto.field(5, it) } ?: byteArrayOf()))
+        // iajg field 5 is an optional empty ioyo message, unrelated to the resource's update_time (field 8).
+        transport.invoke(PasswordMethod.DELETE_WEBAUTHN, Proto.field(1, checkedName(p.string(1))) + Proto.field(4, token))
     }
     override fun toString(): String = "PasskeyApi[redacted]"
     companion object {

@@ -8,7 +8,7 @@ import java.util.Base64
 object PasskeyDeviceAuthorization {
     const val FLOW = "chromesync_get_device_authorization_key"
     fun signals(salt: ByteArray, available: Boolean, rapt: String? = null): Map<String, String> {
-        if (salt.size != 16 || rapt?.length?.let { it > 16_384 } == true) throw ProtocolException()
+        if (salt.size != 16 || rapt != null && (rapt.isBlank() || rapt.length > 16_384)) throw ProtocolException()
         fun hash(raw: ByteArray) = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(raw))
         return buildMap {
             if (rapt != null) put("rapt_token", hash(rapt.toByteArray(Charsets.UTF_8) + salt))
@@ -17,7 +17,8 @@ object PasskeyDeviceAuthorization {
         }
     }
     fun request(salt: ByteArray, available: Boolean, droidGuard: ByteArray, rapt: String? = null): ByteArray {
-        if (salt.size != 16 || droidGuard.isEmpty() || droidGuard.size > 1024 * 1024) throw ProtocolException()
+        if (salt.size != 16 || droidGuard.isEmpty() || droidGuard.size > 1024 * 1024 ||
+            rapt != null && (rapt.isBlank() || rapt.length > 16_384)) throw ProtocolException()
         return (rapt?.let { Proto.field(1, it) } ?: byteArrayOf()) +
             Proto.field(2, Proto.field(1, "hw_protected") + Proto.integer(2, if (available) 1 else 0)) +
             Proto.field(3, Proto.field(1, droidGuard) + Proto.field(2, salt))
@@ -26,7 +27,11 @@ object PasskeyDeviceAuthorization {
         if (required.any { it <= 0 }) throw ProtocolException()
         val p = Proto.decode(raw)
         if (p.optional(1) != null && p.optional(2) != null) throw ProtocolException()
-        if (p.optional(2) != null) throw PasskeyReauthRequiredException()
+        p.optional(2)?.let { raw ->
+            val lookup = Proto.decode(raw).string(1)
+            if (lookup.isBlank() || lookup.length > 16_384) throw ProtocolException()
+            throw PasskeyReauthRequiredException(lookup)
+        }
         val entries = Proto.decode(p.one(1)).bytes(1).map(Proto::decode)
         if (entries.isEmpty() || entries.size > 100 || entries.map { it.integer(1) }.toSet().size != entries.size ||
             entries.any { it.integer(1)?.let { version -> version !in 1..Int.MAX_VALUE } != false || it.one(2).size != 32 } ||
@@ -36,4 +41,6 @@ object PasskeyDeviceAuthorization {
         }
     }
 }
-class PasskeyReauthRequiredException : Exception("Passkey device authorization requires Google account reauthentication")
+class PasskeyReauthRequiredException(val packagedLookupToken: String) : Exception("Passkey device authorization requires Google account reauthentication") {
+    override fun toString(): String = "PasskeyReauthRequiredException[redacted]"
+}

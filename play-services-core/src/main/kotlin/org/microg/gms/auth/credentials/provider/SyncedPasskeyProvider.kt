@@ -74,9 +74,10 @@ internal object SyncedPasskeyProvider {
                 val options = options(activity, base, caller, option.clientDataHash)
                 options.checkIsValid(activity, origin(activity, caller, request.callingAppInfo.packageName), request.callingAppInfo.packageName)
                 recover(activity, vault)
-                val owner = authenticate(activity, base.rpId) { verifyCaller(activity, request.callingAppInfo); vault.check() }
-                val result = withContext(Dispatchers.IO) {
-                    vault.withSecret(ticket.string(3), base.rpId, base.allowList.orEmpty().map { it.id }, owner) { item, secret ->
+                val verify = { verifyCaller(activity, request.callingAppInfo); vault.check() }
+                var owner = authenticate(activity, base.rpId, verify)
+                val result = PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
+                    vault.withSecret(ticket.string(3), base.rpId, base.allowList.orEmpty().map { it.id }, owner, rapt) { item, secret ->
                         val key = secret.privateKey()
                         try {
                             val (clientData, hash) = getClientDataAndHash(activity, options, request.callingAppInfo.packageName)
@@ -88,7 +89,11 @@ internal object SyncedPasskeyProvider {
                             credential(item.credentialId, AuthenticatorAssertionResponse(item.credentialId, clientData, auth.encode(), signed, item.userId)).toJson()
                         } finally { runCatching { key.destroy() } }
                     }
-                }
+                } }, reauthenticate = { lookup ->
+                    val proof = PasskeyReauthUi.show(activity, vault.account.name, vault.accountId, lookup) { requireForeground(activity, verify) }
+                    owner = authenticate(activity, base.rpId, verify)
+                    proof
+                })
                 owner(); activity.finishWithSuccess(GetCredentialResponse(androidx.credentials.PublicKeyCredential(result)))
             } catch (_: Exception) { activity.finishWithException() }
         }
@@ -110,20 +115,21 @@ internal object SyncedPasskeyProvider {
                     .apply { option.clientDataHash?.let(::setClientDataHash) }.build() else base
                 options.checkIsValid(activity, origin(activity, caller, request.callingAppInfo.packageName), request.callingAppInfo.packageName)
                 recover(activity, vault)
-                val owner = authenticate(activity, base.rp.id) { verifyCaller(activity, request.callingAppInfo); vault.check() }
+                val verify = { verifyCaller(activity, request.callingAppInfo); vault.check() }
+                var owner = authenticate(activity, base.rp.id, verify)
                 if (withContext(Dispatchers.IO) { vault.hasPendingCreate() }) {
                     if (!activity.confirmAbandonSyncedPasskeyAttempt()) throw VaultLockedException()
                     repeat(10) { if (!activity.hasWindowFocus()) delay(50) }
                     withContext(Dispatchers.IO) { vault.discardPendingCreate(owner) }
                 }
-                val result = withContext(Dispatchers.IO) {
+                val result = PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
                     val existing = vault.list(refresh = true)
-                    if (base.excludeList.orEmpty().any { excluded -> existing.any { MessageDigest.isEqual(excluded.id, it.credentialId) } }) throw SecurityException()
+                    if (PasskeyExclusions.contains(base.rp.id, base.excludeList.orEmpty().map { it.id }, existing)) throw SecurityException()
                     owner()
                     val key = KeyPairGenerator.getInstance("EC").run { initialize(ECGenParameterSpec("secp256r1")); generateKeyPair() }
                     val pkcs8 = key.private.encoded ?: throw SecurityException()
                     try {
-                        val specifics = vault.createSpecifics(base.rp.id, base.user.id, base.user.name, base.user.displayName, pkcs8, owner)
+                        val specifics = vault.createSpecifics(base.rp.id, base.user.id, base.user.name, base.user.displayName, pkcs8, owner, rapt)
                         val (clientData, hash) = getClientDataAndHash(activity, options, request.callingAppInfo.packageName)
                         if (hash.size != 32) throw SecurityException()
                         val pub = key.public as ECPublicKey
@@ -139,7 +145,11 @@ internal object SyncedPasskeyProvider {
                             json.toString()
                         } else response
                     } finally { pkcs8.fill(0); runCatching { key.private.destroy() } }
-                }
+                } }, reauthenticate = { lookup ->
+                    val proof = PasskeyReauthUi.show(activity, vault.account.name, vault.accountId, lookup) { requireForeground(activity, verify) }
+                    owner = authenticate(activity, base.rp.id, verify)
+                    proof
+                })
                 owner(); activity.finishWithSuccess(CreatePublicKeyCredentialResponse(result))
             } catch (_: Exception) { activity.finishWithException() }
         }
@@ -158,13 +168,17 @@ internal object SyncedPasskeyProvider {
         repeat(10) { if (!activity.hasWindowFocus()) delay(50) }
         val at = SystemClock.elapsedRealtime()
         return {
-            verify()
-            val lock = activity.getSystemService(KeyguardManager::class.java)
-            if (activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus() ||
-                !activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) || SystemClock.elapsedRealtime() - at !in 0..60_000 ||
-                lock.isDeviceLocked || lock.isKeyguardLocked || !activity.getSystemService(UserManager::class.java).isUserUnlocked ||
-                !activity.getSystemService(PowerManager::class.java).isInteractive) throw VaultLockedException()
+            requireForeground(activity, verify)
+            if (SystemClock.elapsedRealtime() - at !in 0..60_000) throw VaultLockedException()
         }
+    }
+    private fun requireForeground(activity: PublicKeyProxyActivity, verify: () -> Unit) {
+        verify()
+        val lock = activity.getSystemService(KeyguardManager::class.java)
+        if (activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus() ||
+            !activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) || lock.isDeviceLocked || lock.isKeyguardLocked ||
+            !activity.getSystemService(UserManager::class.java).isUserUnlocked ||
+            !activity.getSystemService(PowerManager::class.java).isInteractive) throw VaultLockedException()
     }
     private fun verifyCaller(context: Context, info: CallingAppInfo): PasswordCaller {
         val caller = PasswordCaller.from(info)

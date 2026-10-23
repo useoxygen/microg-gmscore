@@ -60,7 +60,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             check(); return result
         } catch (failure: Throwable) { result.forEach(PasskeyDomainKey::close); throw failure }
     }
-    fun <T> withSecret(tag: String, rpId: String, allowed: List<ByteArray>, verifyOwner: () -> Unit,
+    fun <T> withSecret(tag: String, rpId: String, allowed: List<ByteArray>, verifyOwner: () -> Unit, rapt: String? = null,
         action: (SyncedPasskey, PasskeySecret) -> T): T {
         verifyOwner(); check()
         val selectedParent = parent()
@@ -74,7 +74,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             try {
                 if (selected.encryptedField == 19) devices = PasskeyDeviceKeyClient(context, repository.sharingTransport()) {
                     verifyOwner(); check()
-                }.get(setOf(selected.deviceKeyVersion), domains.isNotEmpty())
+                }.get(setOf(selected.deviceKeyVersion), domains.isNotEmpty(), rapt)
                 PasskeyCrypto.decrypt(selected, domains, devices).use { secret ->
                     verifyOwner(); check()
                     action(selected, secret).also { verifyOwner(); check() }
@@ -94,7 +94,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             val snapshot = api.snapshot(parent)
             val state = PasskeySnapshots.reconcile(old, parent, snapshot, keys, System.currentTimeMillis())
             val previous = state.records.map { PasskeyResourceCodec.read(it, keys) }
-            if (excluded.any { id -> previous.any { MessageDigest.isEqual(id, it.credentialId) } }) throw ConflictException()
+            if (PasskeyExclusions.contains(specifics.rpId, excluded, previous)) throw ConflictException()
             val actual = specifics.withShadows(previous.filter { it.rpId == specifics.rpId &&
                 MessageDigest.isEqual(it.userId, specifics.userId) }.map { it.credentialId })
             val resource = PasskeyResourceCodec.write(actual, keys)
@@ -130,14 +130,14 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         session.saveState(PasskeyState(state.parent, state.records, state.fetchedMillis, abandoned = state.abandoned + listOf(history)))
     }
     fun createSpecifics(rp: String, user: ByteArray, username: String, display: String, pkcs8: ByteArray,
-        verifyOwner: () -> Unit): SyncedPasskey {
+        verifyOwner: () -> Unit, rapt: String? = null): SyncedPasskey {
         val domains = domainKeys()
         var devices = emptyList<PasskeyDomainKey>()
         try {
             val key = domains.maxByOrNull { it.version } ?: throw VaultLockedException()
             if (key.version <= 0) throw VaultLockedException()
             devices = PasskeyDeviceKeyClient(context, repository.sharingTransport()) { verifyOwner(); check() }
-                .get(emptySet(), true)
+                .get(emptySet(), true, rapt)
             val device = devices.maxByOrNull { it.version } ?: throw VaultLockedException()
             val secret = Proto.field(1, pkcs8) + Proto.field(2, ByteArray(32).also(java.security.SecureRandom()::nextBytes))
             val random = java.security.SecureRandom()

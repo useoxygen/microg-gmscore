@@ -31,9 +31,9 @@ internal class FolsomCallerAdmission(private val captured: FolsomCallerIdentity,
     }
 }
 
-internal class FolsomAccountFence(val name: String, private val id: String, private val current: () -> String?) {
-    init { if (name.isBlank() || id.isBlank()) throw SecurityException("Recovery account unavailable") }
-    fun check() { if (current() != id) throw SecurityException("Recovery account changed") }
+internal class FolsomAccountFence(val name: String, val userId: String, private val current: () -> String?) {
+    init { if (name.isBlank() || userId.isBlank()) throw SecurityException("Recovery account unavailable") }
+    fun check() { if (current() != userId) throw SecurityException("Recovery account changed") }
     fun <T> checked(action: () -> T): T { check(); val result = action(); check(); return result }
     override fun toString(): String = "FolsomAccountFence[redacted]"
 }

@@ -7,6 +7,7 @@ import java.util.UUID
 class SharingRecipient private constructor(private val proto: Proto, val userId: String, val name: String, val email: String,
     val version: Long, private val key: ByteArray?) {
     val eligible get() = key != null
+    val profileImageUrl: String get() = proto.optional(2)?.let(Proto::decode)?.optionalString(3).orEmpty()
     fun publicKey() = key?.copyOf() ?: throw VaultLockedException()
     fun encode() = proto.encode()
     fun sameKey(other: SharingRecipient) = key != null && other.key != null && userId == other.userId && version == other.version && MessageDigest.isEqual(key, other.key)
@@ -32,6 +33,10 @@ class SharingInvitation private constructor(val name: String, val sender: Sharin
     fun passwords(keys: PasswordSharingKeys, nowMillis: Long): List<PasswordData> {
         val plaintext = keys.version(recipientVersion).open(ciphertext, sender)
         return try { SharingPasswordGroup.decode(plaintext, sender, nowMillis) } finally { plaintext.fill(0) }
+    }
+    fun passwordBatch(keys: PasswordSharingKeys, nowMillis: Long): SharingPasswordBatch {
+        val plaintext = keys.version(recipientVersion).open(ciphertext, sender)
+        return try { SharingPasswordGroup.decodeBatch(plaintext, sender, nowMillis) } finally { plaintext.fill(0) }
     }
     override fun toString() = "SharingInvitation[redacted]"
     companion object {
@@ -73,24 +78,32 @@ object SharingPasswordGroup {
         return Proto.field(2, Proto.field(1, data.username) + Proto.field(2, data.password) + Proto.field(3, element))
     }
     fun decode(raw: ByteArray, sender: SharingRecipient, nowMillis: Long): List<PasswordData> {
-        val group = Proto.decode(Proto.decode(raw).one(2))
+        val batch = decodeBatch(raw, sender, nowMillis)
+        // The explicit owner picker lists only credentials with a verified native fill contract.
+        // Automatic processing can store other schemes without granting them fill authority.
+        if (batch.invalidCount != 0 || batch.passwords.any { !it.canFillRealm(it.realm) }) throw ProtocolException()
+        return batch.passwords
+    }
+    fun decodeBatch(raw: ByteArray, sender: SharingRecipient, nowMillis: Long): SharingPasswordBatch {
+        val group = Proto.decode(Proto.decode(raw).optional(2) ?: byteArrayOf())
         val username = group.optionalString(1).orEmpty(); val password = group.optionalString(2).orEmpty()
         val elements = group.bytes(3)
-        if (elements.isEmpty() || elements.size > 100 || username.length > 100_000 || password.isEmpty() || password.length > 100_000) throw ProtocolException()
-        return elements.map { encoded ->
+        if (elements.size > 100 || nowMillis < 0 || nowMillis > Long.MAX_VALUE / 1000 - 11_644_473_600_000L) throw ProtocolException()
+        val received = (nowMillis + 11_644_473_600_000L) * 1000
+        val valid = ArrayList<PasswordData>(); var invalid = 0
+        for (encoded in elements) {
             val element = Proto.decode(encoded)
             val scheme = element.integer(2) ?: 0
-            if (scheme != 0L) throw ProtocolException() // Other schemes require their own verified fill/identity contract.
-            val realm = element.string(3); val origin = element.string(4)
-            val base = PasswordData.create(realm, origin, username, password, nowMillis)
-            val proto = Proto.decode(base.encode()).replaceInteger(13, 5)
-                .replace(5, element.optionalString(5).orEmpty().toByteArray(Charsets.UTF_8))
-                .replace(7, element.optionalString(7).orEmpty().toByteArray(Charsets.UTF_8))
-                .replace(15, element.optionalString(8).orEmpty().toByteArray(Charsets.UTF_8))
-                .replace(23, sender.email.toByteArray(Charsets.UTF_8)).replace(24, sender.name.toByteArray(Charsets.UTF_8))
-                .replaceInteger(25, Proto.decode(base.encode()).integer(11) ?: throw ProtocolException()).replaceInteger(26, 0)
-            PasswordData.decode(proto.encode()).also { if (!it.canFillRealm(it.realm)) throw ProtocolException() }
-        }.also { if (it.map { passwordData -> passwordData.tag() }.toSet().size != it.size) throw ProtocolException() }
+            if (scheme !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) throw ProtocolException()
+            val proto = Proto.decode(Proto.integer(1, scheme) + Proto.field(2, element.optionalString(3).orEmpty()) +
+                Proto.field(3, element.optionalString(4).orEmpty()) + Proto.field(5, element.optionalString(5).orEmpty()) +
+                Proto.field(6, username) + Proto.field(7, element.optionalString(7).orEmpty()) + Proto.field(8, password) +
+                Proto.integer(11, received) + Proto.integer(13, 5) + Proto.field(15, element.optionalString(8).orEmpty()) +
+                Proto.field(16, element.optionalString(9).orEmpty()) + Proto.field(23, sender.email) + Proto.field(24, sender.name) +
+                Proto.integer(25, received) + Proto.integer(26, 0) + Proto.field(27, sender.profileImageUrl))
+            if (SharingIncomingPolicy.valid(proto)) valid.add(PasswordData.decode(proto.encode())) else invalid++
+        }
+        return SharingPasswordBatch(valid, invalid)
     }
 }
 

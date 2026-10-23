@@ -153,12 +153,7 @@ internal class KeyRetrievalServiceImpl(
             try {
                 checkCurrent(fence)
                 val localKeyManager = LocalKeyManager.getInstance(context)
-                val currentStatus = localKeyManager.getDomainStatus(accountName, domainId)
-
-                if (currentStatus != DomainStatus.UNKNOWN) {
-                    localKeyManager.setDomainStatus(accountName, domainId, DomainStatus.RECOVERABLE)
-                    localKeyManager.updateLastFetchTimestamp(accountName, domainId, 0L)
-                }
+                localKeyManager.markKeysStale(accountName, domainId, expectedUserId = fence.userId)
                 checkCurrent(fence)
                 callback?.onResult(Status.SUCCESS)
             } catch (e: Exception) {
@@ -194,7 +189,7 @@ internal class KeyRetrievalServiceImpl(
                 val localKeyManager = LocalKeyManager.getInstance(context)
                 val domainStatus = localKeyManager.getDomainStatus(accountName, domainId)
 
-                val localKeys = localKeyManager.getLocalKeysOrSync(context, accountName, domainId, sessionId)
+                val localKeys = localKeyManager.getLocalKeysOrSync(context, accountName, domainId, sessionId, expectedUserId = fence.userId)
                 checkCurrent(fence)
                 if (localKeys.isEmpty()) {
                     Log.w(TAG, "getKeyMaterial: no keys available")

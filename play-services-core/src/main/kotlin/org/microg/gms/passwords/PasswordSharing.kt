@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.content.Context
+import android.accounts.AccountManager
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -13,7 +14,7 @@ class PasswordSharingScreen(val recipients: List<SharingRecipient>, val incoming
     override fun toString() = "PasswordSharingScreen[redacted]"
 }
 
-/** Owner-only orchestration. No background task sends, imports or acknowledges an invitation. */
+/** Sending remains owner-only; incoming invitations also have the source's automatic receiver. */
 class PasswordSharing(context: Context, private val repository: PasswordRepository, private val authorize: () -> Unit) {
     private val context = context.applicationContext
     private val api = PasswordSharingApi(repository.sharingTransport())
@@ -26,14 +27,40 @@ class PasswordSharing(context: Context, private val repository: PasswordReposito
         return bound
     }
 
-    private fun <T> withKeys(metadata: ByteArray, action: (PasswordSharingKeys) -> T): T = repository.store.locked { session ->
+    private fun <T> withKeys(metadata: ByteArray, action: (PasswordSharingKeys) -> T): T {
+        val keys = repository.store.locked { session ->
+            check()
+            val state = session.load()
+            val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
+            if (state.pendingMetadata != null || state.metadata?.let { Proto.decode(it).string(1) } != parent) throw VaultResetException()
+            val vaultKeys = repository.sharingKeys(metadata, state)
+            try { PasswordSharingKeys.read(metadata, vaultKeys) } finally { vaultKeys.destroy() }
+        }
+        try { return action(keys) } finally { keys.destroy() }
+    }
+
+    /** Worker entry point. Only already opted-in accounts receive; no outgoing send is resumed. */
+    fun processIncoming(): Int {
         check()
-        val state = session.load()
+        val metadata = api.metadata()
         val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
-        if (state.metadata?.let { Proto.decode(it).string(1) } != parent) throw VaultResetException()
-        val vaultKeys = repository.sharingKeys(metadata, state)
-        val keys = try { PasswordSharingKeys.read(metadata, vaultKeys) } finally { vaultKeys.destroy() }
-        try { action(keys) } finally { keys.destroy() }
+        fun verify() {
+            check()
+            repository.store.locked { session ->
+                val state = session.load() // Also verifies the repository's captured stable Gaia ID.
+                if (state.pendingMetadata != null || state.metadata?.let { Proto.decode(it).string(1) } != parent) throw VaultResetException()
+            }
+        }
+        verify()
+        val userId = AccountManager.get(context).getUserData(repository.account, "GoogleUserId") ?: throw VaultLockedException()
+        verify()
+        val notifications = PasswordSharingNotifications(context, repository.account, userId)
+        val clientToken = token(parent)
+        return try {
+            SharingIncomingBackground(api, journal, destination(parent), ::verify, notifications::received).synchronize(parent, clientToken) { invitation ->
+                withKeys(metadata) { keys -> invitation.passwordBatch(keys, System.currentTimeMillis()) }
+            }
+        } finally { clientToken.fill(0) }
     }
     fun load(): PasswordSharingScreen {
         check()

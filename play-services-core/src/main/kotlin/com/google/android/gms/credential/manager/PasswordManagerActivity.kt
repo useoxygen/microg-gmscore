@@ -396,8 +396,21 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         if (storageChosen) { perform { }; return }
         val accounts = AccountManager.get(this).getAccountsByType("com.google")
         val requested = intent.getStringExtra(EXTRA_KEY_ACCOUNT_NAME)
-        val account = accounts.firstOrNull { it.name == requested } ?: accounts.singleOrNull()
-        if (account != null || accounts.isEmpty()) choose(account)
+        val expectedUserId = intent.getStringExtra("google_user_id")
+        val account = if (requested != null) accounts.singleOrNull { it.name == requested } else accounts.singleOrNull()
+        // Notification links keep the exact account incarnation. A removed account
+        // must never silently redirect the owner into a different vault.
+        if (requested != null && account == null || expectedUserId != null &&
+            (account == null || AccountManager.get(this).getUserData(account, "GoogleUserId") != expectedUserId)) {
+            message = R.string.passwords_access_failed
+            return
+        }
+        if (account != null || accounts.isEmpty()) {
+            val realm = intent.getStringExtra("deepLinkToSignonRealm")?.takeIf {
+                it.length in 1..4096 && it.none(Char::isISOControl)
+            }
+            choose(account, realm.orEmpty())
+        }
     }
     override fun onOwnerAuthenticationFailed() {
         clearExport(); afterAuthentication = null
@@ -412,8 +425,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         showCheckup = false; dismissedCheckup = false; checkupDismissal = null
         if (!exportPending) clearExport()
     }
-    private fun choose(account: Account?) {
-        requireOwner(); selected = account; storageChosen = true; entries = emptyList(); query = ""; showBlocked = false
+    private fun choose(account: Account?, initialQuery: String = "") {
+        requireOwner(); selected = account; storageChosen = true; entries = emptyList(); query = initialQuery; showBlocked = false
         showCheckup = false; dismissedCheckup = false; checkupDismissal = null
         perform { }
     }

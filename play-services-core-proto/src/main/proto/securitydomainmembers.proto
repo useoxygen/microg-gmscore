@@ -63,7 +63,7 @@ message ListSecurityDomainMembersResponse {
 
 message SecurityDomainMemberResponse {
   optional string name = 1;
-  optional bytes createTime = 2;
+  optional bytes publicKey = 2;
   repeated MemberSecurityDomain securityDomains = 3;
   optional int32 memberType = 4;
   optional MemberMetadata memberMetadata = 6;
@@ -71,20 +71,21 @@ message SecurityDomainMemberResponse {
 
 message MemberSecurityDomain {
   optional string name = 1;
+  // GMS hzxq: shared member keys and rotation proofs are different messages.
   repeated MemberKey memberKeys = 3;
-  repeated TrustedVaultKey trustedVaultKeys = 4;
+  repeated KeyRotationProof rotationProofs = 4;
   optional CurrentKeyMetadata currentKeyMetadata = 5;
 }
 
 message MemberKey {
-  optional int32 keyType = 1;
-  optional bytes publicKey = 2;
-  optional bytes wrappedKey = 3;
-}
-
-message TrustedVaultKey {
   optional int32 epoch = 1;
   optional bytes wrappedKey = 2;
+  optional bytes membershipProof = 3;
+}
+
+message KeyRotationProof {
+  optional int32 epoch = 1;
+  optional bytes rotationProof = 2;
 }
 
 message CurrentKeyMetadata {

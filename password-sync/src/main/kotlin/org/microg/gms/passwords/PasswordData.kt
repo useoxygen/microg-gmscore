@@ -20,7 +20,9 @@ class PasswordData private constructor(private val proto: Proto) {
     val hasIssues: Boolean get() = proto.optional(19) != null
     fun canFillRealm(requested: String): Boolean = !blocked && password.isNotEmpty() && matchesRealmAuthority(requested)
     fun matchesRealmAuthority(requested: String): Boolean {
-        if (realm != requested) return false
+        // Non-HTML schemes can be synchronized and managed, but the native
+        // field consumers do not implement their distinct authentication contract.
+        if ((proto.integer(1) ?: 0L) != 0L || realm != requested) return false
         return when {
             requested.startsWith("https://") || requested.startsWith("http://") ->
                 runCatching { webRealm(origin) == requested && webRealm(realm) == requested }.getOrDefault(false)

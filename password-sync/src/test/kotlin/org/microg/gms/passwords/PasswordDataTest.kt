@@ -5,6 +5,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PasswordDataTest {
+    @Test fun unsupportedSchemesStayStoredWithoutNativeFillOrReplacementAuthority() {
+        val html = PasswordData.create("https://example.invalid/", "https://example.invalid/login", "synthetic", "synthetic", 1234L)
+        assertTrue(html.canFillRealm(html.realm))
+        for (scheme in listOf(1L, 2L, 3L, 4L, 99L)) {
+            val raw = Proto.decode(html.encode()).replaceInteger(1, scheme).encode()
+            val synced = PasswordData.decode(raw)
+            assertArrayEquals(raw, synced.encode())
+            assertEquals(html.password, synced.password)
+            assertFalse(synced.canFillRealm(synced.realm))
+            assertFalse(synced.matchesRealmAuthority(synced.realm))
+        }
+    }
+
     @Test fun fillRequiresBothWebAuthoritiesButStillSupportsAndroidFacets() {
         val item = PasswordData.create("https://example.invalid/", "https://EXAMPLE.invalid:443/login", "synthetic", "synthetic", 1234L)
         assertTrue(item.canFillRealm("https://example.invalid/"))
