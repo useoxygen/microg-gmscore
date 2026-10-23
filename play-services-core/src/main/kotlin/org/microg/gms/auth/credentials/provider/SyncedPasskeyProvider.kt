@@ -34,14 +34,15 @@ import java.security.spec.ECGenParameterSpec
 @RequiresApi(34)
 internal object SyncedPasskeyProvider {
     fun entries(context: Context, option: BeginGetPublicKeyCredentialOption, request: BeginGetCredentialRequest): List<CredentialEntry> {
-        if (!supportsGet(option.requestJson)) return emptyList()
+        if (!SyncedPasskeyRequestSupport.get(option.requestJson)) return emptyList()
         val caller = PasswordCaller.from(request.callingAppInfo ?: return emptyList())
         val options = JSONObject(option.requestJson).parsePublicKeyCredentialRequestOptions()
+        val prf = SyncedPasskeyRequestSupport.prf(option.requestJson, false)
         SyncedPasskey.checkedRp(options.rpId)
         val tickets = PasskeyRequestTickets(context)
         return SyncedPasskeyVault.accounts(context).take(5).flatMap { vault -> runCatching {
             val values = PasskeySnapshots.candidates({ vault.list() }, { vault.list(refresh = true) })
-            values.filter { it.rpId == options.rpId && (options.allowList.isNullOrEmpty() ||
+            values.filter { (prf == null || it.encryptedField != 9) && it.rpId == options.rpId && (options.allowList.isNullOrEmpty() ||
                 options.allowList!!.any { allowed -> MessageDigest.isEqual(allowed.id, it.credentialId) }) }.take(40).map { item ->
                 PublicKeyCredentialEntry(context = context, username = item.username.ifEmpty { item.displayName.ifEmpty { vault.account.name } },
                     displayName = item.displayName.ifEmpty { null },
@@ -51,7 +52,7 @@ internal object SyncedPasskeyProvider {
         }.getOrDefault(emptyList()) }
     }
     fun createEntries(context: Context, request: BeginCreatePublicKeyCredentialRequest): List<CreateEntry> {
-        if (!supportsCreate(request.requestJson)) return emptyList()
+        if (!SyncedPasskeyRequestSupport.create(request.requestJson)) return emptyList()
         val caller = PasswordCaller.from(request.callingAppInfo ?: return emptyList())
         val options = JSONObject(request.requestJson).parsePublicKeyCredentialCreationOptions()
         SyncedPasskey.checkedRp(options.rp.id)
@@ -70,7 +71,9 @@ internal object SyncedPasskeyProvider {
                 val vault = selected(activity, ticket)
                 val base = JSONObject(option.requestJson).parsePublicKeyCredentialRequestOptions()
                 if (ticket.string(4) != base.rpId) throw SecurityException()
-                if (!supportsGet(option.requestJson)) throw SecurityException()
+                if (!SyncedPasskeyRequestSupport.get(option.requestJson)) throw SecurityException()
+                val prf = SyncedPasskeyRequestSupport.prf(option.requestJson, false)
+                val blobs = SyncedPasskeyBlobReads.request(option.requestJson)
                 val options = options(activity, base, caller, option.clientDataHash)
                 options.checkIsValid(activity, origin(activity, caller, request.callingAppInfo.packageName), request.callingAppInfo.packageName)
                 recover(activity, vault)
@@ -78,16 +81,22 @@ internal object SyncedPasskeyProvider {
                 var owner = authenticate(activity, base.rpId, verify)
                 val result = PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
                     vault.withSecret(ticket.string(3), base.rpId, base.allowList.orEmpty().map { it.id }, owner, rapt) { item, secret ->
-                        val key = secret.privateKey()
-                        try {
-                            val (clientData, hash) = getClientDataAndHash(activity, options, request.callingAppInfo.packageName)
-                            if (hash.size != 32) throw SecurityException()
-                            val auth = authenticator(base.rpId)
-                            owner()
-                            val signed = Signature.getInstance("SHA256withECDSA").run { initSign(key); update(auth.encode() + hash); sign() }
-                            owner()
-                            credential(item.credentialId, AuthenticatorAssertionResponse(item.credentialId, clientData, auth.encode(), signed, item.userId)).toJson()
-                        } finally { runCatching { key.destroy() } }
+                        SyncedPasskeyBlobReads.read(secret, blobs).use { blobResult ->
+                            val key = secret.privateKey()
+                            try {
+                                val (clientData, hash) = getClientDataAndHash(activity, options, request.callingAppInfo.packageName)
+                                if (hash.size != 32) throw SecurityException()
+                                val auth = authenticator(base.rpId, extensions = blobResult?.credBlob?.let(::encodeCredBlobAuthenticationExtension))
+                                owner()
+                                val signed = Signature.getInstance("SHA256withECDSA").run { initSign(key); update(auth.encode() + hash); sign() }
+                                owner()
+                                val output = prf?.let { secret.prf(it, item.credentialId).use(SyncedPasskeyPrf::output) }
+                                owner()
+                                val json = credential(item.credentialId, AuthenticatorAssertionResponse(item.credentialId, clientData, auth.encode(), signed, item.userId),
+                                    output?.let { AuthenticationExtensionsClientOutputs(null, null, null, it, null) }).toJson()
+                                SyncedPasskeyBlobReads.output(json, blobs, blobResult).also { owner() }
+                            } finally { runCatching { key.destroy() } }
+                        }
                     }
                 } }, reauthenticate = { lookup ->
                     val proof = PasskeyReauthUi.show(activity, vault.account.name, vault.accountId, lookup) { requireForeground(activity, verify) }
@@ -108,7 +117,8 @@ internal object SyncedPasskeyProvider {
                 val ticket = withContext(Dispatchers.IO) { PasskeyRequestTickets(activity).consume(activity.intent.data, caller.identity, option.requestJson, true) }
                 val vault = selected(activity, ticket)
                 val base = JSONObject(option.requestJson).parsePublicKeyCredentialCreationOptions()
-                if (ticket.string(4) != base.rp.id || !supportsCreate(option.requestJson)) throw SecurityException()
+                if (ticket.string(4) != base.rp.id || !SyncedPasskeyRequestSupport.create(option.requestJson)) throw SecurityException()
+                val prf = SyncedPasskeyRequestSupport.prf(option.requestJson, true)
                 val browser = caller.realms.single().startsWith("https://")
                 val options: RequestOptions = if (browser) BrowserPublicKeyCredentialCreationOptions.Builder()
                     .setPublicKeyCredentialCreationOptions(base).setOrigin(android.net.Uri.parse(origin(activity, caller, request.callingAppInfo.packageName)))
@@ -137,20 +147,28 @@ internal object SyncedPasskeyProvider {
                         val auth = authenticator(base.rp.id, AttestedCredentialData(ByteArray(16), specifics.credentialId, cose.encode()))
                         // Only a successful remote create and durable local save can claim a synced registration.
                         vault.create(specifics, owner, base.excludeList.orEmpty().map { it.id })
-                        val response = credential(specifics.credentialId, AuthenticatorAttestationResponse(specifics.credentialId, clientData,
-                            NoneAttestationObject(auth).encode(), arrayOf("internal"))).toJson()
-                        if (JSONObject(option.requestJson).optJSONObject("extensions")?.optBoolean("credProps") == true) {
-                            val json = JSONObject(response)
-                            json.getJSONObject("clientExtensionResults").put("credProps", JSONObject().put("rk", true))
-                            json.toString()
-                        } else response
+                        specifics to AuthenticatorAttestationResponse(specifics.credentialId, clientData,
+                            NoneAttestationObject(auth).encode(), arrayOf("internal"))
                     } finally { pkcs8.fill(0); runCatching { key.private.destroy() } }
                 } }, reauthenticate = { lookup ->
                     val proof = PasskeyReauthUi.show(activity, vault.account.name, vault.accountId, lookup) { requireForeground(activity, verify) }
                     owner = authenticate(activity, base.rp.id, verify)
                     proof
                 })
-                owner(); activity.finishWithSuccess(CreatePublicKeyCredentialResponse(result))
+                // A challenge after successful creation may retry only this read, never the create mutation.
+                val output = if (prf == null) null else PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
+                    vault.withSecret(result.first.tag, base.rp.id, listOf(result.first.credentialId), owner, rapt) { item, secret ->
+                        secret.prf(prf, item.credentialId).use(SyncedPasskeyPrf::output)
+                    }
+                } }, reauthenticate = { lookup ->
+                    val proof = PasskeyReauthUi.show(activity, vault.account.name, vault.accountId, lookup) { requireForeground(activity, verify) }
+                    owner = authenticate(activity, base.rp.id, verify)
+                    proof
+                })
+                val extensions = if (output == null && !SyncedPasskeyRequestSupport.credProps(option.requestJson)) null else
+                    AuthenticationExtensionsClientOutputs(null, null,
+                        if (SyncedPasskeyRequestSupport.credProps(option.requestJson)) AuthenticationExtensionsCredPropsOutputs(true) else null, output, null)
+                owner(); activity.finishWithSuccess(CreatePublicKeyCredentialResponse(credential(result.first.credentialId, result.second, extensions).toJson()))
             } catch (_: Exception) { activity.finishWithException() }
         }
         return true
@@ -195,13 +213,18 @@ internal object SyncedPasskeyProvider {
         if (caller.realms.single().startsWith("https://")) BrowserPublicKeyCredentialRequestOptions.Builder()
             .setPublicKeyCredentialRequestOptions(base).setOrigin(android.net.Uri.parse(caller.realms.single().removeSuffix("/")))
             .apply { hash?.let(::setClientDataHash) }.build() else base
-    private fun authenticator(rp: String, attested: AttestedCredentialData? = null) = AuthenticatorData(
-        MessageDigest.getInstance("SHA-256").digest(rp.toByteArray(Charsets.UTF_8)), true, true, 0, attested).apply {
+    private fun authenticator(rp: String, attested: AttestedCredentialData? = null, extensions: ByteArray? = null) = AuthenticatorData(
+        MessageDigest.getInstance("SHA-256").digest(rp.toByteArray(Charsets.UTF_8)), true, true, 0, attested, extensions).apply {
         backupEligible = true; backedUp = true
     }
-    private fun credential(id: ByteArray, response: AuthenticatorResponse) = PublicKeyCredential.Builder().setId(id.encodeBase64Url())
-        .setRawId(id).setResponse(response).setAuthenticatorAttachment("platform").build()
-    private fun supportsCreate(request: String): Boolean = runCatching {
+    private fun credential(id: ByteArray, response: AuthenticatorResponse, extensions: AuthenticationExtensionsClientOutputs? = null) =
+        PublicKeyCredential.Builder().setId(id.encodeBase64Url()).setRawId(id).setResponse(response)
+            .setAuthenticatorAttachment("platform").setAuthenticationExtensionsClientOutputs(extensions).build()
+}
+
+/** Read the same two representations accepted by the options parser, before any unsupported field is dropped. */
+internal object SyncedPasskeyRequestSupport {
+    fun create(request: String): Boolean = runCatching {
         val json = JSONObject(request)
         val params = json.getJSONArray("pubKeyCredParams")
         val algorithms = (0 until params.length()).mapNotNull { index ->
@@ -209,15 +232,31 @@ internal object SyncedPasskeyProvider {
         }
         val selection = if (json.has("authenticatorSelection")) json.getJSONObject("authenticatorSelection") else null
         val extensions = extensionNames(json) ?: return@runCatching false
+        SyncedPasskeyPrf.json(extensionObject(json) ?: return@runCatching false, true)
         PasskeyRequestSupport.create(algorithms, if (json.has("attestation")) json.getString("attestation") else null,
             selection?.let { if (it.has("authenticatorAttachment")) it.getString("authenticatorAttachment") else null }, extensions)
     }.getOrDefault(false)
-    private fun supportsGet(request: String): Boolean = runCatching {
-        PasskeyRequestSupport.get(extensionNames(JSONObject(request)) ?: return@runCatching false)
+    fun get(request: String): Boolean = runCatching {
+        val json = JSONObject(request)
+        val names = extensionNames(json) ?: return@runCatching false
+        SyncedPasskeyPrf.json(extensionObject(json) ?: return@runCatching false, false)
+        SyncedPasskeyBlobReads.request(request)
+        PasskeyRequestSupport.get(names - setOf("getCredBlob", "largeBlob"))
     }.getOrDefault(false)
+    fun prf(request: String, create: Boolean): PasskeyPrfRequest? =
+        SyncedPasskeyPrf.json(extensionObject(JSONObject(request)) ?: throw ProtocolException(), create)
+    fun credProps(request: String): Boolean = runCatching {
+        extensionObject(JSONObject(request))?.opt("credProps") == true
+    }.getOrDefault(false)
+    private fun extensionObject(json: JSONObject): JSONObject? {
+        val fields = listOf("extensions", "authenticationExtensions").filter { json.has(it) }
+        if (fields.isEmpty()) return JSONObject()
+        // The parser gives the alias priority. A second representation must not hide another request.
+        if (fields.size != 1) return null
+        return json.optJSONObject(fields.single())
+    }
     private fun extensionNames(json: JSONObject): Set<String>? {
-        if (!json.has("extensions")) return emptySet()
-        val extensions = json.optJSONObject("extensions") ?: return null
+        val extensions = extensionObject(json) ?: return null
         if (extensions.has("credProps") && extensions.opt("credProps") !is Boolean) return null
         val names = HashSet<String>()
         val iterator = extensions.keys()

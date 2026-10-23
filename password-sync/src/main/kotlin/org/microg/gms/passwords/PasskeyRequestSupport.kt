@@ -5,6 +5,6 @@ package org.microg.gms.passwords
 object PasskeyRequestSupport {
     fun create(algorithms: Collection<Int>, attestation: String?, attachment: String?, extensions: Set<String>): Boolean =
         -7 in algorithms && attestation in setOf(null, "none") && attachment in setOf(null, "platform") &&
-            extensions.all { it == "credProps" }
-    fun get(extensions: Set<String>): Boolean = extensions.isEmpty()
+            extensions.all { it in setOf("credProps", "prf") }
+    fun get(extensions: Set<String>): Boolean = extensions.all { it == "prf" }
 }

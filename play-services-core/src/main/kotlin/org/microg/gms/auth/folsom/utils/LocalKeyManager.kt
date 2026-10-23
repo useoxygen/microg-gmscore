@@ -39,6 +39,10 @@ import java.util.Random
 import java.io.RandomAccessFile
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.ConcurrentHashMap
+import org.microg.gms.passwords.EnrollmentState
+import org.microg.gms.passwords.EnrollmentPhase
+import org.microg.gms.passwords.EnrollmentWire
 
 private const val TAG = "LocalKeyManager"
 private const val STORE_DIR = "folsom"
@@ -364,6 +368,94 @@ class LocalKeyManager(private val context: Context) {
         return readStore().findAccount(obfuscatedId)?.takeIf { it.googleUserId == userId }?.accountKeyPairs ?: emptyList()
     }
 
+    /** Account-local OS lock spans enrollment I/O; the shared key-store lock spans only read/write. */
+    internal fun <T> withChromesyncEnrollment(accountName: String, expectedUserId: String,
+        action: (ChromesyncEnrollmentSession) -> T): T {
+        val lockName = obfuscateAccountName(expectedUserId)
+        val mutex = enrollmentLocks.getOrPut(lockName) { Any() }
+        return synchronized(mutex) {
+            RandomAccessFile(File(context.noBackupFilesDir, "folsom-enroll-$lockName.lock"), "rw").use { lock ->
+                lock.channel.lock().use {
+                    if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+                    val session = ChromesyncEnrollmentSession(accountName, expectedUserId)
+                    try { action(session) } finally { session.destroy() }
+                }
+            }
+        }
+    }
+
+    internal inner class ChromesyncEnrollmentSession(private val accountName: String, private val expectedUserId: String) {
+        private val obfuscatedId = obfuscateAccountName(accountName)
+        private val openedPairs = ArrayList<ByteArray>()
+        private fun retain(pair: ByteArray) = pair.also { openedPairs.add(it) }
+        internal fun destroy() { openedPairs.forEach { it.fill(0) }; openedPairs.clear() }
+        private fun verify() {
+            if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+        }
+        private fun checked(account: AccountData?): AccountData {
+            if (account?.googleUserId != null && account.googleUserId != expectedUserId ||
+                account?.googleUserId == null && !account?.accountKeyPairs.isNullOrEmpty())
+                throw TinkEncryptionException("Recovery key provenance unavailable")
+            return account ?: AccountData(googleUserId = expectedUserId)
+        }
+        fun load(): EnrollmentState {
+            verify()
+            val account = checked(readStore().findAccount(obfuscatedId))
+            val raw = account.chromesyncEnrollment?.toByteArray() ?: byteArrayOf()
+            return try { EnrollmentState.decode(raw).also { it.pair?.let(::retain); verify() } } finally { raw.fill(0) }
+        }
+        fun existingPair(): ByteArray? {
+            verify()
+            val account = checked(readStore().findAccount(obfuscatedId))
+            val pairs = account.accountKeyPairs.filter { it.keyPairType == 1 }
+            if (pairs.size > 1) throw TinkEncryptionException("Ambiguous recovery key")
+            return pairs.singleOrNull()?.let { key ->
+                val private = key.privateKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                val public = key.publicKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                try { buildKeyPairBytes(private, public).also { EnrollmentWire.checkPair(it); verify(); retain(it) } }
+                finally { private.fill(0); public.fill(0) }
+            }
+        }
+        fun save(state: EnrollmentState) {
+            verify()
+            state.pair?.let { EnrollmentWire.checkPair(it); retain(it) }
+            val encoded = state.encode()
+            try {
+                updateStore { store ->
+                    verify()
+                    val account = checked(store.findAccount(obfuscatedId))
+                    val previousRaw = account.chromesyncEnrollment?.toByteArray() ?: byteArrayOf()
+                    val previous = try { EnrollmentState.decode(previousRaw) } finally { previousRaw.fill(0) }
+                    try {
+                        if (previous.pair != null && (state.pair == null || !MessageDigest.isEqual(previous.pair, state.pair)))
+                            throw TinkEncryptionException("Recovery key changed")
+                        var pairs = account.accountKeyPairs
+                        if (state.attempt?.phase == EnrollmentPhase.ENROLLED) {
+                            val pair = state.pair ?: throw TinkEncryptionException("Recovery key unavailable")
+                            if (state.attempt.accountId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+                            val public = EnrollmentWire.publicKey(pair)
+                            val existing = pairs.filter { it.keyPairType == 1 }
+                            if (existing.size > 1) throw TinkEncryptionException("Ambiguous recovery key")
+                            existing.singleOrNull()?.let { key ->
+                                val private = key.privateKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                                val storedPublic = key.publicKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                                val known = try { buildKeyPairBytes(private, storedPublic) } finally { private.fill(0); storedPublic.fill(0) }
+                                try { if (!MessageDigest.isEqual(known, pair)) throw TinkEncryptionException("Recovery key changed") }
+                                finally { known.fill(0) }
+                            }
+                            if (existing.isEmpty()) pairs = pairs + KeyPair(publicKey = public.toByteString(),
+                                privateKey = pair.toByteString(), keyPairType = 1)
+                        }
+                        verify()
+                        store.updateAccount(obfuscatedId, account.copy(googleUserId = expectedUserId,
+                            accountKeyPairs = pairs, chromesyncEnrollment = encoded.toByteString()))
+                    } finally { previous.pair?.fill(0) }
+                }
+                verify()
+            } finally { encoded.fill(0) }
+        }
+    }
+
     /** Called by account removal; active accounts are retained, including encrypted unbound migration inputs. */
     fun purgeRemovedAccounts() {
         updateStore { store ->
@@ -378,9 +470,10 @@ class LocalKeyManager(private val context: Context) {
         }
     }
 
-    private fun getPhysicalDeviceKeyPair(accountName: String): KeyPair? {
+    private fun getPhysicalDeviceKeyPair(accountName: String, domainId: String): KeyPair? {
         val keyPairs = getAccountKeyPairs(accountName)
-        return keyPairs.find { it.keyPairType == 3 } ?: keyPairs.find { it.keyPairType == 1 }
+        return if (domainId == "chromesync") keyPairs.singleOrNull { it.keyPairType == 1 }
+        else keyPairs.find { it.keyPairType == 3 } ?: keyPairs.find { it.keyPairType == 1 }
     }
 
     private fun buildKeyPairBytes(privateKey: ByteArray, publicKey: ByteArray): ByteArray {
@@ -414,7 +507,7 @@ class LocalKeyManager(private val context: Context) {
         if (hasValidKeys(accountName, domainId)) {
             return DomainStatus.RECOVERABLE
         }
-        val localKeyPair = getPhysicalDeviceKeyPair(accountName)
+        val localKeyPair = getPhysicalDeviceKeyPair(accountName, domainId)
         if (localKeyPair != null) {
             val localPublicKey = localKeyPair.publicKey?.toByteArray()
             if (localPublicKey != null) {
@@ -459,7 +552,7 @@ class LocalKeyManager(private val context: Context) {
         domainId: String,
         accountName: String,
         known: List<Keys>
-    ): List<Keys> = getPhysicalDeviceKeyPair(accountName)
+    ): List<Keys> = getPhysicalDeviceKeyPair(accountName, domainId)
         ?.let { keyPair ->
             val pubKey = keyPair.publicKey?.toByteArray()
             val priKey = keyPair.privateKey?.toByteArray()
@@ -472,6 +565,7 @@ class LocalKeyManager(private val context: Context) {
         } ?: emptyList()
 
     companion object {
+        private val enrollmentLocks = ConcurrentHashMap<String, Any>()
         @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: LocalKeyManager? = null

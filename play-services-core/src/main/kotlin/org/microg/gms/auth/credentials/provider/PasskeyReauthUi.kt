@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.webkit.WebViewClientCompat
@@ -33,9 +34,9 @@ import org.microg.gms.passwords.VaultLockedException
 import java.net.URLEncoder
 
 /** Private, owner-selected Google xreauth UI. No proof is stored, put in an Intent, or returned to the app/model. */
-@RequiresApi(34)
+@RequiresApi(28)
 internal object PasskeyReauthUi {
-    suspend fun show(activity: PublicKeyProxyActivity, accountName: String, stableId: String, lookup: String,
+    suspend fun show(activity: AppCompatActivity, accountName: String, stableId: String, lookup: String,
         verify: () -> Unit): String = withTimeout(120_000) {
         verify()
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) ||

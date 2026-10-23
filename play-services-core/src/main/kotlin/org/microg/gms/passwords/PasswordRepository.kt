@@ -289,6 +289,53 @@ class PasswordRepository(context: Context, val account: Account, private val exp
         store.locked { VaultRecovery.acceptTrustedKeys(it, keys) }
         if (scheduleRefresh) schedule()
     }
+    /** Capture before opening recovery; a later WebView result cannot adopt another vault. */
+    internal fun trustedVaultRecoveryParent(expectedUserId: String): String {
+        checkTrustedVaultIdentity(expectedUserId)
+        return store.locked { session ->
+            checkTrustedVaultIdentity(expectedUserId)
+            val metadata = VaultRecovery.trustedMetadata(session.load())
+            checkSnapshotParent(metadata)
+            PasswordApi.checkedParent(Proto.decode(metadata).string(1))
+        }
+    }
+    internal fun acceptVersionedTrustedVaultKeys(keys: List<VersionedTrustedVaultKey>, expectedParent: String,
+        expectedUserId: String, scheduleRefresh: Boolean = true, authorize: () -> Unit) {
+        checkTrustedVaultIdentity(expectedUserId)
+        if (expectedVaultParent != null && expectedVaultParent != expectedParent) throw VaultResetException()
+        store.locked { session -> VaultRecovery.acceptVersionedTrustedKeys(session, keys, expectedParent) {
+            authorize(); checkTrustedVaultIdentity(expectedUserId)
+        } }
+        if (scheduleRefresh) schedule()
+    }
+    /** No recovery, network fetch, guessed epoch, or enrollment is performed by this getter. */
+    internal fun versionedTrustedVaultKeys(expectedParent: String, expectedUserId: String): List<VersionedTrustedVaultKey> {
+        checkTrustedVaultIdentity(expectedUserId)
+        return store.locked { session ->
+            checkTrustedVaultIdentity(expectedUserId)
+            val state = session.load()
+            if (state.pendingMetadata != null) throw VaultResetException()
+            val metadata = VaultRecovery.trustedMetadata(state)
+            checkSnapshotParent(metadata)
+            if (Proto.decode(metadata).string(1) != expectedParent) throw VaultResetException()
+            val retained = state.versionedTrustedVaultKeys ?: throw VaultLockedException()
+            if (retained.parent != expectedParent) throw VaultResetException()
+            val keys = retained.keys
+            val raw = ArrayList<ByteArray>()
+            var returned = false
+            try {
+                keys.forEach { raw.add(it.material) }
+                VaultKeys.unlock(metadata, trustedVaultKeys = raw).destroy()
+                checkTrustedVaultIdentity(expectedUserId)
+                returned = true
+                keys
+            } finally { raw.forEach { it.fill(0) }; if (!returned) keys.forEach { it.destroy() } }
+        }
+    }
+    private fun checkTrustedVaultIdentity(expectedUserId: String) {
+        checkEnabled()
+        if (userId != expectedUserId) throw VaultLockedException()
+    }
     private fun unlock(metadata: ByteArray, customKey: ByteArray? = null, cachedTrustedKeys: List<ByteArray> = emptyList()): VaultKeys {
         val type = Proto.decode(Proto.decode(metadata).one(3)).integer(2)
         return if (type == 5L) VaultKeys.unlockTrustedVault(metadata) { force ->

@@ -24,6 +24,11 @@ class PasskeySecret(private val pkcs8: ByteArray, private val encrypted: ByteArr
         catch (_: Exception) { throw ProtocolException() }
     /** Preserve PRF/credBlob/largeBlob and unknown Encrypted fields when rewrapping. */
     fun encode(): ByteArray = encrypted?.copyOf() ?: Proto.field(1, pkcs8)
+    /** Only existing authenticated field2 can supply PRF; legacy or missing-secret records are unsupported. */
+    fun prf(request: PasskeyPrfRequest, credentialId: ByteArray): PasskeyPrfResult {
+        val secret = encrypted?.let { Proto.decode(it).optional(2) } ?: throw VaultLockedException()
+        return try { request.evaluate(secret, credentialId) } finally { secret.fill(0) }
+    }
     override fun close() { pkcs8.fill(0); encrypted?.fill(0) }
     override fun toString(): String = "PasskeySecret[redacted]"
 }
@@ -75,8 +80,12 @@ object PasskeyCrypto {
     private fun decodedSecret(raw: ByteArray): PasskeySecret {
         val proto = Proto.decode(raw)
         val pkcs8 = proto.one(1)
-        if (pkcs8.size !in 32..4096 || proto.optional(2)?.size?.let { it != 32 } == true ||
-            proto.optional(4)?.size?.let { it > 2048 } == true) { pkcs8.fill(0); throw ProtocolException() }
+        // large_blob's 2KiB bound applies to its uncompressed output. Even a valid
+        // 2KiB raw DEFLATE stored block needs five additional bytes. Malformed blob
+        // data is handled by the optional read extension, not by key decoding.
+        if (pkcs8.size !in 32..4096 || proto.optional(2)?.size?.let { it != 32 } == true) {
+            pkcs8.fill(0); throw ProtocolException()
+        }
         return PasskeySecret(pkcs8, raw.copyOf())
     }
     internal fun hkdf(raw: ByteArray, info: String): ByteArray {

@@ -12,6 +12,8 @@ class SyncedPasskey private constructor(private val proto: Proto) {
     val userId: ByteArray get() = proto.one(4)
     val username: String get() = proto.optionalString(7).orEmpty()
     val displayName: String get() = proto.optionalString(8).orEmpty()
+    val editedByUser: Boolean get() = proto.integer(15) == 1L
+    val shadowedCredentialIds: List<ByteArray> get() = proto.bytes(5)
     val createdMillis: Long get() = proto.integer(6) ?: 0
     val hidden: Boolean get() = proto.integer(16) == 1L
     val keyVersion: Int get() = (proto.integer(14) ?: 0).toInt()
@@ -24,6 +26,12 @@ class SyncedPasskey private constructor(private val proto: Proto) {
         proto.bytes(5).any { MessageDigest.isEqual(it, other.credentialId) }
     fun encode(): ByteArray = proto.encode()
     fun withLastUsed(windowsMicros: Long): SyncedPasskey = decode(proto.replaceInteger(13, windowsMicros).encode())
+    /** Pinned owner editor bmwi/ipcc changes only names and sets field 15. The inner secret stays opaque. */
+    fun withOwnerNames(username: String, displayName: String): SyncedPasskey {
+        if (username.isEmpty() || username.length > 1024 || displayName.length > 1024) throw ProtocolException()
+        return decode(proto.replace(7, username.toByteArray(Charsets.UTF_8))
+            .replace(8, displayName.toByteArray(Charsets.UTF_8)).replaceInteger(15, 1).encode())
+    }
     fun withShadows(ids: List<ByteArray>): SyncedPasskey = decode(proto.replaceRepeated(5,
         (proto.bytes(5) + ids).distinctBy(::hex)).encode())
     /** Proto serialization order is not identity; a server may canonically reserialize the same immutable credential. */

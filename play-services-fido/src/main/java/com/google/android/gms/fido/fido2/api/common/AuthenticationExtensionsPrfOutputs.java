@@ -23,19 +23,31 @@ public class AuthenticationExtensionsPrfOutputs extends AbstractSafeParcelable {
     @Field(value = 1, getterName = "isEnabled")
     private final boolean enabled;
 
-    @Field(value = 2, getterName = "getFirst")
+    @Field(value = 2, getterName = "getResults")
     @Nullable
-    private final byte[] first;
-
-    @Field(value = 3, getterName = "getSecond")
-    @Nullable
-    private final byte[] second;
+    private final byte[] results;
 
     @Constructor
-    public AuthenticationExtensionsPrfOutputs(@Param(1) boolean enabled, @Param(2) @Nullable byte[] first, @Param(3) @Nullable byte[] second) {
+    public AuthenticationExtensionsPrfOutputs(@Param(1) boolean enabled, @Param(2) @Nullable byte[] results) {
+        if (results != null && results.length != 32 && results.length != 64) throw new IllegalArgumentException("Invalid PRF result");
         this.enabled = enabled;
-        this.first = first;
-        this.second = second;
+        this.results = results == null ? null : results.clone();
+    }
+
+    public AuthenticationExtensionsPrfOutputs(boolean enabled, @Nullable byte[] first, @Nullable byte[] second) {
+        this(enabled, combine(first, second));
+    }
+
+    private static byte[] combine(@Nullable byte[] first, @Nullable byte[] second) {
+        if (first == null) {
+            if (second != null) throw new IllegalArgumentException("Invalid PRF result");
+            return null;
+        }
+        if (first.length != 32 || (second != null && second.length != 32)) throw new IllegalArgumentException("Invalid PRF result");
+        byte[] result = new byte[second == null ? 32 : 64];
+        System.arraycopy(first, 0, result, 0, 32);
+        if (second != null) System.arraycopy(second, 0, result, 32, 32);
+        return result;
     }
 
     public boolean isEnabled() {
@@ -44,13 +56,16 @@ public class AuthenticationExtensionsPrfOutputs extends AbstractSafeParcelable {
 
     @Nullable
     public byte[] getFirst() {
-        return first;
+        return results == null ? null : java.util.Arrays.copyOfRange(results, 0, 32);
     }
 
     @Nullable
     public byte[] getSecond() {
-        return second;
+        return results == null || results.length != 64 ? null : java.util.Arrays.copyOfRange(results, 32, 64);
     }
+
+    @Nullable
+    public byte[] getResults() { return results == null ? null : results.clone(); }
 
     private String b64url(byte[] v) {
         return Base64.encodeToString(v, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
@@ -65,6 +80,6 @@ public class AuthenticationExtensionsPrfOutputs extends AbstractSafeParcelable {
 
     @Override
     public String toString() {
-        return ToStringHelper.name("AuthenticationExtensionsPrfOutputs").field("enabled", enabled).field("first", first).field("second", second).end();
+        return "AuthenticationExtensionsPrfOutputs[redacted]";
     }
 }

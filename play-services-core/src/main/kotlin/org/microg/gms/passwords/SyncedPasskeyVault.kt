@@ -7,17 +7,28 @@ import android.content.Context
 import org.microg.gms.auth.folsom.utils.LocalKeyManager
 import java.security.MessageDigest
 
+class SyncedPasskeyOwnerEntry(val resource: ByteArray, val data: SyncedPasskey, val shadowed: Boolean, val deletionCount: Int) {
+    override fun toString() = "SyncedPasskeyOwnerEntry[redacted]"
+}
+class SyncedPasskeyOwnerScreen(val parent: String, val entries: List<SyncedPasskeyOwnerEntry>,
+    val operation: PasskeyOwnerMutation?, val reset: Boolean, val pendingCreate: Boolean,
+    val operationEntries: List<SyncedPasskey> = emptyList()) {
+    override fun toString() = "SyncedPasskeyOwnerScreen[redacted]"
+}
+
 /** Account and birthday are pinned at selection; no plaintext private key is cached or returned by listing. */
 class SyncedPasskeyVault(context: Context, val account: Account, val accountId: String, private val expectedParent: String? = null) {
     private val context = context.applicationContext
     private val accounts = AccountManager.get(this.context)
-    private val repository = PasswordRepository(this.context, account)
+    init { checkIdentity() }
+    private val repository = PasswordRepository(this.context, account, expectedParent)
     private val store = AndroidPasskeyStore(this.context, "google:$accountId", ::check)
     init { check() }
-    fun check() {
+    private fun checkIdentity() {
         if (accountId.isBlank() || account.type != "com.google" || !accounts.getAccountsByType("com.google").contains(account) ||
-            accounts.getUserData(account, "GoogleUserId") != accountId || !repository.enabled) throw VaultLockedException()
+            accounts.getUserData(account, "GoogleUserId") != accountId) throw VaultLockedException()
     }
+    fun check() { checkIdentity(); if (!repository.enabled) throw VaultLockedException() }
     private fun <T> keys(action: (ByteArray, VaultKeys) -> T): T = repository.store.locked { session ->
         check()
         val state = session.load()
@@ -34,7 +45,9 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             val state = session.state()
             if (state.parent == null) return@locked emptyList()
             if (state.parent != Proto.decode(metadata).string(1)) throw VaultResetException()
-            SyncedPasskey.visible(state.records.map { PasskeyResourceCodec.read(it, keys) })
+            // A pending owner delete cannot be used for signing while its remote outcome is unresolved.
+            val denied = state.ownerMutation?.takeIf { it.kind == PasskeyOwnerKind.DELETE }?.steps?.map { it.name }?.toSet().orEmpty()
+            SyncedPasskey.visible(state.records.filter { Proto.decode(it).string(1) !in denied }.map { PasskeyResourceCodec.read(it, keys) })
         } }
     }
     fun refresh() {
@@ -42,6 +55,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         // Password metadata/registration already has the account's owner opt-in. Do not initialize a new vault here.
         keys { metadata, keys -> store.locked { session ->
             val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
+            session.state().ownerMutation?.let { if (it.accountId != accountId) throw VaultLockedException() }
             val records = PasskeyApi(repository.sharingTransport()).snapshot(parent)
             val replacement = PasskeySnapshots.reconcile(session.state(), parent, records, keys, System.currentTimeMillis())
             check(); session.saveState(replacement)
@@ -67,20 +81,27 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         // Re-fetch before redemption: a remote deletion, reset or shadowing is authoritative.
         val selected = list(refresh = true).singleOrNull { it.tag == tag && it.rpId == rpId &&
             (allowed.isEmpty() || allowed.any { id -> MessageDigest.isEqual(id, it.credentialId) }) } ?: throw VaultLockedException()
-        return keys { metadata, _ ->
+        return keys { metadata, wrapping -> store.locked { session ->
             if (Proto.decode(metadata).string(1) != selectedParent) throw VaultResetException()
+            // Serialize local management through the actual signing callback, not just the earlier picker snapshot.
+            val state = session.state()
+            if (state.parent != selectedParent) throw VaultResetException()
+            val denied = state.ownerMutation?.takeIf { it.kind == PasskeyOwnerKind.DELETE }?.steps?.map { it.name }?.toSet().orEmpty()
+            val current = SyncedPasskey.visible(state.records.filter { Proto.decode(it).string(1) !in denied }
+                .map { PasskeyResourceCodec.read(it, wrapping) }).singleOrNull { it.tag == selected.tag && it.sameRegistration(selected) }
+                ?: throw VaultLockedException()
             val domains = domainKeys()
             var devices = emptyList<PasskeyDomainKey>()
             try {
-                if (selected.encryptedField == 19) devices = PasskeyDeviceKeyClient(context, repository.sharingTransport()) {
+                if (current.encryptedField == 19) devices = PasskeyDeviceKeyClient(context, repository.sharingTransport()) {
                     verifyOwner(); check()
-                }.get(setOf(selected.deviceKeyVersion), domains.isNotEmpty(), rapt)
-                PasskeyCrypto.decrypt(selected, domains, devices).use { secret ->
+                }.get(setOf(current.deviceKeyVersion), domains.isNotEmpty(), rapt)
+                PasskeyCrypto.decrypt(current, domains, devices).use { secret ->
                     verifyOwner(); check()
-                    action(selected, secret).also { verifyOwner(); check() }
+                    action(current, secret).also { verifyOwner(); check() }
                 }
             } finally { domains.forEach(PasskeyDomainKey::close); devices.forEach(PasskeyDomainKey::close) }
-        }
+        } }
     }
     /** Persist launch before the RPC; an uncertain create is reconciled by full snapshots, never blindly retried. */
     fun create(specifics: SyncedPasskey, verifyOwner: () -> Unit, excluded: List<ByteArray> = emptyList()) {
@@ -89,7 +110,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         try { keys { metadata, keys -> store.locked { session ->
             val old = session.state()
             val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
-            if (old.pending != null) throw PendingMutationException()
+            if (old.pending != null || old.ownerMutation != null) throw PendingMutationException()
             val api = PasskeyApi(repository.sharingTransport())
             val snapshot = api.snapshot(parent)
             val state = PasskeySnapshots.reconcile(old, parent, snapshot, keys, System.currentTimeMillis())
@@ -98,11 +119,13 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             val actual = specifics.withShadows(previous.filter { it.rpId == specifics.rpId &&
                 MessageDigest.isEqual(it.userId, specifics.userId) }.map { it.credentialId })
             val resource = PasskeyResourceCodec.write(actual, keys)
-            session.saveState(PasskeyState(parent, state.records, state.fetchedMillis, resource, false, state.abandoned))
+            session.saveState(PasskeyState(parent, state.records, state.fetchedMillis, resource, false, state.abandoned,
+                ownerHistory = state.ownerHistory))
             var launched = false
             try {
                 verifyOwner(); check()
-                session.saveState(PasskeyState(parent, state.records, state.fetchedMillis, resource, true, state.abandoned))
+                session.saveState(PasskeyState(parent, state.records, state.fetchedMillis, resource, true, state.abandoned,
+                    ownerHistory = state.ownerHistory))
                 verifyOwner(); check()
                 launched = true
                 val result = api.create(parent, resource, token)
@@ -110,10 +133,12 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
                 if (!returned.sameRegistration(actual)) throw ProtocolException()
                 PasskeyApi.checkedName(Proto.decode(result).string(1), parent)
                 verifyOwner(); check()
-                session.saveState(PasskeyState(parent, state.records + listOf(result), System.currentTimeMillis(), abandoned = state.abandoned))
+                session.saveState(PasskeyState(parent, state.records + listOf(result), System.currentTimeMillis(), abandoned = state.abandoned,
+                    ownerHistory = state.ownerHistory))
             } catch (failure: Exception) {
                 if (!launched || failure is PasswordRpcException && !failure.outcomeUnknown)
-                    session.saveState(PasskeyState(parent, state.records, state.fetchedMillis, abandoned = state.abandoned))
+                    session.saveState(PasskeyState(parent, state.records, state.fetchedMillis, abandoned = state.abandoned,
+                        ownerHistory = state.ownerHistory))
                 throw failure
             }
         } } } finally { token.fill(0) }
@@ -127,8 +152,49 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         if (state.abandoned.size >= 1000) throw ProtocolException()
         val history = Proto.field(1, state.parent ?: throw ProtocolException()) + Proto.field(2, pending) +
             Proto.integer(3, if (state.pendingLaunched) 1 else 0) + Proto.integer(4, System.currentTimeMillis())
-        session.saveState(PasskeyState(state.parent, state.records, state.fetchedMillis, abandoned = state.abandoned + listOf(history)))
+        session.saveState(PasskeyState(state.parent, state.records, state.fetchedMillis, abandoned = state.abandoned + listOf(history),
+            ownerMutation = state.ownerMutation, ownerHistory = state.ownerHistory))
     }
+    private fun <T> ownerAction(verifyOwner: () -> Unit,
+        action: (PasskeyOwnerManagement, AndroidPasskeyStore.Session, String, VaultKeys) -> T): T {
+        verifyOwner(); check()
+        val token = repository.store.locked { it.load().deviceRegistration?.token?.copyOf() } ?: byteArrayOf()
+        return try { keys { metadata, keys -> store.locked { session ->
+            verifyOwner(); check()
+            val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
+            session.state().ownerMutation?.let { if (it.accountId != accountId) throw VaultLockedException() }
+            val manager = PasskeyOwnerManagement(accountId, parent, keys, PasskeyApi(repository.sharingTransport()), token,
+                { session.state() }, { session.saveState(it) }, { verifyOwner(); check() })
+            action(manager, session, parent, keys).also { verifyOwner(); check() }
+        } } } finally { token.fill(0) }
+    }
+    fun ownerScreen(verifyOwner: () -> Unit, refresh: Boolean = true): SyncedPasskeyOwnerScreen =
+        ownerAction(verifyOwner) { manager, session, parent, keys ->
+            var state = session.state()
+            if (state.parent != null && state.parent != parent && (state.ownerMutation != null || state.pending != null))
+                return@ownerAction SyncedPasskeyOwnerScreen(parent, emptyList(), state.ownerMutation, true, state.pending != null)
+            if (refresh) state = manager.refresh()
+            if (state.parent != null && state.parent != parent) return@ownerAction SyncedPasskeyOwnerScreen(parent, emptyList(), null, false, false)
+            val all = state.records.map { PasskeyResourceCodec.read(it, keys) }
+            fun id(raw: ByteArray) = java.util.Base64.getEncoder().encodeToString(raw)
+            val shadowed = all.flatMap { item -> item.shadowedCredentialIds.map { item.rpId to id(it) } }.toSet()
+            val groups = all.groupingBy { it.rpId to id(it.userId) }.eachCount()
+            val entries = state.records.zip(all).map { (raw, data) -> SyncedPasskeyOwnerEntry(raw.copyOf(), data,
+                (data.rpId to id(data.credentialId)) in shadowed,
+                if ((data.rpId to id(data.credentialId)) in shadowed) 1
+                else groups[data.rpId to id(data.userId)] ?: throw ProtocolException()) }
+                .sortedWith(compareBy({ it.data.rpId }, { it.data.username }, { it.data.tag }))
+            SyncedPasskeyOwnerScreen(parent, entries, state.ownerMutation, false, state.pending != null,
+                state.ownerMutation?.steps?.map { PasskeyResourceCodec.read(it.before, keys) }.orEmpty())
+        }
+    fun ownerRename(baseline: ByteArray, username: String, displayName: String, verifyOwner: () -> Unit) =
+        ownerAction(verifyOwner) { manager, _, _, _ -> manager.rename(baseline, username, displayName) }
+    fun ownerDelete(baseline: ByteArray, reviewedGroup: List<ByteArray>, verifyOwner: () -> Unit) =
+        ownerAction(verifyOwner) { manager, _, _, _ -> manager.delete(baseline, reviewedGroup) }
+    fun ownerRetry(id: String, verifyOwner: () -> Unit) =
+        ownerAction(verifyOwner) { manager, _, _, _ -> manager.retry(id) }
+    fun ownerClose(id: String, verifyOwner: () -> Unit) =
+        ownerAction(verifyOwner) { manager, _, _, _ -> manager.close(id) }
     fun createSpecifics(rp: String, user: ByteArray, username: String, display: String, pkcs8: ByteArray,
         verifyOwner: () -> Unit, rapt: String? = null): SyncedPasskey {
         val domains = domainKeys()

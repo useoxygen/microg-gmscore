@@ -103,7 +103,7 @@ class PasswordTransferTest {
         val engine = PasswordTransferEngine(store) { endpoint }
         val id = engine.start(null, account, null, data)
         store.locked { session -> val state = session.load(); state.affiliationCache = byteArrayOf(8); session.save(state) }
-        assertEquals(5L, Proto.decode(store.bytes).integer(1))
+        assertEquals(6L, Proto.decode(store.bytes).integer(1))
         assertArrayEquals(byteArrayOf(8), VaultState.decode(store.bytes).affiliationCache)
         engine.resume(id)
         assertEquals(1, endpoint.writes); assertEquals(0, endpoint.deletes)

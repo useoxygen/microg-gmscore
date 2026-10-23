@@ -50,7 +50,8 @@ class VaultState(
     var directAffiliationProofs: ByteArray? = null,
     val trustedVaultKeys: MutableList<ByteArray> = ArrayList(),
     var sharingJournal: ByteArray? = null,
-    var wifiSync: ByteArray? = null
+    var wifiSync: ByteArray? = null,
+    var versionedTrustedVaultKeys: VersionedTrustedVaultKeys? = null
 ) {
     fun encode(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -61,8 +62,9 @@ class VaultState(
             out.write(value, 0, value.size)
         }
         // Earlier writers must refuse unknown durable registration/journal fields rather
-        // than erase them on their next save. v5 fences affiliation, transfer, sharing and Wi-Fi journals.
-        append(Proto.integer(1, 5))
+        // than erase them on their next save. v6 additionally fences recovered key epochs:
+        // an older raw-key writer must not erase or manufacture enrollment authority.
+        append(Proto.integer(1, 6))
         metadata?.let { append(Proto.field(2, it)) }
         records.forEach { append(Proto.field(3, it)) }
         mutations.forEach { append(Proto.field(4, it.encode())) }
@@ -82,12 +84,18 @@ class VaultState(
         trustedVaultKeys.forEach { append(Proto.field(17, it)) }
         sharingJournal?.let { append(Proto.field(18, it)) }
         wifiSync?.let { append(Proto.field(19, it)) }
+        versionedTrustedVaultKeys?.let {
+            if (it.parent != Proto.decode(metadata ?: pendingMetadata ?: throw VaultLockedException()).string(1)) throw VaultResetException()
+            append(Proto.field(20, it.encode()))
+        }
         return out.toByteArray()
     }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
-            if (proto.integer(1) !in setOf(1L, 2L, 3L, 4L, 5L)) throw ProtocolException()
+            val schema = proto.integer(1)
+            if (schema !in setOf(1L, 2L, 3L, 4L, 5L, 6L)) throw ProtocolException()
+            if (schema != 6L && proto.optional(20) != null) throw ProtocolException()
             val state = VaultState(proto.optional(2), proto.bytes(3).toMutableList(),
                 proto.bytes(4).map(Mutation::decode).toMutableList(), proto.integer(5) ?: 0)
             proto.bytes(6).forEach { raw -> Proto.decode(raw).let { state.chromeLocalData[it.string(1)] = it.one(2) } }
@@ -104,6 +112,10 @@ class VaultState(
             state.trustedVaultKeys.addAll(proto.bytes(17))
             state.sharingJournal = proto.optional(18)
             state.wifiSync = proto.optional(19)
+            state.versionedTrustedVaultKeys = proto.optional(20)?.let(VersionedTrustedVaultKeys::decode)
+            state.versionedTrustedVaultKeys?.let {
+                if (it.parent != Proto.decode(state.metadata ?: state.pendingMetadata ?: throw VaultLockedException()).string(1)) throw VaultResetException()
+            }
             if (state.trustedVaultKeys.size > 100 || state.trustedVaultKeys.any { it.size !in 16..4096 }) throw ProtocolException()
             if (state.ownerTransfers.size > 1000 || state.ownerTransfers.map { it.id }.toSet().size != state.ownerTransfers.size) throw ProtocolException()
             if (state.mutations.map { it.id }.toSet().size != state.mutations.size) throw ProtocolException()
@@ -162,6 +174,12 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
         val metadata = api.metadata()
         val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
         val oldParent = state.metadata?.let { Proto.decode(it).string(1) }
+        if (oldParent != null && oldParent != parent) {
+            // Even an automatically accepted empty-outbox reset must not carry recovered
+            // epoch authority into another vault. Preserve raw-only unlock compatibility.
+            state.versionedTrustedVaultKeys?.destroy(); state.versionedTrustedVaultKeys = null
+            session.save(state)
+        }
         if (oldParent != null && oldParent != parent && state.mutations.isNotEmpty()) {
             state.pendingMetadata = metadata
             session.save(state)

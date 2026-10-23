@@ -33,6 +33,7 @@ import org.microg.gms.auth.folsom.ui.GenericActivity
 
 const val PASSWORD_MANAGER_CLASS_NAME = "com.google.android.gms.credential.manager.PasswordManagerActivity"
 const val EXTRA_KEY_ACCOUNT_NAME = "pwm.DataFieldNames.accountName"
+const val EXTRA_KEY_SIGNON_REALM = "pwm.DataFieldNames.deepLinkToSignonRealm"
 
 class PasswordManagerActivity : PasswordOwnerActivity() {
     private var unlocked by mutableStateOf(false)
@@ -143,6 +144,27 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                                 startActivity(Intent(this@PasswordManagerActivity, PasswordSharingActivity::class.java)
                                     .putExtra("account", account.name).putExtra("google_user_id", identity.userId))
                             }, enabled = !busy) { Text(stringResource(R.string.passwords_share)) }
+                            if (selected != null) TextButton(onClick = {
+                                requireOwner()
+                                val account = selected ?: return@TextButton
+                                val identity = ownerOperations.identity(account)
+                                startActivity(Intent(this@PasswordManagerActivity, SyncedPasskeyManagerActivity::class.java)
+                                    .putExtra("account", account.name).putExtra("google_user_id", identity.userId))
+                            }, enabled = !busy) { Text(stringResource(R.string.passwords_synced_passkeys)) }
+                            if (selected != null) TextButton(onClick = {
+                                requireOwner()
+                                val account = selected ?: return@TextButton
+                                val identity = ownerOperations.identity(account)
+                                startActivity(Intent(this@PasswordManagerActivity, PasswordBreachActivity::class.java)
+                                    .putExtra("account", account.name).putExtra("google_user_id", identity.userId))
+                            }, enabled = !busy) { Text(stringResource(R.string.passwords_breach_assess)) }
+                            if (selected != null) TextButton(onClick = {
+                                requireOwner()
+                                val account = selected ?: return@TextButton
+                                val identity = ownerOperations.identity(account)
+                                startActivity(Intent(this@PasswordManagerActivity, PasswordRecoveryEnrollmentActivity::class.java)
+                                    .putExtra("account", account.name).putExtra("google_user_id", identity.userId))
+                            }, enabled = !busy) { Text(stringResource(R.string.passwords_recovery_enroll_phone)) }
                             if (message == R.string.passwords_locked && !trustedRecovery) {
                                 OutlinedTextField(passphrase, { passphrase = it }, label = { Text(stringResource(R.string.passwords_passphrase)) },
                                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
@@ -406,7 +428,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
             return
         }
         if (account != null || accounts.isEmpty()) {
-            val realm = intent.getStringExtra("deepLinkToSignonRealm")?.takeIf {
+            val realm = intent.getStringExtra(EXTRA_KEY_SIGNON_REALM)?.takeIf {
                 it.length in 1..4096 && it.none(Char::isISOControl)
             }
             choose(account, realm.orEmpty())

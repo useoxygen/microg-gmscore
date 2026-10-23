@@ -8,12 +8,17 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.microg.gms.auth.folsom.Keys
 import org.microg.gms.auth.folsom.utils.LocalKeyManager
 import org.microg.gms.passwords.PasswordOwnerActivity
 import org.microg.gms.passwords.PasswordRepository
 import org.microg.gms.passwords.VaultLockedException
+import org.microg.gms.passwords.VersionedTrustedVaultKey
 
 /** Account-bound recovery is a foreground owner action. Password recovery never offers a reset. */
 class GenericActivity : PasswordOwnerActivity() {
@@ -22,6 +27,7 @@ class GenericActivity : PasswordOwnerActivity() {
     private lateinit var domain: String
     private var started = false
     private var passwordRecovery = false
+    private var recoveryParent: String? = null
     private val accounts get() = AccountManager.get(this)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,9 +56,17 @@ class GenericActivity : PasswordOwnerActivity() {
     internal fun saveRecoveredKeys(keys: List<Keys>) {
         requireRecoveryOwner()
         if (passwordRecovery) {
-            val material = keys.mapNotNull { it.keyMaterial?.toByteArray() }
-            try { PasswordRepository(this, account).acceptTrustedVaultKeys(material, scheduleRefresh = false) }
-            finally { material.forEach { it.fill(0) } }
+            val versioned = ArrayList<VersionedTrustedVaultKey>()
+            try {
+                for (key in keys) {
+                    val raw = key.keyMaterial?.toByteArray() ?: throw VaultLockedException()
+                    try { versioned.add(VersionedTrustedVaultKey(key.keyVersion ?: throw VaultLockedException(), raw)) }
+                    finally { raw.fill(0) }
+                }
+                val parent = recoveryParent ?: throw VaultLockedException()
+                PasswordRepository(this, account, parent).acceptVersionedTrustedVaultKeys(versioned, parent, accountId,
+                    scheduleRefresh = false, authorize = ::requireRecoveryOwner)
+            } finally { versioned.forEach { it.destroy() } }
         } else LocalKeyManager.getInstance(this).saveKeysForDomain(account.name, domain, keys, expectedUserId = accountId)
         requireRecoveryOwner()
     }
@@ -60,6 +74,20 @@ class GenericActivity : PasswordOwnerActivity() {
         try { requireRecoveryOwner() } catch (_: Exception) { finish(); return }
         if (started) return
         started = true
+        if (passwordRecovery) {
+            // Another process can hold the vault lock while syncing. Capture the birthday
+            // without blocking the owner UI, then check the owner again before opening it.
+            lifecycleScope.launch {
+                try {
+                    val parent = withContext(Dispatchers.IO) { PasswordRepository(this@GenericActivity, account).trustedVaultRecoveryParent(accountId) }
+                    requireRecoveryOwner(); recoveryParent = parent; showRecovery()
+                } catch (_: Exception) { finish() }
+            }
+        } else showRecovery()
+    }
+    private fun showRecovery() {
+        requireRecoveryOwner()
+        if (isFinishing || isDestroyed) return
         supportFragmentManager.beginTransaction().replace(android.R.id.content, FolsomWebFragment.newInstance(
             account.name, domain, intent.getIntExtra(EXTRA_OPERATION, 0),
             intent.getStringExtra(EXTRA_SESSION_ID).orEmpty(),

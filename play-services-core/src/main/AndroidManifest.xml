@@ -675,6 +675,14 @@
             android:exported="false" android:process=":ui" />
         <activity android:name="org.microg.gms.passwords.PasswordWifiSyncActivity"
             android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.SyncedPasskeyManagerActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordBreachActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.LegacySyncedPasskeyActivity"
+            android:exported="false" android:excludeFromRecents="true" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordRecoveryEnrollmentActivity"
+            android:exported="false" android:process=":ui" />
 
         <service android:name="org.microg.gms.auth.proxy.AuthProxyService">
             <intent-filter>

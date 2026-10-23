@@ -61,6 +61,20 @@ message ListSecurityDomainMembersResponse {
   optional string nextPageToken = 2;
 }
 
+// Pinned hzwg/hzwh; no reset, recovery-proof or new-domain policy is inferred here.
+message JoinSecurityDomainRequest {
+  optional GetSecurityDomainResponse securityDomain = 1;
+  optional SecurityDomainMemberResponse member = 2;
+  repeated MemberKey sharedKeys = 3;
+  optional int32 joinOptions = 4;
+  optional bytes authenticationProof = 5;
+  optional string requestId = 6;
+}
+
+message JoinSecurityDomainResponse {
+  optional GetSecurityDomainResponse securityDomain = 1;
+}
+
 message SecurityDomainMemberResponse {
   optional string name = 1;
   optional bytes publicKey = 2;
@@ -162,4 +176,5 @@ service SecurityDomainService {
   rpc GetSecurityDomain(GetSecurityDomainRequest) returns (GetSecurityDomainResponse);
   rpc GetSecurityDomainMember(GetSecurityDomainMemberRequest) returns (SecurityDomainMemberResponse);
   rpc ListSecurityDomainMembers(ListSecurityDomainMembersRequest) returns (ListSecurityDomainMembersResponse);
+  rpc JoinSecurityDomain(JoinSecurityDomainRequest) returns (JoinSecurityDomainResponse);
 }

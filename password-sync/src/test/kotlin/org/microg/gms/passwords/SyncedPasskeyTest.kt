@@ -169,7 +169,9 @@ class SyncedPasskeyTest {
         for (attestation in listOf("direct", "indirect", "enterprise", "invalid"))
             assertFalse(PasskeyRequestSupport.create(listOf(-7), attestation, "platform", emptySet()))
         assertFalse(PasskeyRequestSupport.create(listOf(-7), "none", "cross-platform", emptySet()))
-        for (extension in listOf("prf", "largeBlob", "credBlob", "payment", "appid", "uvm", "unknown")) {
+        assertTrue(PasskeyRequestSupport.create(listOf(-7), null, null, setOf("prf", "credProps")))
+        assertTrue(PasskeyRequestSupport.get(setOf("prf")))
+        for (extension in listOf("largeBlob", "credBlob", "payment", "appid", "uvm", "unknown")) {
             assertFalse(PasskeyRequestSupport.create(listOf(-7), null, null, setOf(extension)))
             assertFalse(PasskeyRequestSupport.get(setOf(extension)))
         }

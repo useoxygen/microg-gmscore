@@ -103,7 +103,6 @@ object CryptoHelper {
     }
 
     fun decryptEid(eid: ByteArray, seed: ByteArray): ByteArray? {
-        Log.d(TAG, "decryptEid: eid=${eid.hex()}, seed=${seed.hex()}")
         if (eid.size != 20) {
             Log.e(TAG, "decryptEid: Invalid EID size: ${eid.size}")
             return null
@@ -112,13 +111,10 @@ object CryptoHelper {
         val derived = endif(ikm = seed, salt = ByteArray(0), info = info, length = 64)
         val aesKey = derived.copyOfRange(0, 32)
         val hmacKey = derived.copyOfRange(32, 64)
-        Log.d(TAG, "decryptEid: aesKey=${aesKey.hex()}, hmacKey=${hmacKey.hex()}")
         val ct = eid.copyOfRange(0, 16)
         val tag4 = eid.copyOfRange(16, 20)
-        Log.d(TAG, "decryptEid: ct=${ct.hex()}, tag4=${tag4.hex()}")
         val mac = Mac.getInstance(HKDF_ALGORITHM).apply { init(SecretKeySpec(hmacKey, HKDF_ALGORITHM)) }
         val expect = mac.doFinal(ct).copyOf(4)
-        Log.d(TAG, "decryptEid: expected tag=${expect.hex()}, actual tag=${tag4.hex()}")
         if (!MessageDigest.isEqual(expect, tag4)) {
             Log.w(TAG, "decryptEid: HMAC verification failed!")
             return null
@@ -127,7 +123,6 @@ object CryptoHelper {
             init(Cipher.DECRYPT_MODE, SecretKeySpec(aesKey, AEMK_ALGORITHM), IvParameterSpec(ByteArray(16)))
         }
         val pt = cipher.doFinal(ct)
-        Log.d(TAG, "decryptEid: decrypted pt=${pt.hex()}, first byte=${pt.first()}")
         if (pt.first() != 0.toByte()) {
             Log.w(TAG, "decryptEid: Invalid first byte!")
             return null

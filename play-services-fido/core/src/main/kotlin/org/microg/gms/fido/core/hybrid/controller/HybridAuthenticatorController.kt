@@ -182,7 +182,8 @@ class HybridAuthenticatorController(context: Context) {
         val getInfoBytes = AuthenticatorGetInfoResponse(
             versions = arrayListOf("FIDO_2_0", "FIDO_2_1"),
             aaguid = ByteArray(16),
-            extensions = listOf("prf"),
+            // This target currently returns no authenticated PRF or hmac-secret result.
+            extensions = emptyList(),
             options = AuthenticatorGetInfoResponse.Companion.Options(
                 residentKey = true,
                 userPresence = true,

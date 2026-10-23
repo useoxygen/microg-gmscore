@@ -11,6 +11,7 @@ import java.nio.ByteBuffer
 import java.security.InvalidKeyException
 import java.security.PrivateKey
 import java.security.PublicKey
+import java.security.SecureRandom
 import java.security.interfaces.ECPrivateKey
 import java.security.interfaces.ECPublicKey
 import javax.crypto.Cipher
@@ -34,7 +35,38 @@ object SecureBox {
             throw InvalidKeyException("Invalid key pair size: expected $KEY_PAIR_SIZE bytes, got ${keyBytes.size}")
         }
         val privateKeyBytes = keyBytes.copyOf(AES_KEY_SIZE * 2)
-        return EllipticCurves.getEcPrivateKey(EllipticCurves.CurveType.NIST_P256, privateKeyBytes)
+        return try { EllipticCurves.getEcPrivateKey(EllipticCurves.CurveType.NIST_P256, privateKeyBytes) }
+        finally { privateKeyBytes.fill(0) }
+    }
+
+    /** anwc.C physical-device representation: fixed-width scalar32 followed by public65. */
+    fun generateKeyPairBytes(): ByteArray {
+        val pair = EllipticCurves.generateKeyPair(EllipticCurves.CurveType.NIST_P256)
+        val private = (pair.private as ECPrivateKey).s.toByteArray()
+        return try {
+            val scalar = private.takeLast(32).toByteArray()
+            try { ByteArray(32 - scalar.size) + scalar + EllipticCurves.pointEncode(
+                (pair.public as ECPublicKey).params.curve, EllipticCurves.PointFormatType.UNCOMPRESSED,
+                (pair.public as ECPublicKey).w) }
+            finally { scalar.fill(0) }
+        } finally { private.fill(0); runCatching { pair.private.destroy() } }
+    }
+
+    /** SecureBox v2 public-key wrapping used by anwc.B, with its exact shared-key AAD. */
+    fun wrapKey(publicKey: ByteArray, material: ByteArray): ByteArray {
+        require(material.size in 16..4096) { "Invalid shared key" }
+        val recipient = deserializePublicKey(publicKey)
+        val ephemeral = EllipticCurves.generateKeyPair(EllipticCurves.CurveType.NIST_P256)
+        var shared: ByteArray? = null
+        var derived: ByteArray? = null
+        return try {
+            shared = performECDH(ephemeral.private, recipient)
+            derived = deriveKey(shared, HKDF_SALT, HKDF_INFO_P256)
+            val nonce = ByteArray(GCM_IV_SIZE).also { SecureRandom().nextBytes(it) }
+            val public = ephemeral.public as ECPublicKey
+            VERSION + EllipticCurves.pointEncode(public.params.curve, EllipticCurves.PointFormatType.UNCOMPRESSED, public.w) +
+                nonce + aesGcmEncrypt(SecretKeySpec(derived, "AES"), nonce, material, "V1 shared_key".toByteArray(Charsets.UTF_8))
+        } finally { shared?.fill(0); derived?.fill(0); runCatching { ephemeral.private.destroy() } }
     }
 
     fun deserializePublicKey(keyBytes: ByteArray): PublicKey {
@@ -105,7 +137,8 @@ object SecureBox {
         val aesKeyBytes = deriveKey(combinedSecret, HKDF_SALT, hkdfInfo)
         val aesKey = SecretKeySpec(aesKeyBytes, "AES")
 
-        return aesGcmDecrypt(aesKey, iv, ciphertext, aad)
+        return try { aesGcmDecrypt(aesKey, iv, ciphertext, aad) }
+        finally { ecdhSecret.fill(0); combinedSecret.fill(0); aesKeyBytes.fill(0) }
     }
 
     private fun aesGcmEncrypt(key: SecretKeySpec, iv: ByteArray, plaintext: ByteArray, aad: ByteArray): ByteArray {
@@ -135,6 +168,6 @@ object SecureBox {
 
     fun unwrapKey(localKeyPairBytes: ByteArray, wrappedKey: ByteArray, header: ByteArray? = null): ByteArray {
         val privateKey = deserializePrivateKey(localKeyPairBytes)
-        return decrypt(privateKey, null, header, wrappedKey)
+        return try { decrypt(privateKey, null, header, wrappedKey) } finally { runCatching { privateKey.destroy() } }
     }
 }
