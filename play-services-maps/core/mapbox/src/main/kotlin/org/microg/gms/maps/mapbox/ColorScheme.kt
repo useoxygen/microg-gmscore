@@ -6,7 +6,7 @@ import com.google.android.gms.maps.model.MapStyleOptions
 import org.json.JSONArray
 
 private const val SCHEME_DARK = 1
-private const val SCHEME_FOLLOW_SYSTEM = 2
+const val SCHEME_FOLLOW_SYSTEM = 2
 
 // Google's documented "night" map style, applied through the same styling rules apps use (MapStyleOptions).
 private const val NIGHT_STYLE = """[

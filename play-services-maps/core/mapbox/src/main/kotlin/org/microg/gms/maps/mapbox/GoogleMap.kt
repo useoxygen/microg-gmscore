@@ -280,7 +280,8 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
     override fun stopAnimation() = map?.cancelTransitions() ?: Unit
 
     override fun setMapColorScheme(scheme: Int) {
-        if (scheme == colorScheme) return
+        // Follow-system is re-read on every call: the device may have switched between light and dark.
+        if (scheme == colorScheme && scheme != SCHEME_FOLLOW_SYSTEM) return
         colorScheme = scheme
         applyMapStyle()
     }

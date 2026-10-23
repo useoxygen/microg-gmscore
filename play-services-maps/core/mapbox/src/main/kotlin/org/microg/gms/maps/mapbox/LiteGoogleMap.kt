@@ -631,7 +631,8 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     }
 
     override fun setMapColorScheme(scheme: Int) {
-        if (scheme == mapColorScheme) return
+        // Follow-system is re-read on every call: the device may have switched between light and dark.
+        if (scheme == mapColorScheme && scheme != SCHEME_FOLLOW_SYSTEM) return
         mapColorScheme = scheme
         postUpdateSnapshot()
     }
