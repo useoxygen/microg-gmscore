@@ -6,7 +6,7 @@ import java.util.UUID
 
 enum class SharingOperationKind { SEND, ACCEPT, DISMISS, AUTOMATIC }
 enum class SharingOperationPhase {
-    PREPARED, IMPORTED, LAUNCHED, INDETERMINATE, REFUSED, COMPLETE, OWNER_RESOLVED;
+    PREPARED, IMPORTED, LAUNCHED, INDETERMINATE, REFUSED, COMPLETE, OWNER_RESOLVED, ACK_REFUSED;
     val terminal get() = this in setOf(REFUSED, COMPLETE, OWNER_RESOLVED)
 }
 
@@ -69,8 +69,10 @@ class SharingJournal(private val store: VaultStore) {
             val index = all.indexOfFirst { it.id == id }; if (index < 0) throw ConflictException()
             val old = all[index]
             if (old.phase !in expected || old.phase.terminal || phase == SharingOperationPhase.OWNER_RESOLVED ||
+                phase == SharingOperationPhase.ACK_REFUSED && (old.kind == SharingOperationKind.SEND || old.phase != SharingOperationPhase.LAUNCHED) ||
                 old.phase in setOf(SharingOperationPhase.LAUNCHED, SharingOperationPhase.INDETERMINATE) &&
-                phase !in setOf(SharingOperationPhase.INDETERMINATE, SharingOperationPhase.REFUSED, SharingOperationPhase.COMPLETE) ||
+                phase !in setOf(SharingOperationPhase.INDETERMINATE, SharingOperationPhase.REFUSED, SharingOperationPhase.COMPLETE) &&
+                !(old.phase == SharingOperationPhase.LAUNCHED && old.kind != SharingOperationKind.SEND && phase == SharingOperationPhase.ACK_REFUSED) ||
                 old.kind == SharingOperationKind.SEND && old.phase != SharingOperationPhase.PREPARED &&
                 phase !in setOf(SharingOperationPhase.INDETERMINATE, SharingOperationPhase.REFUSED, SharingOperationPhase.COMPLETE)) throw PendingMutationException()
             val updated = old.withPhase(phase, receipt ?: old.receipt)

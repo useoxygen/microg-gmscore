@@ -12,7 +12,7 @@ class SharingIncomingConsumer(private val api: PasswordSharingApi, private val j
             operation.phase.terminal) throw ConflictException()
         authorize()
         if (PasswordApi.checkedParent(Proto.decode(api.metadata()).string(1)) != operation.parent) throw VaultResetException()
-        val current = api.incoming(operation.parent).singleOrNull { it.name == operation.source }
+        val current = api.findIncoming(operation.parent, operation.source)
         if (current == null) {
             journal.transition(id, setOf(operation.phase), SharingOperationPhase.COMPLETE)
             return importedCount(operation)
@@ -63,21 +63,27 @@ class SharingIncomingConsumer(private val api: PasswordSharingApi, private val j
         operation = journal.transition(id, setOf(operation.phase), SharingOperationPhase.IMPORTED, receipt)
         authorize()
         if (PasswordApi.checkedParent(Proto.decode(api.metadata()).string(1)) != operation.parent) throw VaultResetException()
-        val latest = api.incoming(operation.parent).singleOrNull { it.name == operation.source }
+        val latest = api.findIncoming(operation.parent, operation.source)
         if (latest == null) {
             journal.transition(id, setOf(SharingOperationPhase.IMPORTED), SharingOperationPhase.COMPLETE)
             return imported
         }
         if (!MessageDigest.isEqual(SharingOperation.digest(latest.encode()), operation.sourceDigest)) throw ConflictException()
+        // Check everything that is known to happen before the RPC before recording a launch.
+        // Losing owner/account authority here leaves a safely resumable IMPORTED checkpoint.
+        authorize()
+        val clientToken = Proto.decode(operation.request).one(3)
         journal.transition(id, setOf(SharingOperationPhase.IMPORTED), SharingOperationPhase.LAUNCHED)
+        var deleteReturned = false
         try {
-            authorize()
-            val request = Proto.decode(operation.request)
-            api.delete(operation.parent, operation.source, request.one(3))
-            if (api.incoming(operation.parent).any { it.name == operation.source }) throw PendingMutationException()
+            api.delete(operation.parent, operation.source, clientToken)
+            deleteReturned = true
+            if (api.findIncoming(operation.parent, operation.source) != null) throw PendingMutationException()
             journal.transition(id, setOf(SharingOperationPhase.LAUNCHED), SharingOperationPhase.COMPLETE)
         } catch (failure: Exception) {
-            journal.transition(id, setOf(SharingOperationPhase.LAUNCHED), SharingOperationPhase.INDETERMINATE)
+            val phase = if (!deleteReturned && failure is PasswordRpcException && !failure.outcomeUnknown)
+                SharingOperationPhase.ACK_REFUSED else SharingOperationPhase.INDETERMINATE
+            journal.transition(id, setOf(SharingOperationPhase.LAUNCHED), phase)
             throw failure
         }
         return imported

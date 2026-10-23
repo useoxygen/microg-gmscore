@@ -117,11 +117,28 @@ class PasswordSharingApi(private val transport: PasswordTransport) {
         }
     }
     fun incoming(parent: String): List<SharingInvitation> {
-        val response = Proto.decode(transport.invoke(PasswordMethod.LIST_INCOMING_SHARING, Proto.field(1, PasswordApi.checkedParent(parent))))
-        if (response.bytes(1).size > 1000) throw ProtocolException()
-        return response.bytes(1).map { SharingInvitation.decode(it, parent) }.also { values ->
+        return incomingResources(parent).map { SharingInvitation.decode(it, parent) }.also { values ->
             if (values.map { it.name }.toSet().size != values.size || values.map { it.guid }.toSet().size != values.size) throw ProtocolException()
         }
+    }
+    fun incomingResources(parent: String): List<ByteArray> {
+        val response = Proto.decode(transport.invoke(PasswordMethod.LIST_INCOMING_SHARING, Proto.field(1, PasswordApi.checkedParent(parent))))
+        return response.bytes(1).also { if (it.size > 1000) throw ProtocolException() }
+    }
+    /** A malformed unrelated invitation cannot hide a positively identified healthy one. */
+    fun findIncoming(parent: String, name: String): SharingInvitation? {
+        SharingInvitation.childName(name, parent)
+        var found: SharingInvitation? = null; var unidentified = false
+        for (raw in incomingResources(parent)) {
+            val candidate = try { SharingInvitation.childName(Proto.decode(raw).string(1), parent) }
+                catch (_: ProtocolException) { unidentified = true; continue }
+            if (candidate != name) continue
+            if (found != null) throw ProtocolException()
+            found = SharingInvitation.decode(raw, parent)
+        }
+        // Never interpret an unreadable resource as proof that an uncertain deletion completed.
+        if (found == null && unidentified) throw ProtocolException()
+        return found
     }
     fun outgoingRequest(parent: String, invitation: ByteArray, clientToken: ByteArray): ByteArray =
         Proto.field(1, PasswordApi.checkedParent(parent)) + Proto.field(3, clientToken) + Proto.field(4, Proto.field(1, invitation))

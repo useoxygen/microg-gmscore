@@ -39,20 +39,27 @@ class SharingIncomingBackgroundTest {
         val resources = LinkedHashMap<String, ByteArray>()
         var deletes = 0; var notifications = 0; var loseDelete = false; var retainOnLostDelete = false; var notificationFails = false
         var authorized = true; var metadataParent = parent; var beforeDelete: () -> Unit = {}
+        var blockBeforeAck = false; var refuseDelete = false; var failListAfterDelete = false
         private val wrapping = NigoriKey(ByteArray(16) { 1 }, ByteArray(16) { 2 })
         private val bag = Proto.field(2, wrapping.export()) + Proto.field(3, Proto.integer(1, 7) + Proto.field(2, receiverPrivate))
         val metadata = Proto.field(1, parent) + Proto.field(3, Proto.field(1, wrapping.encrypt(bag)) + Proto.integer(2, 4))
         private val vaultKeys = VaultKeys.unlock(metadata, customKey = wrapping.export())
         val keys = PasswordSharingKeys.read(metadata, vaultKeys)
         init { vaultKeys.destroy(); wrapping.destroy(); destination.checkAccess = ::check }
-        fun check() { if (!authorized) throw VaultLockedException() }
+        fun check() {
+            if (!authorized || blockBeforeAck && journal.operations().any { it.phase == SharingOperationPhase.IMPORTED }) throw VaultLockedException()
+        }
         val api = PasswordSharingApi(PasswordTransport { method, request ->
             check()
             when (method) {
                 PasswordMethod.GET_METADATA -> if (metadataParent == parent) metadata else Proto.field(1, metadataParent)
-                PasswordMethod.LIST_INCOMING_SHARING -> resources.values.fold(byteArrayOf()) { out, raw -> out + Proto.field(1, raw) }
+                PasswordMethod.LIST_INCOMING_SHARING -> {
+                    if (failListAfterDelete && deletes > 0) throw PasswordRpcException(14, false)
+                    resources.values.fold(byteArrayOf()) { out, raw -> out + Proto.field(1, raw) }
+                }
                 PasswordMethod.DELETE_INCOMING_SHARING -> {
                     beforeDelete(); deletes++
+                    if (refuseDelete) throw PasswordRpcException(7, false)
                     if (!loseDelete || !retainOnLostDelete) resources.remove(Proto.decode(request).string(1))
                     if (loseDelete) { loseDelete = false; throw PasswordRpcException(14, true) }
                     byteArrayOf()
@@ -60,9 +67,9 @@ class SharingIncomingBackgroundTest {
                 else -> error("Unexpected RPC: $method")
             }
         })
-        fun group(secret: String = "secret", invalidSibling: Boolean = false): ByteArray {
+        fun group(secret: String = "secret", invalidSibling: Boolean = false, username: String = "fixture"): ByteArray {
             val element = Proto.integer(2, 0) + Proto.field(3, "https://example.invalid/") + Proto.field(4, "https://example.invalid/login")
-            return Proto.field(2, Proto.field(1, "fixture") + Proto.field(2, secret) + Proto.field(3, element) +
+            return Proto.field(2, Proto.field(1, username) + Proto.field(2, secret) + Proto.field(3, element) +
                 if (invalidSibling) Proto.field(3, Proto.decode(element).replace(4, byteArrayOf()).encode()) else byteArrayOf())
         }
         fun add(plaintext: ByteArray = group(), version: Long = 7, corrupt: Boolean = false): SharingInvitation {
@@ -170,6 +177,8 @@ class SharingIncomingBackgroundTest {
         val operation = f.journal.operations().single()
         assertThrows(PendingMutationException::class.java) { f.journal.transition(operation.id,
             setOf(SharingOperationPhase.INDETERMINATE), SharingOperationPhase.IMPORTED) }
+        assertThrows(PendingMutationException::class.java) { f.journal.transition(operation.id,
+            setOf(SharingOperationPhase.INDETERMINATE), SharingOperationPhase.ACK_REFUSED) }
     }
 
     @Test fun uncertainAcknowledgementAbsentReconcilesWithoutAnotherDeleteAndNotifiesOnce() = fixture { f ->
@@ -221,5 +230,65 @@ class SharingIncomingBackgroundTest {
         f.metadataParent = "users/me/birthdays/reset"
         assertThrows(VaultResetException::class.java) { f.run() }
         assertEquals(0, f.deletes)
+    }
+
+    @Test fun aRetainedUnknownAcknowledgementDoesNotBlockAnIndependentHealthyInvitation() = fixture { f ->
+        val unknown = f.add(); f.loseDelete = true; f.retainOnLostDelete = true
+        assertThrows(PasswordRpcException::class.java) { f.run() }
+        val healthy = f.add(f.group(username = "other"))
+        assertThrows(PendingMutationException::class.java) { f.run() }
+        assertEquals(setOf(unknown.name), f.resources.keys); assertEquals(2, f.destination.inserts); assertEquals(2, f.deletes)
+        assertEquals(1, f.notifications)
+        assertEquals(SharingOperationPhase.INDETERMINATE, f.journal.operations().single { it.source == unknown.name }.phase)
+        assertEquals(SharingOperationPhase.COMPLETE, f.journal.operations().single { it.source == healthy.name }.phase)
+    }
+
+    @Test fun corruptMissingKeyAndMalformedInvitationsRetainOnlyTheirOwnSourceWhileHealthyOnesComplete() {
+        for (kind in listOf("bad-auth", "missing-key", "malformed")) fixture { f ->
+            val bad = f.add(version = if (kind == "missing-key") 8 else 7, corrupt = kind == "bad-auth")
+            if (kind == "malformed") f.resources[bad.name] = Proto.field(1, bad.name) + Proto.field(5, byteArrayOf(0x80.toByte()))
+            val healthy = f.add(f.group(username = "other"))
+            assertThrows(Exception::class.java) { f.run() }
+            assertEquals(setOf(bad.name), f.resources.keys); assertEquals(1, f.destination.inserts); assertEquals(1, f.deletes)
+            assertEquals(1, f.notifications); assertEquals(SharingOperationPhase.COMPLETE, f.journal.operations().single { it.source == healthy.name }.phase)
+            assertTrue(f.journal.operations().none { it.source == bad.name })
+        }
+    }
+
+    @Test fun lossOfSharedAccountAuthorityStopsContinuationToAnotherInvitation() = fixture { f ->
+        f.add(); f.add(f.group(username = "other"))
+        assertThrows(VaultLockedException::class.java) { f.run { f.authorized = false; throw ProtocolException() } }
+        assertEquals(0, f.destination.inserts); assertEquals(0, f.deletes); assertEquals(2, f.resources.size)
+    }
+
+    @Test fun prelaunchRevocationLeavesAnImportedCheckpointWhichCanFinishWithoutReimporting() = fixture { f ->
+        f.add(); f.blockBeforeAck = true
+        assertThrows(VaultLockedException::class.java) { f.run() }
+        assertEquals(SharingOperationPhase.IMPORTED, SharingJournal(f.store).operations().single().phase)
+        assertEquals(0, f.deletes); assertEquals(1, f.destination.inserts)
+        f.blockBeforeAck = false
+        assertEquals(1, f.run()); assertEquals(1, f.deletes); assertEquals(1, f.destination.inserts)
+        assertEquals(SharingOperationPhase.COMPLETE, SharingJournal(f.store).operations().single().phase)
+    }
+
+    @Test fun aProvenDeleteRefusalReopensSafelyWhileTheOldImportIsNeverRepeated() = fixture { f ->
+        f.add(); f.refuseDelete = true
+        assertThrows(PasswordRpcException::class.java) { f.run() }
+        val operation = SharingJournal(f.store).operations().single()
+        assertEquals(SharingOperationPhase.ACK_REFUSED, operation.phase)
+        assertEquals(1, f.deletes); assertEquals(1, f.destination.inserts); assertEquals(0, f.notifications)
+        f.refuseDelete = false
+        assertEquals(1, f.run()); assertEquals(2, f.deletes); assertEquals(1, f.destination.inserts); assertEquals(1, f.notifications)
+        assertEquals(operation.id, SharingJournal(f.store).operations().single().id)
+        assertEquals(SharingOperationPhase.COMPLETE, SharingJournal(f.store).operations().single().phase)
+    }
+
+    @Test fun aDefiniteReadFailureAfterDeleteReturnedDoesNotBecomeAReplayableDeleteRefusal() = fixture { f ->
+        f.add(); f.failListAfterDelete = true
+        assertThrows(PasswordRpcException::class.java) { f.run() }
+        assertEquals(SharingOperationPhase.INDETERMINATE, SharingJournal(f.store).operations().single().phase)
+        f.failListAfterDelete = false
+        assertEquals(1, f.run()); assertEquals(1, f.deletes); assertEquals(1, f.destination.inserts)
+        assertEquals(SharingOperationPhase.COMPLETE, SharingJournal(f.store).operations().single().phase)
     }
 }
