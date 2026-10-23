@@ -103,16 +103,33 @@ class PasswordOfficialClientAndroidTest {
         val entries = repository.list(false)
         val current = entries.single { fixture(it.data) && it.id == original.tag() }
         assertUnrelated(saved, entries, original.tag())
-        assertTrue("Official note did not decrypt to the expected value", current.data.defaultNote?.value == marker())
+        val before = Proto.decode(original.encode()); val afterData = Proto.decode(current.data.encode())
+        val changedFields = (1..64).filter { number ->
+            val left = before.bytes(number); val right = afterData.bytes(number)
+            left.size != right.size || left.indices.any { !same(left[it], right[it]) } ||
+                runCatching { before.integer(number) != afterData.integer(number) }.getOrDefault(true)
+        }
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+            putString("officialNoteShape", "originalExact=${same(original.encode(), current.data.encode())}," +
+                "passwordUnchanged=${current.data.password == original.password}," +
+                "identityUnchanged=${current.data.tag() == original.tag()}," +
+                "noteCount=${current.data.notes.size},defaultNotePresent=${current.data.defaultNote != null}," +
+                "exactMarkerAnywhere=${current.data.notes.any { it.value == marker() }}," +
+                "containsMarker=${current.data.notes.any { it.value.contains(marker()) }}," +
+                "markerOnly=${current.data.notes.any { note -> note.value.contains(marker()) &&
+                    note.value.replace(marker(), "").all { it.isWhitespace() || it in "`\"“”‘’" } }}," +
+                "changedFields=" + changedFields.joinToString(":"))
+        })
         assertTrue("Official client changed credential identity or value", current.data.tag() == original.tag() &&
             current.data.password == original.password && current.data.createdWindowsMicros == original.createdWindowsMicros &&
             current.data.displayName == original.displayName)
-        val named = original.notes.filter { it.name.isNotEmpty() }.associate { it.name to it.encode() }
-        val after = current.data.notes.filter { it.name.isNotEmpty() }.associate { it.name to it.encode() }
-        assertTrue("Official client changed named notes", sameMap(named, after))
         checkpoint.locked { session -> val value = session.load()
             value.chromeLocalData["observedOfficialPayload"] = current.data.encode(); session.save(value)
         }
+        assertTrue("Official note did not decrypt to the expected value", current.data.defaultNote?.value == marker())
+        val named = original.notes.filter { it.name.isNotEmpty() }.associate { it.name to it.encode() }
+        val after = current.data.notes.filter { it.name.isNotEmpty() }.associate { it.name to it.encode() }
+        assertTrue("Official client changed named notes", sameMap(named, after))
         val state = repository.store.locked { it.load() }
         val resource = Proto.decode(state.records.single { Proto.decode(it).string(2) == original.tag() })
         InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
@@ -128,8 +145,14 @@ class PasswordOfficialClientAndroidTest {
         val original = PasswordData.decode(saved.chromeLocalData.getValue("original"))
         assertTrue("Restore input is outside the approved fixture", fixture(original))
         val observed = saved.chromeLocalData["observedOfficialPayload"] ?: error("Official producer readback must be verified before restoration")
-        assertUnrelated(saved, repository.list(false), original.tag())
+        val current = repository.list(false)
+        assertUnrelated(saved, current, original.tag())
         val baseline = baseline(saved)
+        if (same(current.single { it.id == original.tag() }.chromeBytes, saved.chromeLocalData.getValue("chrome"))) {
+            // An uncommitted UI attempt needs no cloud delete/re-create merely for cleanup.
+            checkpoint.clear()
+            return@withAccount
+        }
         SyntheticMetadataRestore.restore(context, repository, checkpoint,
             officialClientExpected = observed, unrelatedBaseline = baseline,
             originalChromeLocalData = Proto.decode(saved.chromeLocalData.getValue("chrome")).optional(3))
