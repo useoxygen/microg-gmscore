@@ -61,6 +61,22 @@ class PreferenceSyncTest {
     }
     private fun engine(server: Server, store: Store) = PreferenceSync(PasswordApi(server), store)
 
+    @Test fun incompletePreferenceSnapshotCannotAcknowledgePushOrClearThePasswordObligation() {
+        val server = Server(); val store = Store()
+        store.locked { session -> val state = session.load()
+            state.invalidations = SyncInvalidations().receive("fixture", setOf(SyncDeviceInfo.NIGORI), ByteArray(32), 0)
+            session.save(state)
+        }
+        server.repeatToken = true
+        assertThrows(ProtocolException::class.java) { engine(server, store).synchronize(server.parent) }
+        assertEquals(0L, store.state().invalidations.preferencesHandled)
+        server.repeatToken = false
+        engine(server, store).synchronize(server.parent)
+        assertEquals(1L, store.state().invalidations.preferencesHandled)
+        assertEquals(0L, store.state().invalidations.passwordsHandled)
+        assertTrue(store.state().invalidations.pending)
+    }
+
     @Test fun preferenceCreateAndUpdateUseAndPreserveRegisteredClientToken() {
         val server = Server(); val store = Store(); val token = byteArrayOf(9, 8, 7)
         server.requiredClientToken = token
@@ -141,11 +157,11 @@ class PreferenceSyncTest {
         val server = Server(); val store = Store(); val sync = engine(server, store)
         sync.synchronize(server.parent)
         sync.enqueue("credentials_enable_service", "true")
-        assertEquals(3L, Proto.decode(store.bytes).integer(1))
+        assertEquals(4L, Proto.decode(store.bytes).integer(1))
         val reopened = VaultState.decode(store.bytes)
         assertEquals(1, reopened.preferenceMutations.size)
         assertEquals("true", engine(server, store).value("credentials_enable_service"))
-        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 4)) }
+        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 5)) }
     }
 
     @Test fun unknownFieldsSurviveValueEditsAndAChangedVaultCannotReceiveOldQueuedSettings() {

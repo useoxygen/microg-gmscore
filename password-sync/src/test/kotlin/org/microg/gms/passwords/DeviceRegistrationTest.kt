@@ -119,19 +119,19 @@ class DeviceRegistrationTest {
     }
 
     @Test fun legacyStatesMigrateWithoutLosingPendingPreferenceWrites() {
-        for (schema in 1L..2L) {
+        for (schema in 1L..3L) {
             val pending = Mutation("fixture-operation", MutationKind.CREATE, "fixture-tag", null, null, byteArrayOf(1), MutationPhase.INDETERMINATE)
             val old = Proto.integer(1, schema) + Proto.field(11, parent) + Proto.field(4, pending.encode()) +
-                if (schema == 2L) Proto.field(10, pending.encode()) else byteArrayOf()
+                if (schema >= 2L) Proto.field(10, pending.encode()) else byteArrayOf()
             val state = VaultState.decode(old)
             state.deviceRegistration = DeviceRegistration(parent, ByteArray(16))
             val next = state.encode()
-            assertEquals(3L, Proto.decode(next).integer(1))
+            assertEquals(4L, Proto.decode(next).integer(1))
             assertEquals(parent, VaultState.decode(next).preferenceParent)
             assertEquals(16, VaultState.decode(next).deviceRegistration!!.nonce.size)
             assertEquals("fixture-operation", VaultState.decode(next).mutations.single().id)
             assertEquals(MutationPhase.INDETERMINATE, VaultState.decode(next).mutations.single().phase)
-            if (schema == 2L) assertEquals("fixture-operation", VaultState.decode(next).preferenceMutations.single().id)
+            if (schema >= 2L) assertEquals("fixture-operation", VaultState.decode(next).preferenceMutations.single().id)
         }
     }
 }

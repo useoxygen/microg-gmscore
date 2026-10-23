@@ -55,6 +55,9 @@ class PasswordManagerAndroidTest {
     private val touchFlags = CopyOnWriteArrayList<Int>()
     private val touchPoints = CopyOnWriteArrayList<String>()
     private var tapBounds = "unavailable"
+    private var metadataStep = "precondition"
+    private var metadataFailedAt: String? = null
+    private var metadataRestored = false
 
     private inner class RecordingCallback(callback: android.view.Window.Callback) : WindowCallbackWrapper(callback) {
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -213,8 +216,10 @@ class PasswordManagerAndroidTest {
         val selected = selectedAccount()
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
         // Semantics failures can include editable contents. Never attach them to a test result.
-        try { editMetadata(selected) } catch (_: Throwable) {
-            throw AssertionError("Synthetic metadata UI verification failed; encrypted phone checkpoint is retained until restoration succeeds")
+        try { editMetadata(selected) } catch (failure: Throwable) {
+            val step = if (metadataRestored) metadataFailedAt ?: metadataStep else metadataStep
+            throw AssertionError("Synthetic metadata UI verification failed: step=$step, " +
+                "restored=$metadataRestored, failureType=${failure.javaClass.simpleName}; no editable contents are reported")
         }
     }
 
@@ -227,6 +232,7 @@ class PasswordManagerAndroidTest {
             val state = it.load(); state.mutations.isEmpty() && state.preferenceMutations.isEmpty()
         })
         try {
+            metadataStep = "initial-sync"
             repository.setEnabled(true)
             repository.refresh()
             val entries = repository.list(false)
@@ -244,11 +250,14 @@ class PasswordManagerAndroidTest {
             assertTrue("Restore input is outside the fixture", data.tag() == original.id &&
                 data.realm == "https://cyc651.example.invalid/" && data.username == "cyc651-synthetic-user")
             try {
+                metadataStep = "open-manager"
                 launch(selected).use { scenario ->
                     openManager(scenario)
                     compose.waitUntil(30_000) { compose.onAllNodesWithText("cyc651-synthetic-user").fetchSemanticsNodes().size == 1 }
+                    metadataStep = "open-editor"
                     tap(compose.onNodeWithText(context.getString(R.string.passwords_edit)).performScrollTo())
                     compose.waitUntil(10_000) { compose.onAllNodesWithText(context.getString(R.string.passwords_note)).fetchSemanticsNodes().isNotEmpty() }
+                    metadataStep = "secure-dialog"
                     scenario.onActivity {
                         fun descendants(view: View): Sequence<View> = sequence {
                             yield(view)
@@ -262,22 +271,29 @@ class PasswordManagerAndroidTest {
                     }
                     val name = "cyc654-name-" + UUID.randomUUID()
                     val note = "cyc654-note-" + UUID.randomUUID()
+                    metadataStep = "edit-name"
                     compose.onNode(hasSetTextAction() and hasText(context.getString(R.string.passwords_name)))
                         .performScrollTo().performTextReplacement(name)
+                    metadataStep = "edit-note"
                     compose.onNode(hasSetTextAction() and hasText(context.getString(R.string.passwords_note)))
                         .performScrollTo().performTextReplacement(note)
+                    metadataStep = "close-keyboard"
                     closeSoftKeyboard()
                     // Save uses Android input delivery through the dialog's own Window callback.
+                    metadataStep = "tap-save"
                     tap(compose.onNodeWithText(context.getString(R.string.passwords_save)), dialog = true)
+                    metadataStep = "readback"
                     compose.waitUntil(30_000) { compose.onAllNodesWithText(name).fetchSemanticsNodes().size == 1 }
                     val readback = PasswordRepository(context, account).list(false).single { it.id == original.id }.data
                     assertTrue("Metadata edit was not persisted", readback.displayName == name && readback.defaultNote?.value == note)
                     fun withoutMetadata(value: PasswordData) = Proto.decode(value.encode()).replace(15, null).replace(22, null).encode()
                     assertTrue("Metadata edit changed other password fields", MessageDigest.isEqual(withoutMetadata(data), withoutMetadata(readback)))
                 }
-            } finally {
+            } catch (failure: Throwable) { metadataFailedAt = metadataStep; throw failure }
+            finally {
                 // Ordinary partial-client upsert intentionally retains omitted fields. Restore the
                 // exact original through the production journal with the latest server version.
+                metadataStep = "restore-reconcile"
                 repository.refresh()
                 repository.store.locked { session ->
                     val state = session.load()
@@ -290,15 +306,18 @@ class PasswordManagerAndroidTest {
                             .enqueue(session, MutationKind.UPDATE, original.id, desired)
                     } finally { keys.destroy() }
                 }
+                metadataStep = "restore-upload"
                 val receipt = repository.refresh()
                 repository.refresh()
                 val after = repository.list(false)
+                metadataStep = "restore-verify"
                 assertTrue("Exact restoration is unverified", receipt.conflicts == 0 && receipt.indeterminate == 0 &&
                     MessageDigest.isEqual(restore, after.single { it.id == original.id }.data.encode()))
                 val others = after.filter { it.id != original.id }.associate { it.id to it.data.encode() }
                 assertTrue("Unrelated record changed", untouched.keys == others.keys &&
                     untouched.all { (id, bytes) -> MessageDigest.isEqual(bytes, others.getValue(id)) })
                 checkpoint.clear()
+                metadataRestored = true
             }
         } finally { if (repository.enabled != wasEnabled) repository.setEnabled(wasEnabled) }
     }

@@ -43,7 +43,8 @@ class VaultState(
     val preferences: MutableList<ByteArray> = ArrayList(),
     val preferenceMutations: MutableList<Mutation> = ArrayList(),
     var preferenceParent: String? = null,
-    var deviceRegistration: DeviceRegistration? = null
+    var deviceRegistration: DeviceRegistration? = null,
+    var invalidations: SyncInvalidations = SyncInvalidations()
 ) {
     fun encode(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -54,8 +55,8 @@ class VaultState(
             out.write(value, 0, value.size)
         }
         // Earlier writers must refuse unknown durable registration/journal fields rather
-        // than erase them on their next save. v3 continues reading existing v1/v2 vaults.
-        append(Proto.integer(1, 3))
+        // than erase them on their next save. v4 also fences durable refresh obligations.
+        append(Proto.integer(1, 4))
         metadata?.let { append(Proto.field(2, it)) }
         records.forEach { append(Proto.field(3, it)) }
         mutations.forEach { append(Proto.field(4, it.encode())) }
@@ -67,12 +68,13 @@ class VaultState(
         preferenceMutations.forEach { append(Proto.field(10, it.encode())) }
         preferenceParent?.let { append(Proto.field(11, it)) }
         deviceRegistration?.let { append(Proto.field(12, it.encode())) }
+        append(Proto.field(13, invalidations.encode()))
         return out.toByteArray()
     }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
-            if (proto.integer(1) !in setOf(1L, 2L, 3L)) throw ProtocolException()
+            if (proto.integer(1) !in setOf(1L, 2L, 3L, 4L)) throw ProtocolException()
             val state = VaultState(proto.optional(2), proto.bytes(3).toMutableList(),
                 proto.bytes(4).map(Mutation::decode).toMutableList(), proto.integer(5) ?: 0)
             proto.bytes(6).forEach { raw -> Proto.decode(raw).let { state.chromeLocalData[it.string(1)] = it.one(2) } }
@@ -82,6 +84,7 @@ class VaultState(
             state.preferenceMutations.addAll(proto.bytes(10).map(Mutation::decode))
             state.preferenceParent = proto.optionalString(11)
             state.deviceRegistration = proto.optional(12)?.let(DeviceRegistration::decode)
+            state.invalidations = proto.optional(13)?.let(SyncInvalidations::decode) ?: SyncInvalidations()
             if (state.mutations.map { it.id }.toSet().size != state.mutations.size) throw ProtocolException()
             if (state.preferenceMutations.map { it.id }.toSet().size != state.preferenceMutations.size) throw ProtocolException()
             state
@@ -154,6 +157,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
             state.pendingMetadata = null
             state.records.clear(); state.records.addAll(records)
             state.lastSyncMillis = now()
+            state.invalidations = state.invalidations.acknowledgePasswords()
             session.save(state)
             val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
             var uploaded = 0

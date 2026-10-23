@@ -32,7 +32,8 @@ class PasswordInvalidationReceiver : BroadcastReceiver() {
         try {
             WorkManager.getInstance(context).enqueueUniqueWork("password-invalidation-${PasswordRepository.hash(hint.cacheGuid)}",
                 ExistingWorkPolicy.APPEND_OR_REPLACE, OneTimeWorkRequestBuilder<PasswordInvalidationWorker>()
-                    .setInputData(workDataOf("cacheGuid" to hint.cacheGuid)).build())
+                    .setInputData(workDataOf("cacheGuid" to hint.cacheGuid, "types" to hint.types.toIntArray(),
+                        "digest" to hint.digest)).build())
                 .result.addListener({ pending.finish() }, java.util.concurrent.Executor { it.run() })
         } catch (_: Exception) { pending.finish() }
     }
@@ -41,12 +42,25 @@ class PasswordInvalidationReceiver : BroadcastReceiver() {
 class PasswordInvalidationWorker(context: Context, parameters: WorkerParameters) : Worker(context, parameters) {
     override fun doWork(): Result {
         val guid = inputData.getString("cacheGuid")?.takeIf { it.isNotEmpty() && it.length <= 1024 } ?: return Result.failure()
+        val types = inputData.getIntArray("types")?.takeIf { it.isNotEmpty() && it.size <= 128 && it.all { type -> type > 0 } }
+            ?.toSet() ?: return Result.failure()
+        val digest = inputData.getByteArray("digest")?.takeIf { it.size == 32 } ?: return Result.failure()
         var retry = false
         for (account in AccountManager.get(applicationContext).getAccountsByType("com.google")) {
             try {
                 val repository = PasswordRepository(applicationContext, account)
-                if (repository.enabled && repository.store.locked { it.load().deviceRegistration?.cacheGuid == guid })
-                    repository.schedule()
+                if (!repository.enabled) continue
+                val pending = repository.store.locked { session ->
+                    val state = session.load()
+                    if (state.deviceRegistration?.cacheGuid != guid) false else {
+                        state.invalidations = state.invalidations.receive(id.toString(), types, digest, System.currentTimeMillis())
+                        session.save(state)
+                        state.invalidations.pending
+                    }
+                }
+                // Persist before enqueue. An interrupted worker retries with the same ID and
+                // replays an unfinished obligation without inventing another remote mutation.
+                if (pending) repository.schedule()
             } catch (_: VaultLockedException) { /* Removed or revoked accounts cannot receive a fill or sync. */ }
             catch (_: Exception) { retry = true }
         }

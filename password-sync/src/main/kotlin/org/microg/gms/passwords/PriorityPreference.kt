@@ -56,6 +56,7 @@ class PreferenceSync(private val api: PasswordApi, private val store: VaultStore
         val snapshot = snapshot(parent)
         state.preferences.clear(); state.preferences.addAll(snapshot)
         state.preferenceParent = parent
+        state.invalidations = state.invalidations.acknowledgePreferences()
         session.save(state)
         val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
         var uploaded = 0

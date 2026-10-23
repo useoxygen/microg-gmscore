@@ -12,6 +12,9 @@ import androidx.work.WorkInfo
 import androidx.work.WorkQuery
 import androidx.work.multiprocess.RemoteWorkManager
 import androidx.work.workDataOf
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.microg.gms.auth.AuthManager
+import org.microg.gms.common.Constants
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Assume.assumeTrue
@@ -24,6 +27,85 @@ import java.util.concurrent.TimeUnit
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun actualServerPushRefreshesTheApprovedSyntheticLoginWithoutManualRefresh() {
+        assumeTrue(arguments.getString("passwordLivePush") == "cyc654")
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        withFixture { repository, original ->
+            val registration = repository.store.locked { it.load().deviceRegistration } ?: error("Missing registration")
+            assertTrue("Push delivery capability unavailable: messaging consent, check-in and registration are required",
+                registration.info?.let { Proto.decode(it).optionalString(7) }?.isNotEmpty() == true)
+            val checkpoint = AndroidVaultStore(context, "password-fixture-push-restore/" + repository.account.name)
+            val remoteStore = AndroidVaultStore(context, "password-fixture-push-remote/" + repository.account.name)
+            val restore = checkpoint.locked { session -> session.load().chromeLocalData["original"] ?: original.data.encode().also {
+                session.save(VaultState(chromeLocalData = hashMapOf("original" to it)))
+            } }
+            val data = PasswordData.decode(restore)
+            assertTrue("Restore input is outside the approved fixture", isFixture(data) && data.tag() == original.id)
+            val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
+                "oauth2:https://www.googleapis.com/auth/login_manager").apply {
+                isGmsApp = true
+                setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
+            }
+            val token = auth.requestAuthWithBackgroundResolution(false).auth?.takeIf { it.isNotEmpty() } ?: throw VaultLockedException()
+            val transport = GooglePasswordTransport({
+                assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
+                token
+            }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl())
+            // This independent durable client does not register an additional device identity.
+            // Its empty client token ensures the primary registered device is not the originator.
+            val remote = VaultSync(PasswordApi(transport), remoteStore)
+            fun refreshRemote() = remote.synchronize { VaultKeys.unlock(it) }
+            fun enqueueExact(value: PasswordData) = remoteStore.locked { session ->
+                val state = session.load()
+                assertTrue("Remote mutation requires reconciliation; encrypted restore input retained", state.mutations.isEmpty())
+                val current = state.records.single { Proto.decode(it).string(2) == original.id }
+                val keys = VaultKeys.unlock(state.metadata!!)
+                try { remote.enqueue(session, MutationKind.UPDATE, original.id, PasswordResourceCodec.encrypt(value, keys, current)) }
+                finally { keys.destroy() }
+            }
+            val work = RemoteWorkManager.getInstance(context)
+            val userId = AccountManager.get(context).getUserData(repository.account, "GoogleUserId") ?: throw VaultLockedException()
+            val marker = PasswordRepository.hash("google:$userId")
+            try {
+                refreshRemote()
+                work.cancelUniqueWork("password-periodic-$marker").get(30, TimeUnit.SECONDS)
+                work.cancelUniqueWork("password-now-$marker").get(30, TimeUnit.SECONDS)
+                val before = repository.store.locked { it.load().invalidations.directPasswordGeneration }
+                val changed = data.withDisplayName("cyc654-remote-" + UUID.randomUUID())
+                enqueueExact(changed)
+                val sent = refreshRemote()
+                assertTrue("Remote fixture update is unresolved", sent.conflicts == 0 && sent.indeterminate == 0)
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(90)
+                var observed = false
+                while (System.nanoTime() < deadline) {
+                    val invalidation = repository.store.locked { it.load().invalidations }
+                    // No manual refresh or schedule occurs after the remote edit. A genuine
+                    // password-type push and an authenticated snapshot acknowledgement are required.
+                    if (invalidation.directPasswordGeneration > before &&
+                        invalidation.passwordsHandled >= invalidation.directPasswordGeneration &&
+                        repository.list(false).single { it.id == original.id }.data.displayName == changed.displayName) {
+                        observed = true; break
+                    }
+                    Thread.sleep(100)
+                }
+                assertTrue("Real server push refresh was not observed within the bounded delivery window", observed)
+            } finally {
+                try {
+                    refreshRemote()
+                    enqueueExact(data)
+                    val restored = refreshRemote()
+                    refreshRemote()
+                    assertTrue("Remote restoration is unresolved", restored.conflicts == 0 && restored.indeterminate == 0)
+                    repository.refresh()
+                    assertTrue("Exact push fixture restoration is unverified",
+                        same(restore, repository.list(false).single { it.id == original.id }.data.encode()))
+                    checkpoint.clear()
+                    remoteStore.clear()
+                } finally { repository.setEnabled(true) }
+            }
+        }
+    }
+
     @Test fun nativeDeviceRegistrationAndHeartbeatPreserveCredentialData() {
         assumeTrue(arguments.getString("passwordLiveDeviceRegistration") == "cyc654")
         withFixture { repository, _ ->

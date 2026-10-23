@@ -61,6 +61,7 @@ class DeviceRegistrationSync(private val transport: PasswordTransport, private v
         if (registered == null) {
             registered = DeviceRegistration(parent, nonce())
             state.deviceRegistration = registered
+            state.invalidations = SyncInvalidations()
             session.save(state)
         }
         val deviceInfo = info().encode()
@@ -78,6 +79,7 @@ class DeviceRegistrationSync(private val transport: PasswordTransport, private v
         val result = Proto.decode(response)
         val token = result.one(1)
         val replacement = DeviceRegistration(parent, registered.nonce, token, result.string(2), deviceInfo, time)
+        if (registered.cacheGuid != null && registered.cacheGuid != replacement.cacheGuid) state.invalidations = SyncInvalidations()
         state.deviceRegistration = replacement
         session.save(state)
         return token.copyOf()
@@ -86,7 +88,7 @@ class DeviceRegistrationSync(private val transport: PasswordTransport, private v
 }
 
 /** Push invalidations are hints: account routing is by the server's cache GUID, never an intent account name. */
-class PasswordInvalidation private constructor(val cacheGuid: String, val types: Set<Int>) {
+class PasswordInvalidation private constructor(val cacheGuid: String, val types: Set<Int>, val digest: ByteArray) {
     fun appliesTo(registration: DeviceRegistration?): Boolean = registration?.cacheGuid == cacheGuid &&
         types.any { it in setOf(SyncDeviceInfo.PASSWORDS, SyncDeviceInfo.PREFERENCES, SyncDeviceInfo.NIGORI) }
     override fun toString(): String = "PasswordInvalidation[redacted]"
@@ -101,7 +103,8 @@ class PasswordInvalidation private constructor(val cacheGuid: String, val types:
                 if (type !in 1..Int.MAX_VALUE) throw ProtocolException()
                 type.toInt()
             }.toSet()
-            return PasswordInvalidation(cacheGuid, types)
+            return PasswordInvalidation(cacheGuid, types, MessageDigest.getInstance("SHA-256").digest(
+                Proto.field(1, cacheGuid) + Proto.field(2, payload)))
         }
     }
 }

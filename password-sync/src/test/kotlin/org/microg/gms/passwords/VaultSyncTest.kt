@@ -90,6 +90,24 @@ class VaultSyncTest {
     }
     private fun engine(server: Server, store: Store) = VaultSync(PasswordApi(server), store) { 1234L }
 
+    @Test fun failedPaginationOrUnlockRetainsPushObligationUntilACompleteAuthenticatedSnapshot() {
+        val server = Server(); val store = Store()
+        store.locked { session -> val state = session.load()
+            state.invalidations = SyncInvalidations().receive("fixture", setOf(SyncDeviceInfo.NIGORI), ByteArray(32), 0)
+            session.save(state)
+        }
+        server.repeatPageToken = true
+        assertThrows(ProtocolException::class.java) { engine(server, store).synchronize { VaultKeys.unlock(it) } }
+        assertEquals(0L, store.state().invalidations.passwordsHandled)
+        server.repeatPageToken = false
+        assertThrows(VaultLockedException::class.java) { engine(server, store).synchronize { throw VaultLockedException() } }
+        assertEquals(0L, store.state().invalidations.passwordsHandled)
+        engine(server, store).synchronize { VaultKeys.unlock(it) }
+        assertEquals(1L, store.state().invalidations.passwordsHandled)
+        assertEquals(0L, store.state().invalidations.preferencesHandled)
+        assertTrue(store.state().invalidations.pending)
+    }
+
     @Test fun registeredClientTokenSurvivesOutboxCommitsAndGoesToEveryPasswordMutation() {
         val server = Server(); val store = Store(); val token = byteArrayOf(9, 8, 7)
         server.requiredClientToken = token

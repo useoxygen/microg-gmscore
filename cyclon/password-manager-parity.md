@@ -107,6 +107,14 @@ no app data was cleared and temporary test APKs were removed. Registration and h
 are native/server-accepted. Actual end-to-end push delivery, stale-token recovery and reboot/
 reconnect behavior remain unaccepted.
 
+The next push-recovery change persists a refresh obligation before scheduling, carries a
+stable WorkManager delivery identity across retries, and acknowledges password/preference
+domains independently only after a complete authenticated snapshot. Distinct deliveries
+with identical payloads remain distinct; deduplication by payload hash would miss changes.
+State schema v4 reads v1/v2/v3 and makes older writers refuse the new obligations.
+Host tests cover interruption/reopen, retry, domain separation, incomplete pagination,
+locked keys and malformed/overflow state. This remains pending native push acceptance.
+
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
 behavior and interoperability evidence. Adding a transport method alone does not complete
@@ -129,7 +137,11 @@ and never-save site controls. Passwords and notes are masked in the editor. Neve
 are rechecked under the vault lock before automatic save; manual management remains available.
 Separate Compose dialog windows now have their own secure-window and obscured-touch guard.
 Host validation passes 50 password-sync and 41 Core tests; product and instrumentation APKs
-compile. New isolated Android and native synthetic metadata-editor acceptance is pending.
+compile. The matching-signer 0e9c8653 build passed all nine isolated Android cases and both
+existing manager listing/lifecycle cases. Its new metadata-editor case failed; that path
+remains unaccepted while the sanitized harness is diagnosed. Original Services was restored
+without clearing data and the temporary test package removed. Native synthetic editor and
+notes-backup server acceptance are pending.
 Username/site identity changes, moving stores, import/export and password checkup remain open.
 
 ## Remaining parity and acceptance
