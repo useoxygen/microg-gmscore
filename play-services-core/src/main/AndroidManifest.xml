@@ -207,6 +207,7 @@
 
     <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
     <application
+        android:name="org.microg.gms.common.ServicesApplication"
         android:allowBackup="true"
         android:forceQueryable="true"
         android:fullBackupOnly="true"
@@ -218,6 +219,15 @@
         android:theme="@style/Theme.App">
 
         <library android:name="com.google.android.gms" />
+
+        <!-- All processes use the same on-demand WorkManager configuration. Only the
+             main process schedules/executes jobs; secondary processes use its remote API. -->
+        <provider android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup" android:exported="false" tools:node="merge">
+            <meta-data android:name="androidx.work.WorkManagerInitializer" tools:node="remove" />
+        </provider>
+        <service android:name="androidx.work.multiprocess.RemoteWorkManagerService"
+            android:exported="false" android:process="${applicationId}" tools:node="merge" />
 
         <!-- Provision -->
 

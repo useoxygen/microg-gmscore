@@ -3,8 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!-- Only the opt-in API 26+ UI fixture uses these; retain the product's minimum SDK. -->
     <uses-sdk tools:overrideLibrary="androidx.compose.ui.test.junit4,androidx.compose.ui.test" />
-    <!-- Opt-in UI runner. Keep the product's separate UI process and secure window intact. -->
-    <instrumentation android:name="org.microg.gms.passwords.PasswordUiTestRunner"
+    <!-- Exercise repository and UI in the actual secondary process. No process override in the product. -->
+    <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner"
         android:targetPackage="com.google.android.gms"
         android:targetProcesses="com.google.android.gms:ui" />
 </manifest>

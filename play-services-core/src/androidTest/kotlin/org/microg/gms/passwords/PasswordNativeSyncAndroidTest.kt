@@ -4,6 +4,14 @@ package org.microg.gms.passwords
 import android.accounts.AccountManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkQuery
+import androidx.work.multiprocess.RemoteWorkManager
+import androidx.work.workDataOf
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Assume.assumeTrue
@@ -11,10 +19,43 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun secondaryProcessSchedulesPasswordWorkerToCompletion() {
+        val selected = arguments.getString("passwordLiveAccount")
+        assumeTrue(!selected.isNullOrBlank())
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        assertTrue("Refusing existing pending writes", repository.store.locked {
+            val state = it.load(); state.mutations.isEmpty() && state.preferenceMutations.isEmpty()
+        })
+        val manager = RemoteWorkManager.getInstance(context)
+        val workName = "password-fixture-background-" + UUID.randomUUID()
+        val request = OneTimeWorkRequestBuilder<PasswordSyncWorker>()
+            .setInputData(workDataOf("account" to selected))
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
+        val wasEnabled = repository.enabled
+        try {
+            repository.setEnabled(true)
+            manager.enqueueUniqueWork(workName, ExistingWorkPolicy.KEEP, request).get(30, TimeUnit.SECONDS)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+            var state: WorkInfo.State? = null
+            while (System.nanoTime() < deadline) {
+                state = manager.getWorkInfos(WorkQuery.Builder.fromIds(listOf(request.id)).build())
+                    .get(10, TimeUnit.SECONDS).singleOrNull()?.state
+                if (state?.isFinished == true) break
+                Thread.sleep(100)
+            }
+            assertTrue("Scheduled password worker did not complete successfully", state == WorkInfo.State.SUCCEEDED)
+        } finally {
+            manager.cancelUniqueWork(workName).get(30, TimeUnit.SECONDS)
+            if (!wasEnabled) repository.setEnabled(false)
+        }
+    }
+
     @Test fun nativePriorityPreferenceSnapshotAndCacheReopen() {
         val selected = arguments.getString("passwordLiveAccount")
         assumeTrue(!selected.isNullOrBlank())

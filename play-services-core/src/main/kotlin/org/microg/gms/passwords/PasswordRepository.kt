@@ -10,7 +10,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
+import androidx.work.multiprocess.RemoteWorkManager
 import androidx.work.workDataOf
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -42,21 +42,22 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         if (value) {
             val auth = authManager()
             auth.setPermitted(true)
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork("password-periodic-$marker", ExistingPeriodicWorkPolicy.KEEP,
+            RemoteWorkManager.getInstance(context).enqueueUniquePeriodicWork("password-periodic-$marker", ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<PasswordSyncWorker>(1, TimeUnit.HOURS).setInputData(workDataOf("account" to account.name))
-                    .setConstraints(network()).build())
+                    .setConstraints(network()).build()).get(30, TimeUnit.SECONDS)
             schedule()
         } else {
-            WorkManager.getInstance(context).cancelUniqueWork("password-periodic-$marker")
-            WorkManager.getInstance(context).cancelUniqueWork("password-now-$marker")
+            RemoteWorkManager.getInstance(context).cancelUniqueWork("password-periodic-$marker").get(30, TimeUnit.SECONDS)
+            RemoteWorkManager.getInstance(context).cancelUniqueWork("password-now-$marker").get(30, TimeUnit.SECONDS)
         }
     }
 
     fun schedule() {
         if (!enabled) return
-        WorkManager.getInstance(context).enqueueUniqueWork("password-now-$marker", ExistingWorkPolicy.KEEP,
+        RemoteWorkManager.getInstance(context).enqueueUniqueWork("password-now-$marker", ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<PasswordSyncWorker>().setInputData(workDataOf("account" to account.name))
                 .setConstraints(network()).setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
+            .get(30, TimeUnit.SECONDS)
     }
 
     override fun refresh(): SyncReceipt {
