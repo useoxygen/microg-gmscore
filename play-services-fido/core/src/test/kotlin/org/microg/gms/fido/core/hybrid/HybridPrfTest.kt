@@ -44,8 +44,10 @@ class HybridPrfTest {
         val get = HybridPrf.output(AuthenticationExtensionsPrfOutputs(false, first, second), false)!!
         val signed = AuthenticatorGetAssertionResponse(null, byteArrayOf(2), byteArrayOf(3), null, null, get, true).encodePayloadAsCbor()
         assertTrue(signed[6].AsBoolean()); assertArrayEquals(second, signed[8]["prf"]["results"]["second"].GetByteString())
-        assertNull(signed[8]["prf"]["enabled"])
-        assertNull(HybridPrf.output(AuthenticationExtensionsPrfOutputs(false, null), false))
+        assertFalse(signed[8]["prf"]["enabled"].AsBoolean())
+        val unavailable = HybridPrf.output(AuthenticationExtensionsPrfOutputs(false, null), false)!!
+        assertFalse(unavailable["prf"]["enabled"].AsBoolean()); assertNull(unavailable["prf"]["results"])
+        assertFalse(HybridPrf.output(AuthenticationExtensionsPrfOutputs(false, null), true)!!["prf"]["enabled"].AsBoolean())
     }
     @Test fun actualSdkBuilderPreservesChosenPrfAndOtherBuilderFields() {
         val prf = PrfExtension(arrayOf(null, first))

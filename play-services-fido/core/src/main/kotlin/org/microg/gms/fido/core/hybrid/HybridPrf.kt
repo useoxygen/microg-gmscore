@@ -38,11 +38,11 @@ object HybridPrf {
         return AuthenticationExtensions(null, null, null, null, null, null, null, null, null, extension, null, null, null)
     }
     /** UnsignedExtensionOutputs, embedded at makeCredential key 6 / getAssertion key 8. */
+    @Suppress("UNUSED_PARAMETER")
     fun output(output: AuthenticationExtensionsPrfOutputs?, create: Boolean): CBORObject? {
         output ?: return null
-        if (create && !output.isEnabled) return null
         val value = CBORObject.NewMap()
-        if (create) value.set("enabled", CBORObject.FromObject(true))
+        value.set("enabled", CBORObject.FromObject(output.isEnabled))
         val first = output.first
         if (first != null) {
             val result = CBORObject.NewMap().apply {
@@ -50,7 +50,7 @@ object HybridPrf {
                 output.second?.let { set("second", CBORObject.FromObject(it)) }
             }
             value.set("results", result)
-        } else if (!create) return null
+        }
         return CBORObject.NewMap().apply { set("prf", value) }
     }
 }
