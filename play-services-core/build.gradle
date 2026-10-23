@@ -26,6 +26,8 @@ dependencies {
     testImplementation 'org.bouncycastle:bcprov-jdk15to18:1.83'
     // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.
     testImplementation 'org.json:json:20240303'
+    // Android framework classes (SQLite, Log, the platform's org.json) for host tests of GCM permissions and web bridges.
+    testImplementation 'org.robolectric:robolectric:4.16.1'
     implementation project(':people-sync')
     implementation project(':people-sync-android')
     implementation project(':calendar-sync')
@@ -170,6 +172,15 @@ android {
         buildConfigField "String", "RECAPTCHA_ENTERPRISE_PROJECT_ID", "\"${localProperties.get("recaptchaEnterpreise.projectId", "")}\""
         buildConfigField "String", "RECAPTCHA_ENTERPRISE_SITE_KEY", "\"${localProperties.get("recaptchaEnterpreise.siteKey", "")}\""
         buildConfigField "String", "RECAPTCHA_ENTERPRISE_API_KEY", "\"${localProperties.get("recaptchaEnterpreise.apiKey", "")}\""
+
+        // Cyclon: native Google prompt (AuthZen) foundation, off unless a lab build asks for it (useoxygen/cyclon#842).
+        def authzenNative = (findProperty('cyclon.authzenNative') ?: 'false').toString().toBoolean()
+        def authzenLabCaptureUntil = (findProperty('cyclon.authzenLabCaptureUntil') ?: '0').toString().toLong()
+        if (authzenLabCaptureUntil > System.currentTimeMillis() + 3L * 24 * 3600 * 1000) {
+            throw new GradleException("cyclon.authzenLabCaptureUntil must be at most three days ahead")
+        }
+        buildConfigField "boolean", "CYCLON_AUTHZEN_NATIVE", authzenNative.toString()
+        buildConfigField "long", "CYCLON_AUTHZEN_LAB_CAPTURE_UNTIL", "${authzenLabCaptureUntil}L"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"

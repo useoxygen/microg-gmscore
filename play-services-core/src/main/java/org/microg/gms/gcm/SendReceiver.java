@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: no extras in logs; upstream sends carry account names and tokens (useoxygen/cyclon#842).
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -19,7 +20,6 @@ package org.microg.gms.gcm;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.util.Log;
 
 import androidx.legacy.content.WakefulBroadcastReceiver;
 
@@ -30,7 +30,7 @@ public class SendReceiver extends WakefulBroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         if (intent.getExtras() == null) return;
         Bundle extras = intent.getExtras();
-        Log.d("GmsMcsSendRcvr", "original extras: " + extras);
+        McsLog.d("GmsMcsSendRcvr", "send request: extras=" + extras.size());
         for (String key : extras.keySet()) {
             if (key.startsWith("GOOG.") || key.startsWith("GOOGLE.")) {
                 extras.remove(key);

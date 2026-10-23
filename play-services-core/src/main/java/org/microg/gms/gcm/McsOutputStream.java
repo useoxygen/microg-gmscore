@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: transport logs name message types and sizes only, never content (useoxygen/cyclon#842).
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -74,8 +75,7 @@ public class McsOutputStream extends Thread implements Handler.Callback, Closeab
         switch (msg.what) {
             case MSG_OUTPUT:
                 try {
-                    Log.d(TAG, "Outgoing message: " + msg.obj);
-                    writeInternal((Message) msg.obj, msg.arg1);
+                    write((Message) msg.obj, msg.arg1);
                     mainHandler.dispatchMessage(mainHandler.obtainMessage(MSG_OUTPUT_DONE, msg.arg1, msg.arg2, msg.obj));
                 } catch (IOException e) {
                     if (closed) {
@@ -108,9 +108,15 @@ public class McsOutputStream extends Thread implements Handler.Callback, Closeab
         }
     }
 
+    /** Writes one frame; logs only its type, size bucket and category (see {@link McsLog}). */
+    void write(Message message, int tag) throws IOException {
+        McsLog.d(TAG, "Outgoing message: " + McsLog.describe(message));
+        writeInternal(message, tag);
+    }
+
     private synchronized void writeInternal(Message message, int tag) throws IOException {
         if (!initialized) {
-            Log.d(TAG, "Write MCS version code: " + version);
+            McsLog.d(TAG, "Write MCS version code: " + version);
             os.write(version);
             initialized = true;
         }

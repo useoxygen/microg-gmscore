@@ -1,3 +1,5 @@
+// Modified by Cyclon in 2026: redacted route diagnostics, tap-to-open prompt notification instead of a background activity start,
+// SecureGcm messages handed to the native AuthZen route.
 /**
  * SPDX-FileCopyrightText: 2026 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -8,12 +10,14 @@ package org.microg.gms.auth.gcm
 import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Base64
 import android.util.DisplayMetrics
 import android.util.Log
@@ -23,13 +27,13 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.PendingIntentCompat
 import androidx.legacy.content.WakefulBroadcastReceiver
 import com.google.android.gms.R
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import org.microg.gms.accountsettings.ui.EXTRA_ACCOUNT_NAME
 import org.microg.gms.accountsettings.ui.KEY_NOTIFICATION_ID
 import org.microg.gms.accountsettings.ui.MainActivity
-import org.microg.gms.accountsettings.ui.runOnMainLooper
 import org.microg.gms.auth.AuthConstants
 import org.microg.gms.auth.AuthPrefs
+import org.microg.gms.auth.authzen.dispatchAuthZenMessage
+import org.microg.gms.auth.authzen.isSecureGcmCandidate
 import org.microg.gms.common.Constants
 import org.microg.gms.common.ForegroundServiceContext
 import org.microg.gms.gcm.AuthHeaderInterceptor
@@ -56,23 +60,22 @@ import java.util.concurrent.atomic.AtomicInteger
 
 private const val TAG = "Gms2FA"
 private const val CHANNEL_ID = "gcm_notification"
-private const val CHANNEL_NAME = "gnots"
-private const val GMS_GCM_NOTIFICATIONS = "notifications"
-private const val NOTIFICATION_STATUS_READY = 2
-private const val NOTIFICATION_STATUS_COMPLETE = 5
-private const val NOTIFICATION_REPEAT_NUM = 3
-private const val NOTIFICATION_DELAY_TIME = 500L
+private const val NOTIFICATION_TAG = "two_step_verification"
 
 const val ACTION_GCM_NOTIFY_COMPLETE = "org.microg.gms.gcm.NOTIFY_COMPLETE"
 
+internal val twoStepDiagnostics = TwoStepDiagnostics { Log.i(TAG, it) }
+
 class GcmReceiver : WakefulBroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val shouldReceiveTwoStepVerification = AuthPrefs.shouldReceiveTwoStepVerification(context)
-        if (!shouldReceiveTwoStepVerification) {
-            Log.d(TAG, "onReceive: <Two-Step> Switch not allowed ")
+        // SecureGcm (`P`) messages belong to the native AuthZen route, which is off by default and only logs them.
+        if (intent.isSecureGcmCandidate()) {
+            val pending = goAsync()
+            context.dispatchAuthZenMessage(intent) { pending.finish() }
             return
         }
-        Log.d(TAG, "onReceive: action: ${intent.action}")
+        val prefOn = AuthPrefs.shouldReceiveTwoStepVerification(context)
+        if (!admitTwoStepMessage(prefOn, intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY), twoStepDiagnostics)) return
         val callIntent = Intent(context, GcmReceiverService::class.java)
         callIntent.action = intent.action
         intent.extras?.let { callIntent.putExtras(it) }
@@ -89,98 +92,79 @@ class GcmReceiverService : ReceiverService(TAG) {
 
     override fun onCreate() {
         super.onCreate()
-        if (SDK_INT >= 26) {
-            val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH)
-            val notificationManager: NotificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.createNotificationChannel(channel)
-        }
+        registerTwoStepNotificationChannel()
     }
 
     override fun allowed(): Boolean = AuthPrefs.shouldReceiveTwoStepVerification(this)
 
     override fun receiver(intent: Intent) {
-        Log.d(TAG, "receiver: run thread -> ${Thread.currentThread().name}")
-        Log.d(TAG, "receiver: action: ${intent.action} data: ${intent.extras}")
         val accountManager = getSystemService(ACCOUNT_SERVICE) as AccountManager? ?: return run { Log.w(TAG, "receiver: accountManager is null") }
-        val data = intent.extras ?: return run { Log.w(TAG, "receiver: intent.extras is null") }
         if (intent.action == ACTION_GCM_NOTIFY_COMPLETE) {
-            Log.d(TAG, "receiver: remove Notification")
             val accountName = intent.getStringExtra(EXTRA_NOTIFICATION_ACCOUNT) ?: return
-            val notificationList = accountNotificationMap[accountName] ?: return
-            notificationList.forEach {
-                val notificationId = it.first
-                val notificationData = it.second
+            val notificationList = accountNotificationMap.remove(accountName) ?: return
+            notificationList.forEach { (notificationId, notificationData) ->
                 updateNotificationReadState(accountManager, accountName, notificationData, NOTIFICATION_STATUS_COMPLETE)
-                NotificationManagerCompat.from(this).cancel(notificationId)
-                Log.d(TAG, "Notification with $accountName updateNotificationReadState <$notificationId> to Completed.")
+                NotificationManagerCompat.from(this).cancel(NOTIFICATION_TAG, notificationId)
             }
-            accountNotificationMap.remove(accountName)
+            twoStepDiagnostics.event(TwoStepEvent.COMPLETED, null, "count" to notificationList.size)
             return
         }
-        Log.d(TAG, "notifyVerificationInfo: from: ${data.getString(GcmConstants.EXTRA_FROM)} data: $data")
-        val gcmBodyType = data.getString(GcmConstants.EXTRA_GCM_BODY) ?: return run { Log.w(TAG, "receiver: EXTRA_GCM_BODY is null!") }
-        if (GMS_GCM_NOTIFICATIONS != gcmBodyType) return run { Log.w(TAG, "receiver: gcmBodyType is not notifications") }
-        val payloadData = data.getString(GcmConstants.EXTRA_GMS_GNOTS_PAYLOAD) ?: return run { Log.w(TAG, "receiver: payloadData is null!") }
-        val notificationData = NotificationData.ADAPTER.decode(Base64.decode(payloadData, DEFAULT_FLAGS))
-        Log.w(TAG, "notifyVerificationInfo: $notificationData")
-        if (notificationData.isActive == true) return run { Log.w(TAG, "receiver: notification isActive!") }
-        val account = notificationData.userInfo?.userId?.let { id ->
-            accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).find {
-                accountManager.getUserData(it, AuthConstants.GOOGLE_USER_ID) == id
-            }
-        } ?: return run { Log.w(TAG, "receiver: account not matched!") }
-        Log.d(TAG, "notifyVerificationInfo: account: ${account.name}")
-        val identifierResponse = runBlocking {
-            repeat(NOTIFICATION_REPEAT_NUM) { attempt ->
-                try {
-                    val notificationInfo = requestNotificationInfo(accountManager, account, notificationData)
-                    if (notificationInfo.notifications?.notificationDataList.isNullOrEmpty()) {
-                        throw RuntimeException("Notification not found")
-                    }
-                    return@runBlocking notificationInfo
-                } catch (e: Exception) {
-                    Log.w(TAG, "Attempt ${attempt + 1} failed: ${e.message}")
-                }
-                delay(NOTIFICATION_DELAY_TIME)
-            }
-            return@runBlocking null
-        }
-        Log.d(TAG, "notifyVerificationInfo: identifierResponse: $identifierResponse")
-        val notifications = identifierResponse?.notifications?.notificationDataList ?: return run { Log.w(TAG, "receiver: notifications is null!") }
-        notifications.forEachIndexed { index, it ->
-            Log.d(TAG, "notifyVerificationInfo: notifications: index:$index it: $it")
-            updateNotificationReadState(accountManager, account.name, it, NOTIFICATION_STATUS_READY)
-            sendNotification(account, notificationIdGenerator.incrementAndGet(), it)
-            updateNotificationReadState(accountManager, account.name, it, NOTIFICATION_STATUS_COMPLETE)
-        }
+        TwoStepRoute<Account>(
+            diagnostics = twoStepDiagnostics,
+            enabled = { AuthPrefs.shouldReceiveTwoStepVerification(this) },
+            accounts = {
+                accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).map { it to accountManager.getUserData(it, AuthConstants.GOOGLE_USER_ID) }
+            },
+            fetch = { account, tickle -> requestNotificationInfo(accountManager, account, tickle).notifications?.notificationDataList.orEmpty() },
+            setReadState = { account, notification, status -> sendReadState(accountManager, account, notification, status) },
+            show = { account, notification -> showNotification(account, notification) },
+            decodeBase64 = { Base64.decode(it, DEFAULT_FLAGS) },
+        ).route(intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY), intent.getStringExtra(GcmConstants.EXTRA_GMS_GNOTS_PAYLOAD))
     }
 
-    private fun sendNotification(account: Account, notificationId: Int, notificationData: NotificationData) {
-        if (notificationData.isActive == true) return
-        val content = notificationData.content ?: return
-        val intentExtras = notificationData.intentActions?.primaryPayload?.extras ?: return
+    /**
+     * Posts a high-importance notification that opens Google's confirmation page on tap. Nothing in it approves the
+     * sign-in, and nothing is started in the background: Android blocks background activity starts, and the owner
+     * should choose when to look. The owner's notification permission and channel settings are respected.
+     */
+    private fun showNotification(account: Account, notificationData: NotificationData): ShowResult {
+        val content = notificationData.content ?: return ShowResult.NOT_SHOWABLE
+        val intentExtras = notificationData.intentActions?.primaryPayload?.extras ?: return ShowResult.NOT_SHOWABLE
+        if (!twoStepNotificationsAllowed()) return ShowResult.NOTIFICATIONS_BLOCKED
+        val notificationId = notificationIdGenerator.incrementAndGet()
         val intent = Intent(this, MainActivity::class.java).apply {
             `package` = Constants.GMS_PACKAGE_NAME
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
             intentExtras.forEach { putExtra(it.key, it.value_) }
+            // The page opens for the account the notification was routed to, whatever the fetched extras name.
+            putExtra(EXTRA_ACCOUNT_NAME, account.name)
             putExtra(KEY_NOTIFICATION_ID, notificationId)
         }
         val pendingIntent = PendingIntentCompat.getActivity(this, notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT, false)
+        val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.cyclon_two_step_notification_public_title))
+            .setContentText(getString(R.string.cyclon_two_step_notification_public_text))
+            .setSmallIcon(R.drawable.ic_google_logo)
+            .build()
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(content.accountName)
             .setContentText(content.description)
             .setStyle(NotificationCompat.BigTextStyle().bigText(content.description))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+            .setLocalOnly(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setSmallIcon(R.drawable.ic_google_logo)
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            NotificationManagerCompat.from(this).notify(notificationId, builder.build())
+        try {
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_TAG, notificationId, builder.build())
+        } catch (e: SecurityException) {
+            return ShowResult.NOTIFICATIONS_BLOCKED
         }
-        runCatching { runOnMainLooper { startActivity(intent) } }
         accountNotificationMap.getOrPut(account.name) { mutableListOf() }.add(Pair(notificationId, notificationData))
+        return ShowResult.SHOWN
     }
 
     private fun getCurrentLanguageTag(): String {
@@ -207,7 +191,7 @@ class GcmReceiverService : ReceiverService(TAG) {
     }
 
     private fun requestNotificationInfo(accountManager: AccountManager, account: Account, notificationData: NotificationData) =
-        getGunsApiServiceClient(account, accountManager!!).GmsGnotsFetchByIdentifier().executeBlocking(FetchByIdentifierRequest.Builder().apply {
+        getGunsApiServiceClient(account, accountManager).GmsGnotsFetchByIdentifier().executeBlocking(FetchByIdentifierRequest.Builder().apply {
             config(GmsConfig.Builder().apply {
                 versionInfo(GmsConfig.GmsVersionInfo(Constants.GMS_VERSION_CODE))
             }.build())
@@ -224,52 +208,22 @@ class GcmReceiverService : ReceiverService(TAG) {
         }.build())
 
     private fun updateNotificationReadState(accountManager: AccountManager, accountName: String, notificationData: NotificationData, readState: Int) {
-        if (accountName.isEmpty() || notificationData.identifier?.uniqueId?.isEmpty() == true) {
-            return
-        }
+        val account = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).find { it.name == accountName } ?: return
         try {
-            val identifier = notificationData.identifier
-            val readStateList = when {
-                readState == NOTIFICATION_STATUS_COMPLETE -> {
-                    listOf(
-                        ReadStateItem.Builder().apply {
-                            this.notification = identifier
-                            this.state = null
-                            this.status = readState
-                        }.build()
-                    )
-                }
-
-                notificationData.content?.actionButtons.isNullOrEmpty() -> {
-                    Log.w(TAG, "No action buttons found, skipping read state update.")
-                    return
-                }
-
-                else -> {
-                    notificationData.content!!.actionButtons.map {
-                        ReadStateItem.Builder().apply {
-                            this.notification = identifier
-                            this.state = it.icon
-                            this.status = readState
-                        }.build()
-                    }
-                }
-            }
-            sendNotificationReadState(accountManager, accountName, ReadStateList.Builder().apply { items = readStateList }.build())
-            Log.i(TAG, "Notification read state updated successfully for account: $accountName")
+            sendReadState(accountManager, account, notificationData, readState)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to update the notification(s) read state.", e)
+            twoStepDiagnostics.event(TwoStepEvent.READ_STATE_FAILED, null, "status" to readState)
         }
     }
 
-    private fun sendNotificationReadState(accountManager: AccountManager, accountName: String, readStateList: ReadStateList) {
-        val account = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).find { it.name == accountName } ?: return
+    private fun sendReadState(accountManager: AccountManager, account: Account, notificationData: NotificationData, readState: Int) {
+        val readStateList = readStateItems(notificationData, readState) ?: return
         getGunsApiServiceClient(account, accountManager).GmsGnotsSetReadStates().executeBlocking(
             GmsGnotsSetReadStatesRequest.Builder().apply {
                 config = GmsConfig.Builder().apply {
                     versionInfo(GmsConfig.GmsVersionInfo(Constants.GMS_VERSION_CODE))
                 }.build()
-                readStates = readStateList
+                readStates = ReadStateList.Builder().apply { items = readStateList }.build()
             }.build()
         )
     }
@@ -278,4 +232,52 @@ class GcmReceiverService : ReceiverService(TAG) {
         val oauthToken = accountManager.blockingGetAuthToken(account, GMS_NOTS_OAUTH_SERVICE, true)
         return createGrpcClient<GunsGmscoreApiServiceClient>(baseUrl = GMS_NOTS_BASE_URL, interceptor = AuthHeaderInterceptor(oauthToken))
     }
+}
+
+/** The read-state items upstream sends for [readState], or null when there is nothing to send. */
+internal fun readStateItems(notificationData: NotificationData, readState: Int): List<ReadStateItem>? {
+    val identifier = notificationData.identifier
+    if (identifier?.uniqueId?.isEmpty() == true) return null
+    return when {
+        readState == NOTIFICATION_STATUS_COMPLETE -> listOf(
+            ReadStateItem.Builder().apply {
+                this.notification = identifier
+                this.state = null
+                this.status = readState
+            }.build()
+        )
+        notificationData.content?.actionButtons.isNullOrEmpty() -> null
+        else -> notificationData.content!!.actionButtons.map {
+            ReadStateItem.Builder().apply {
+                this.notification = identifier
+                this.state = it.icon
+                this.status = readState
+            }.build()
+        }
+    }
+}
+
+/** The channel for Google sign-in prompts; it keeps upstream's id so an owner's existing channel choices stay. */
+internal fun Context.registerTwoStepNotificationChannel() {
+    if (Build.VERSION.SDK_INT >= 26) {
+        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.cyclon_two_step_channel_name), NotificationManager.IMPORTANCE_HIGH).apply {
+            description = getString(R.string.cyclon_two_step_channel_description)
+            lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+        }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+}
+
+/** Whether a sign-in prompt notification can appear: app notifications allowed, permission held, channel not off. */
+internal fun Context.twoStepNotificationsAllowed(): Boolean {
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+    if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return false
+    return twoStepChannelAllowed() != false
+}
+
+/** Whether the prompt channel is on, or null when it does not exist yet (or before Android 8). */
+internal fun Context.twoStepChannelAllowed(): Boolean? {
+    if (Build.VERSION.SDK_INT < 26) return null
+    val channel = getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL_ID) ?: return null
+    return channel.importance != NotificationManager.IMPORTANCE_NONE
 }

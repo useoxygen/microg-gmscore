@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: no page results, opened URLs, parser messages or account names in logs.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -43,7 +44,7 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun closeWithResult(resultJsonStr: String?) {
-        Log.d(TAG, "closeWithResult: resultJsonStr -> $resultJsonStr")
+        Log.d(TAG, "closeWithResult: ${resultJsonStr?.length ?: 0} chars")
         setResult(resultJsonStr)
         close()
     }
@@ -85,17 +86,17 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun open(str: String?) {
-        Log.d(TAG, "open: str -> $str")
+        Log.d(TAG, "open")
     }
 
     @JavascriptInterface
     fun openHelp(str: String?) {
-        Log.d(TAG, "openHelp: str -> $str")
+        Log.d(TAG, "openHelp")
     }
 
     @JavascriptInterface
     fun openScreen(screenId: Int, str: String?) {
-        Log.d(TAG, "openScreen: screenId -> $screenId str -> $str accountName -> $accountName")
+        Log.d(TAG, "openScreen: screenId -> $screenId")
         val intent = Intent(activity, MainActivity::class.java).apply {
             putExtra(EXTRA_SCREEN_ID, screenId)
             putExtra(EXTRA_ACCOUNT_NAME, accountName)
@@ -111,7 +112,7 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
 
     @JavascriptInterface
     fun setResult(resultJsonStr: String?) {
-        Log.d(TAG, "setResult: resultJsonStr -> $resultJsonStr")
+        Log.d(TAG, "setResult: ${resultJsonStr?.length ?: 0} chars")
         val map = jsonToMap(resultJsonStr) ?: return
         if (map.containsKey(KEY_UPDATED_PHOTO_URL)) {
             activity.updateLocalAccountAvatar(map[KEY_UPDATED_PHOTO_URL], accountName)
@@ -135,7 +136,8 @@ class OcUiBridge(val activity: MainActivity, val accountName:String?, val webVie
                     hashMap[next] = obj as String
                 }
             } catch (e: JSONException) {
-                Log.d(TAG, "Unable to parse result JSON string", e)
+                // Android's JSONException message quotes the whole input, so only the class is logged.
+                Log.d(TAG, "Unable to parse result JSON string: ${e.javaClass.name}")
                 return null
             }
         }

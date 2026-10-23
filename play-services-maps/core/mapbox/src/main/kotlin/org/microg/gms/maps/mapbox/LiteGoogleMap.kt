@@ -72,12 +72,15 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     val map: ImageView
 
     private var created = false
+    @Volatile
+    private var destroyed = false
 
     private var cameraPosition: CameraPosition = options.camera ?: CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 2f)
     private var cameraBounds: com.mapbox.mapboxsdk.geometry.LatLngBounds? = null
 
     private var mapType: Int = options.mapType
     private var mapStyle: MapStyleOptions? = null
+    private var mapColorScheme: Int = options.mapColorScheme
 
     private var currentSnapshotter: MapSnapshotter? = null
 
@@ -214,16 +217,18 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
             }
 
             postUpdateSnapshot()
+            TileKeyCheck.subscribe(this) { it.postUpdateSnapshot() }
 
             created = true
         }
     }
 
     internal fun postUpdateSnapshot() {
+        if (destroyed) return
         if (updatePosted.compareAndSet(false, true)) {
             Handler(Looper.getMainLooper()).post {
                 updatePosted.set(false)
-                updateSnapshot()
+                if (!destroyed) updateSnapshot()
             }
         }
     }
@@ -239,7 +244,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
         val pixelWidth = map.width
         val pixelHeight = map.height
 
-        val styleBuilder = getStyle(mapContext, mapType, mapStyle, styleFromFileWorkaround = true)
+        val styleBuilder = getStyle(mapContext, mapType, withColorScheme(mapContext, mapColorScheme, mapStyle), styleFromFileWorkaround = true)
 
         // Add visible polygons (before polylines, so that they are drawn below their strokes)
         for (polygon in polygons.filter { it.isVisible }) {
@@ -608,6 +613,8 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     }
 
     override fun onDestroy() {
+        destroyed = true
+        TileKeyCheck.unsubscribe(this)
         view.removeView(map)
     }
 
@@ -622,6 +629,15 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     override fun setContentDescription(desc: String?) {
         view.contentDescription = desc
     }
+
+    override fun setMapColorScheme(scheme: Int) {
+        // Follow-system is re-read on every call: the device may have switched between light and dark.
+        if (scheme == mapColorScheme && scheme != SCHEME_FOLLOW_SYSTEM) return
+        mapColorScheme = scheme
+        postUpdateSnapshot()
+    }
+
+    override fun getMapColorScheme(): Int = mapColorScheme
 
     override fun setMapStyle(options: MapStyleOptions?): Boolean {
         Log.d(TAG, "setMapStyle options: " + options?.getJson())

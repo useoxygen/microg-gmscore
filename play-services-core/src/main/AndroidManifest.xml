@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modified by Cyclon in 2026: Cyclon Services identity and About screen. -->
+<!-- Modified by Cyclon in 2026: Cyclon Services identity and About screen, native Google prompt Activity. -->
 <!--
   ~ Copyright (C) 2013-2019 microG Project Team
   ~
@@ -1525,6 +1525,16 @@
             android:name="org.microg.gms.auth.gcm.GcmReceiverService"
             android:exported="false"
             android:process=":persistent"/>
+
+        <!-- Cyclon: native Google prompt confirmation (useoxygen/cyclon#842); internal only, opened from its notification. -->
+        <activity
+            android:name="org.microg.gms.auth.authzen.ui.AuthZenActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
 
         <receiver
             android:name="org.microg.gms.auth.gcm.GcmReceiver"

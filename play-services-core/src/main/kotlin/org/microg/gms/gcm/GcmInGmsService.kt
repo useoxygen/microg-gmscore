@@ -1,3 +1,6 @@
+// Modified by Cyclon in 2026: deliver GmsCore messages before registration upkeep, allow GmsCore's own registration
+// while the owner's two-step setting is on, prompt registrations only while it is on, redacted logs and two-step
+// readiness diagnostics.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -28,6 +31,13 @@ import kotlinx.coroutines.withContext
 import org.microg.gms.auth.AuthConstants
 import org.microg.gms.auth.AuthManager
 import org.microg.gms.auth.AuthPrefs
+import org.microg.gms.auth.gcm.SelfRegistration
+import org.microg.gms.auth.gcm.TwoStepReadiness
+import org.microg.gms.auth.gcm.admitTwoStepMessage
+import org.microg.gms.auth.gcm.mayGrantOwnPushPermission
+import org.microg.gms.auth.gcm.twoStepChannelAllowed
+import org.microg.gms.auth.gcm.twoStepDiagnostics
+import org.microg.gms.auth.gcm.twoStepNotificationsAllowed
 import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants
 import org.microg.gms.common.ForegroundServiceContext
@@ -63,9 +73,10 @@ class GcmInGmsService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
             ForegroundServiceContext.completeForegroundService(this, intent, TAG)
-            Log.d(TAG, "onStartCommand: $intent")
+            Log.d(TAG, "onStartCommand: ${intent.action}")
             lifecycleScope.launchWhenStarted {
-                if (checkGcmStatus()) {
+                // A received message has already arrived over the connection; it must not be lost to a reconnect.
+                if (intent.action == GcmConstants.ACTION_C2DM_RECEIVE || checkGcmStatus()) {
                     handleIntent(intent)
                 } else {
                     val intent = Intent(ACTION_GCM_RECONNECT).apply {
@@ -89,37 +100,62 @@ class GcmInGmsService : LifecycleService() {
 
     private suspend fun handleIntent(intent: Intent) {
         val action = intent.action
+        if (action == GcmConstants.ACTION_C2DM_RECEIVE) {
+            // Deliver first: the message was sent to the current registration, whatever upkeep is due.
+            val callerIntent = Intent(ACTION_GCM_MESSAGE_RECEIVE)
+            callerIntent.setPackage(Constants.GMS_PACKAGE_NAME)
+            callerIntent.putExtras(intent)
+            sendOrderedBroadcast(callerIntent, null)
+            if (checkGmsGcmStatus()) {
+                runCatching { registerGcmInGms(this, Intent(ACTION_GCM_REGISTER_ALL_ACCOUNTS)) }.onFailure {
+                    Log.w(TAG, "handleIntent: registerGcmInGms error: ${it.javaClass.simpleName}")
+                }
+            }
+            return
+        }
         if (checkGmsGcmStatus()) {
             Log.d(TAG, "handleIntent: checkGmsGcmStatus -> reset")
             runCatching { registerGcmInGms(this, intent) }.onFailure {
-                Log.w(TAG, "handleIntent: registerGcmInGms error", it)
+                Log.w(TAG, "handleIntent: registerGcmInGms error: ${it.javaClass.simpleName}")
             }
+            logTwoStepReadiness()
             return
         }
         Log.d(TAG, "handleIntent: action: $action")
         when (action) {
-            GcmConstants.ACTION_C2DM_RECEIVE -> {
-                Log.d(TAG, "start handle gcm message")
-                val callerIntent = Intent(ACTION_GCM_MESSAGE_RECEIVE)
-                callerIntent.setPackage(Constants.GMS_PACKAGE_NAME)
-                callerIntent.putExtras(intent)
-                sendOrderedBroadcast(callerIntent, null)
-            }
-            ACTION_GCM_REGISTER_ALL_ACCOUNTS,
-            ACTION_GCM_CONNECTED -> {
-                updateLocalAccountGroups()
-            }
+            ACTION_GCM_REGISTER_ALL_ACCOUNTS -> updateLocalAccountGroups(explicit = true)
+            ACTION_GCM_CONNECTED -> updateLocalAccountGroups(explicit = false)
             ACTION_GCM_REGISTER_ACCOUNT -> {
                 val accountName = intent.getStringExtra(KEY_GCM_REGISTER_ACCOUNT_NAME) ?: return
-                Log.d(TAG, "GCM groups update account name: $accountName")
                 val account = accountManager?.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)?.find { it.name == accountName } ?: return
-                updateLocalAccountGroups(account)
+                updateLocalAccountGroups(account, explicit = true)
             }
         }
+        logTwoStepReadiness()
+    }
+
+    /** Logs whether Google's two-step prompts can reach this phone; booleans and counts only. */
+    private suspend fun logTwoStepReadiness() = withContext(Dispatchers.IO) {
+        if (!AuthPrefs.shouldReceiveTwoStepVerification(this@GcmInGmsService)) return@withContext
+        val database = GcmDatabase(this@GcmInGmsService)
+        val app = try { database.getApp(Constants.GMS_PACKAGE_NAME) } finally { database.close() }
+        TwoStepReadiness(
+            prefOn = true,
+            gcmEnabled = GcmPrefs.get(this@GcmInGmsService).isEnabled,
+            selfRegistration = when {
+                app == null -> SelfRegistration.NOT_YET_KNOWN
+                app.allowRegister -> SelfRegistration.ALLOWED
+                else -> SelfRegistration.DENIED
+            },
+            gmsRegistered = !checkGmsGcmStatus(),
+            accounts = accountManager?.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)?.size ?: 0,
+            chimeRegisteredAccounts = chimeGmsRegistrationHelper.registeredAccountCount(),
+            notificationsAllowed = twoStepNotificationsAllowed(),
+            channelAllowed = twoStepChannelAllowed(),
+        ).log(twoStepDiagnostics)
     }
 
     private suspend fun updateGroupsWithAccount(account: Account, regId: String) {
-        Log.d(TAG, "updateGroupsWithAccount: account: ${account.name}")
         val authManager = AuthManager(this, account.name, Constants.GMS_PACKAGE_NAME, GMS_GCM_OAUTH_SERVICE).apply {
             setItCaveatTypes("2")
         }
@@ -132,7 +168,6 @@ class GcmInGmsService : LifecycleService() {
             putString(GcmConstants.EXTRA_SEND_FROM, GCM_GROUP_SENDER)
             putString(GcmConstants.EXTRA_MESSAGE_ID, "${System.currentTimeMillis() / 1000}-0")
         }
-        Log.d(TAG, "updateGroupsWithAccount extras: $extras")
         val intent = Intent(GcmConstants.ACTION_GCM_SEND).apply {
             setPackage(Constants.GMS_PACKAGE_NAME)
             putExtras(extras)
@@ -142,13 +177,10 @@ class GcmInGmsService : LifecycleService() {
                 override fun handleMessage(msg: Message) {
                     if (Binder.getCallingUid() == Process.myUid()) {
                         val history = sp?.getString(KEY_GCM_REG_ACCOUNT_LIST, "")
-                        if (history?.contains(account.name) == true) {
-                            Log.d(TAG, "updateGroupsWithAccount handleMessage history<$history> contains: ${account.name}")
-                            return
-                        }
+                        if (history?.contains(account.name) == true) return
                         val saveStr = if (history.isNullOrEmpty()) account.name else "${account.name}/$history"
                         sp?.edit()?.putString(KEY_GCM_REG_ACCOUNT_LIST, saveStr)?.apply()
-                        Log.d(TAG, "updateGroupsWithAccount handleMessage save: $saveStr")
+                        Log.d(TAG, "updateGroupsWithAccount: account group recorded")
                     }
                 }
             }))
@@ -156,30 +188,38 @@ class GcmInGmsService : LifecycleService() {
         sendOrderedBroadcast(intent, null)
     }
 
-    private suspend fun updateLocalAccountGroups(account: Account? = null) {
-        Log.d(TAG, "GMS $GMS_GCM_REGISTER_SENDER already registered, start updateLocalAccount")
+    private suspend fun updateLocalAccountGroups(account: Account? = null, explicit: Boolean) {
         val regId = sp?.getString(KEY_GCM_REG_ID, null) ?: return
-        val accounts = chimeGmsRegistrationHelper.handleRegistration(regId)
+        // Accounts are registered for prompt notifications only while the owner wants prompts. Turning the setting off
+        // stops new registrations; existing ones are not withdrawn (see docs/google-prompt.md), and prompts that still
+        // arrive are dropped at the receiver.
+        val accounts = if (AuthPrefs.shouldReceiveTwoStepVerification(this)) {
+            chimeGmsRegistrationHelper.handleRegistration(regId, explicit = explicit)
+        } else emptyList()
         if (accounts.isNotEmpty()) {
-            Log.d(TAG, "updateLocalAccountGroups: handleRegistration done")
             accounts.forEach { updateGroupsWithAccount(it, regId) }
             return
         }
         val localGoogleAccounts = accountManager?.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE) ?: return
         val accountList = sp?.getString(KEY_GCM_REG_ACCOUNT_LIST, null)
         if (account != null && accountList?.contains(account.name) != true) {
-            Log.d(TAG, "updateLocalAccountGroups: single account: ${account.name}")
             updateGroupsWithAccount(account, regId)
             return
         }
-        Log.d(TAG, "updateLocalAccountGroups: registrationAccountList: $accountList")
         val needRegisterAccounts = if (accountList == null) localGoogleAccounts.toList() else localGoogleAccounts.filter { !accountList.contains(it.name) }
-        Log.d(TAG, "updateLocalAccountGroups: needRegisterAccounts: ${needRegisterAccounts.joinToString("|") { it.name }}")
         if (needRegisterAccounts.isEmpty()) return
+        Log.d(TAG, "updateLocalAccountGroups: ${needRegisterAccounts.size} account group(s) to update")
         needRegisterAccounts.forEach { updateGroupsWithAccount(it, regId) }
     }
 
-    private suspend fun registerGcmInGms(context: Context, intent: Intent) {
+    /**
+     * Registers GmsCore for Google's notification sender, then broadcasts [followUp] so accounts get registered for
+     * the new id. While the two-step setting is on, GmsCore's own push permission is granted here when microG has not
+     * asked yet (a permission dialog cannot open from this background service; see [mayGrantOwnPushPermission]); an
+     * explicit grant or denial in microG's push settings is kept, and with the setting off microG's usual check
+     * applies. [followUp] is only sent when the registration is complete, so a failed write cannot loop.
+     */
+    private suspend fun registerGcmInGms(context: Context, followUp: Intent) {
         Log.i(TAG, "Registering GMS $GMS_GCM_REGISTER_SENDER")
         val regId = withContext(Dispatchers.IO) {
             val request = RegisterRequest().build(context)
@@ -192,12 +232,22 @@ class GcmInGmsService : LifecycleService() {
                 .extraParam("X-subtype", GMS_GCM_REGISTER_SUBTYPE)
                 .extraParam("scope", GMS_GCM_REGISTER_SCOPE)
             val gcmDatabase = GcmDatabase(context)
-            ensureAppRegistrationAllowed(context, gcmDatabase, request.app)
-            completeRegisterRequest(context, gcmDatabase, request).getString(GcmConstants.EXTRA_REGISTRATION_ID)
+            try {
+                grantOwnPushPermissionIfAbsent(
+                    gcmDatabase,
+                    packageName = request.app,
+                    gmsPackageName = Constants.GMS_PACKAGE_NAME,
+                    twoStepOn = AuthPrefs.shouldReceiveTwoStepVerification(context),
+                    gcmEnabled = GcmPrefs.get(context).isEnabled,
+                )
+                ensureAppRegistrationAllowed(context, gcmDatabase, request.app)
+                completeRegisterRequest(context, gcmDatabase, request).getString(GcmConstants.EXTRA_REGISTRATION_ID)
+            } finally {
+                gcmDatabase.close()
+            }
         }
-        Log.d(TAG, "GCM IN GMS regId: $regId")
         if (regId == null) {
-            Log.w(TAG, "registerGcmInGms reg id is null")
+            Log.w(TAG, "registerGcmInGms: no registration id")
             return
         }
         val sharedPreferencesEditor = sp?.edit()
@@ -207,13 +257,13 @@ class GcmInGmsService : LifecycleService() {
         sharedPreferencesEditor?.putLong(KEY_GCM_REG_TIME, System.currentTimeMillis())
         sharedPreferencesEditor?.remove(KEY_GCM_REG_ACCOUNT_LIST)
         chimeGmsRegistrationHelper.resetAllData()
-        if (sharedPreferencesEditor?.commit() == false) {
-            Log.d(TAG, "Failed to write GMS registration")
+        if (sharedPreferencesEditor?.commit() != true || checkGmsGcmStatus()) {
+            Log.w(TAG, "Failed to write GMS registration")
         } else {
-            Log.d(TAG, "registerGcmInGms: sendBroadcast: ${intent.action}")
-            Intent(intent.action).apply {
+            Log.d(TAG, "registerGcmInGms: sendBroadcast: ${followUp.action}")
+            Intent(followUp.action).apply {
                 setPackage(Constants.GMS_PACKAGE_NAME)
-                putExtras(intent)
+                putExtras(followUp)
             }.let { sendBroadcast(it) }
         }
     }
@@ -228,19 +278,33 @@ class GcmInGmsService : LifecycleService() {
     }
 }
 
+/**
+ * GmsCore's push self-grant ([mayGrantOwnPushPermission]). The lookup is only a fast path: the grant itself is an
+ * insert-only write, so an explicit grant or denial that microG's permission dialog or settings commit after the lookup
+ * is never overwritten. The caller still checks the resulting permission before registering.
+ *
+ * @return whether the grant was recorded
+ */
+internal fun grantOwnPushPermissionIfAbsent(database: GcmDatabase, packageName: String, gmsPackageName: String, twoStepOn: Boolean, gcmEnabled: Boolean): Boolean {
+    val known = database.getApp(packageName) != null
+    if (!mayGrantOwnPushPermission(packageName, gmsPackageName, twoStepOn, gcmEnabled, knownToMicroG = known)) return false
+    return database.noteAppKnownIfAbsent(packageName, true)
+}
+
 class GcmRegistrationReceiver : WakefulBroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val shouldReceiveTwoStepVerification = AuthPrefs.shouldReceiveTwoStepVerification(context)
         val allowedFindDevicesRequest = AuthPrefs.allowedFindDevices(context)
         if (!shouldReceiveTwoStepVerification && !allowedFindDevicesRequest) {
-            Log.d(TAG, "GcmRegistrationReceiver onReceive: <Two-Step> Switch not allowed & <Find-Device> Switch not allowed")
+            if (GcmConstants.ACTION_C2DM_RECEIVE == intent.action) {
+                admitTwoStepMessage(false, intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY), twoStepDiagnostics)
+            }
             return
         }
-        Log.d(TAG, "GcmRegistrationReceiver onReceive: action: ${intent.action}")
         val callIntent = Intent(context, GcmInGmsService::class.java)
         callIntent.action = intent.action
         if (ACTION_GCM_REGISTER_ACCOUNT == intent.action || GcmConstants.ACTION_C2DM_RECEIVE == intent.action) {
-            callIntent.putExtras(intent.extras!!)
+            intent.extras?.let { callIntent.putExtras(it) }
         }
         ForegroundServiceContext(context).startService(callIntent)
     }

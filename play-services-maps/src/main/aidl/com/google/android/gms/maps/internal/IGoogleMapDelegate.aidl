@@ -149,4 +149,7 @@ interface IGoogleMapDelegate {
     void onStop() = 101;
 
     void setOnMyLocationClickListener(IOnMyLocationClickListener listener) = 106;
+
+    void setMapColorScheme(int scheme) = 112;
+    int getMapColorScheme() = 113;
 }
