@@ -249,6 +249,70 @@ class VaultSyncTest {
         assertEquals(3, server.writes)
     }
 
+    @Test fun acknowledgedDeleteAlsoRemovesItsOpaqueChromeMetadata() {
+        val server = Server(); val store = Store(); val sync = engine(server, store)
+        server.records.add(server.entity("fixture", "value")); sync.synchronize { VaultKeys.unlock(it) }
+        store.locked { session -> val state = session.load(); state.chromeLocalData["fixture"] = byteArrayOf(1, 2); session.save(state) }
+        sync.enqueue(MutationKind.DELETE, "fixture")
+        assertEquals(1, sync.synchronize { VaultKeys.unlock(it) }.uploaded)
+        assertTrue(store.state().chromeLocalData.isEmpty())
+    }
+
+    @Test fun uncertainDeleteKeepsMetadataUntilAuthenticatedAbsenceAndNeverReplays() {
+        val server = Server(); val store = Store(); val sync = engine(server, store)
+        server.records.add(server.entity("fixture", "value")); sync.synchronize { VaultKeys.unlock(it) }
+        store.locked { session -> val state = session.load(); state.chromeLocalData["fixture"] = byteArrayOf(1, 2); session.save(state) }
+        sync.enqueue(MutationKind.DELETE, "fixture"); server.loseDeleteResponse = true
+        assertThrows(PasswordRpcException::class.java) { sync.synchronize { VaultKeys.unlock(it) } }
+        assertTrue(store.state().chromeLocalData.containsKey("fixture"))
+        val receipt = engine(server, store).synchronize { VaultKeys.unlock(it) }
+        assertEquals(0, receipt.uploaded); assertEquals(1, server.writes)
+        assertTrue(store.state().mutations.isEmpty()); assertTrue(store.state().chromeLocalData.isEmpty())
+    }
+
+    @Test fun alreadyAbsentDeleteIsResolvedInEveryJournalPhaseWithoutAnotherWrite() {
+        for (phase in MutationPhase.values()) {
+            val server = Server(); val store = Store(); val sync = engine(server, store)
+            server.records.add(server.entity("fixture", "value")); sync.synchronize { VaultKeys.unlock(it) }
+            sync.enqueue(MutationKind.DELETE, "fixture")
+            store.locked { session -> val state = session.load()
+                state.chromeLocalData["fixture"] = byteArrayOf(1, 2)
+                state.mutations[0] = state.mutations[0].phase(phase); session.save(state)
+            }
+            server.records.clear()
+            val receipt = sync.synchronize { VaultKeys.unlock(it) }
+            assertEquals(0, server.writes); assertEquals(0, receipt.uploaded)
+            assertEquals(0, receipt.conflicts); assertEquals(0, receipt.indeterminate)
+            assertTrue(store.state().mutations.isEmpty()); assertTrue(store.state().chromeLocalData.isEmpty())
+        }
+    }
+
+    @Test fun remoteDeletionPrunesLocalMetadataOnlyAfterACompleteSnapshot() {
+        val server = Server(); val store = Store(); val sync = engine(server, store)
+        server.records.add(server.entity("fixture", "value")); sync.synchronize { VaultKeys.unlock(it) }
+        store.locked { session -> val state = session.load(); state.chromeLocalData["fixture"] = byteArrayOf(1, 2); session.save(state) }
+        server.records.clear(); server.failList = true
+        assertThrows(PasswordRpcException::class.java) { sync.synchronize { VaultKeys.unlock(it) } }
+        assertTrue(store.state().chromeLocalData.containsKey("fixture")); assertEquals(1, store.state().records.size)
+        server.failList = false; sync.synchronize { VaultKeys.unlock(it) }
+        assertTrue(store.state().chromeLocalData.isEmpty()); assertTrue(store.state().records.isEmpty())
+    }
+
+    @Test fun aSnapshotWithoutAnOfflineCreateDoesNotDiscardItsChromeMetadata() {
+        val server = Server(); val store = Store(); var failCreate = true
+        val api = PasswordApi(PasswordTransport { method, request ->
+            if (method == PasswordMethod.CREATE && failCreate) throw PasswordRpcException(14, false)
+            server.invoke(method, request)
+        })
+        val sync = VaultSync(api, store); sync.synchronize { VaultKeys.unlock(it) }
+        sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "value"))
+        store.locked { session -> val state = session.load(); state.chromeLocalData["fixture"] = byteArrayOf(1, 2); session.save(state) }
+        assertThrows(PasswordRpcException::class.java) { sync.synchronize { VaultKeys.unlock(it) } }
+        assertTrue(store.state().chromeLocalData.containsKey("fixture")); assertEquals(MutationPhase.QUEUED, store.state().mutations.single().phase)
+        failCreate = false; assertEquals(1, sync.synchronize { VaultKeys.unlock(it) }.uploaded)
+        assertArrayEquals(byteArrayOf(1, 2), store.state().chromeLocalData["fixture"])
+    }
+
     @Test fun lostCreateResponseReconcilesInFreshEngineWithoutReplay() {
         val server = Server(); val store = Store(); val first = engine(server, store)
         first.synchronize { VaultKeys.unlock(it) }

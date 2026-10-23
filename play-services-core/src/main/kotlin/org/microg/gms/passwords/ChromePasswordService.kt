@@ -87,7 +87,7 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
                     when (code) {
                         2 -> values = repository.list(true).filter { selected!!.accepts(it.data) }.map { it.chromeBytes }
                         3 -> repository.upsert(payload!!)
-                        4 -> repository.delete(payload!!)
+                        4 -> repository.delete(ChromePasswordWire.deleteInput(payload!!))
                         5 -> setting = repository.getPreference(settingName!!)
                         6 -> repository.setPreference(settingName!!, settingValue!!)
                         7 -> {

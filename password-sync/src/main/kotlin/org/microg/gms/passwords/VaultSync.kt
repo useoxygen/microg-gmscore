@@ -160,14 +160,28 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
             state.metadata = metadata
             state.pendingMetadata = null
             state.records.clear(); state.records.addAll(records)
+            // A complete authenticated snapshot may retire metadata for remotely deleted
+            // credentials. Offline creates/edits still own their opaque Chrome data.
+            val metadataOwners = records.map { Proto.decode(it).string(2) }.toSet() +
+                state.mutations.filter { it.kind != MutationKind.DELETE }.map { it.tag }
+            state.chromeLocalData.keys.retainAll(metadataOwners)
             state.lastSyncMillis = now()
             state.invalidations = state.invalidations.acknowledgePasswords()
             session.save(state)
             val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
             for (pending in state.mutations.toList()) {
                 val index = state.mutations.indexOfFirst { it.id == pending.id }
-                if (index < 0 || pending.phase == MutationPhase.CONFLICT) continue
+                if (index < 0) continue
                 val remote = state.records.singleOrNull { Proto.decode(it).string(2) == pending.tag }
+                if (pending.kind == MutationKind.DELETE && remote == null) {
+                    // The requested absence is already established in this vault. This
+                    // resolves queued, uncertain or conflicted deletes without a replay.
+                    state.mutations.removeAt(index)
+                    state.chromeLocalData.remove(pending.tag)
+                    session.save(state)
+                    continue
+                }
+                if (pending.phase == MutationPhase.CONFLICT) continue
                 if (pending.phase != MutationPhase.QUEUED) {
                     // A response can be lost after Google commits. Reconcile; never replay an uncertain effect.
                     val applied = when (pending.kind) {
@@ -206,6 +220,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
                     }
                     state.records.removeAll { Proto.decode(it).string(2) == pending.tag }
                     if (response != null) state.records.add(response)
+                    if (pending.kind == MutationKind.DELETE) state.chromeLocalData.remove(pending.tag)
                     state.mutations.removeAll { it.id == pending.id }
                     session.save(state)
                     progress.uploaded++
