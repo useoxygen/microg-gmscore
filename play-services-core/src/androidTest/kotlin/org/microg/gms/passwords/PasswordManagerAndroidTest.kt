@@ -291,32 +291,12 @@ class PasswordManagerAndroidTest {
                 }
             } catch (failure: Throwable) { metadataFailedAt = metadataStep; throw failure }
             finally {
-                // Ordinary partial-client upsert intentionally retains omitted fields. Restore the
-                // exact original through the production journal with the latest server version.
-                metadataStep = "restore-reconcile"
-                repository.refresh()
-                repository.store.locked { session ->
-                    val state = session.load()
-                    assertTrue("Uncertain edit retained; checkpoint preserved", state.mutations.isEmpty())
-                    val current = state.records.single { Proto.decode(it).string(2) == original.id }
-                    val keys = VaultKeys.unlock(state.metadata!!, customKey = state.customKey)
-                    try {
-                        val desired = PasswordResourceCodec.encrypt(data, keys, current)
-                        VaultSync(PasswordApi(PasswordTransport { _, _ -> error("Only local enqueue is allowed") }), repository.store)
-                            .enqueue(session, MutationKind.UPDATE, original.id, desired)
-                    } finally { keys.destroy() }
-                }
-                metadataStep = "restore-upload"
-                val receipt = repository.refresh()
-                repository.refresh()
+                metadataStep = "restore-exact-fixture"
+                SyntheticMetadataRestore.restore(context, repository, checkpoint)
                 val after = repository.list(false)
-                metadataStep = "restore-verify"
-                assertTrue("Exact restoration is unverified", receipt.conflicts == 0 && receipt.indeterminate == 0 &&
-                    MessageDigest.isEqual(restore, after.single { it.id == original.id }.data.encode()))
                 val others = after.filter { it.id != original.id }.associate { it.id to it.data.encode() }
                 assertTrue("Unrelated record changed", untouched.keys == others.keys &&
                     untouched.all { (id, bytes) -> MessageDigest.isEqual(bytes, others.getValue(id)) })
-                checkpoint.clear()
                 metadataRestored = true
             }
         } finally { if (repository.enabled != wasEnabled) repository.setEnabled(wasEnabled) }

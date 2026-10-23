@@ -28,6 +28,21 @@ import java.util.concurrent.TimeUnit
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun restoreInterruptedApprovedSyntheticMetadataFixture() {
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        val selected = arguments.getString("passwordLiveAccount")
+        assumeTrue(!selected.isNullOrBlank())
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        val checkpoint = AndroidVaultStore(context, "password-fixture-metadata-restore/" + account.name)
+        assertTrue("No metadata restore checkpoint", checkpoint.locked { it.load().chromeLocalData["original"] != null })
+        val wasEnabled = repository.enabled
+        try {
+            repository.setEnabled(true)
+            SyntheticMetadataRestore.restore(context, repository, checkpoint)
+        } finally { if (!wasEnabled) repository.setEnabled(false) }
+    }
+
     @Test fun inspectInterruptedSyntheticFixtureJournalWithoutReportingContents() {
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
         val selected = arguments.getString("passwordLiveAccount")
