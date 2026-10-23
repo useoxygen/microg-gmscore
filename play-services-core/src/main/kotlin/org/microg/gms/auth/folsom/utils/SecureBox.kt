@@ -69,6 +69,16 @@ object SecureBox {
         } finally { shared?.fill(0); derived?.fill(0); runCatching { ephemeral.private.destroy() } }
     }
 
+    /** SecureBox v2 shared-secret mode used by the pinned rotation producer. */
+    fun wrapShared(secret: ByteArray, header: ByteArray, plaintext: ByteArray): ByteArray {
+        require(secret.isNotEmpty() && secret.size <= 8192 && header.size <= 8192 && plaintext.size <= 8192)
+        val key = deriveKey(secret, HKDF_SALT, HKDF_INFO_SHARED)
+        return try {
+            val nonce = ByteArray(GCM_IV_SIZE).also { SecureRandom().nextBytes(it) }
+            VERSION + nonce + aesGcmEncrypt(SecretKeySpec(key, "AES"), nonce, plaintext, header)
+        } finally { key.fill(0) }
+    }
+
     fun deserializePublicKey(keyBytes: ByteArray): PublicKey {
         if (keyBytes.size != PUBLIC_KEY_SIZE || keyBytes[0] != UNCOMPRESSED_POINT_PREFIX) {
             throw InvalidKeyException("Invalid public key: expected $PUBLIC_KEY_SIZE bytes starting with 0x04")

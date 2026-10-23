@@ -21,6 +21,10 @@ import org.microg.gms.auth.folsom.FOLSOM_SUPPORTED_FEATURES
 import com.google.android.gms.common.api.Status
 import com.google.android.gms.common.api.internal.IStatusCallback
 import com.google.android.gms.auth.folsom.internal.IKeyRetrievalConsentCallback
+import com.google.android.gms.auth.folsom.internal.IRecoveryResultCallback
+import com.google.android.gms.auth.folsom.internal.IByteArrayCallback
+import com.google.android.gms.auth.folsom.RecoveryResult
+import com.google.android.gms.common.api.ApiMetadata
 
 /** Inert Binder guard fixture: no account lookup, key read, activity or network request. */
 @RunWith(AndroidJUnit4::class)
@@ -40,7 +44,7 @@ class FolsomCallerAndroidTest {
             assertThrows(SecurityException::class.java) { binder.onTransact(5, data, reply, 0) }
         } finally { data.recycle(); reply.recycle() }
     }
-    @Test fun unsupportedResetAndEnrollmentCallsFailWithoutAdvertisingRecoveryCapabilities() {
+    @Test fun unavailableRecoveryCallsAndMalformedLifecycleRequestsCannotReportSuccess() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val owner = object : LifecycleOwner {
             private val registry = LifecycleRegistry(this)
@@ -49,7 +53,12 @@ class FolsomCallerAndroidTest {
         val identity = FolsomAndroidAdmission.identity(context, context.packageName)!!
         val admission = FolsomCallerAdmission(identity, "chromesync", Process.myUid())
         val api = KeyRetrievalServiceImpl(context, owner.lifecycle, "chromesync", "synthetic-fixture", false, context.packageName, admission, null)
-        assertEquals(setOf("key_retrieval", "get_domain_state"), FOLSOM_SUPPORTED_FEATURES.map { it.name }.toSet())
+        assertEquals(setOf("key_retrieval", "get_domain_state", "reset_security_domain", "lskf_consent", "start_recovery", "generate_open_vault_request", "list_recovered_security_domains"), FOLSOM_SUPPORTED_FEATURES.map { it.name }.toSet())
+        assertEquals(2L, FOLSOM_SUPPORTED_FEATURES.single { it.name == "reset_security_domain" }.version)
+        assertEquals(1L, FOLSOM_SUPPORTED_FEATURES.single { it.name == "lskf_consent" }.version)
+        assertEquals(3L, FOLSOM_SUPPORTED_FEATURES.single { it.name == "start_recovery" }.version)
+        assertEquals(1L, FOLSOM_SUPPORTED_FEATURES.single { it.name == "generate_open_vault_request" }.version)
+        assertEquals(1L, FOLSOM_SUPPORTED_FEATURES.single { it.name == "list_recovered_security_domains" }.version)
         val operations: List<(IStatusCallback) -> Unit> = listOf(
             { api.resetSecurityDomain(it, null, null) },
             { api.joinSecurityDomain(it, null, null, 0, null) },
@@ -71,5 +80,19 @@ class FolsomCallerAndroidTest {
         }
         api.setConsent(callback, null, false, null)
         assertNotNull(result); assertFalse(result!!.isSuccess); assertFalse(consent)
+        var recoveryCompletions = 0
+        api.startRecoveryOperation(object : IRecoveryResultCallback.Stub() {
+            override fun onResult(status: Status?, recovery: RecoveryResult?) {
+                recoveryCompletions++; assertFalse(status!!.isSuccess); assertEquals(13, recovery!!.result)
+            }
+        }, null, null)
+        assertEquals(1, recoveryCompletions)
+        var generatedCompletions = 0
+        api.generateOpenVaultRequestOperation(object : IByteArrayCallback.Stub() {
+            override fun onResult(status: Status?, bytes: ByteArray?, metadata: ApiMetadata?) {
+                generatedCompletions++; assertFalse(status!!.isSuccess); assertTrue(bytes!!.isEmpty())
+            }
+        }, null, null)
+        assertEquals(1, generatedCompletions)
     }
 }

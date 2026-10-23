@@ -29,6 +29,12 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             accounts.getUserData(account, "GoogleUserId") != accountId) throw VaultLockedException()
     }
     fun check() { checkIdentity(); if (!repository.enabled) throw VaultLockedException() }
+    private fun checkRecoveryAuthority() {
+        check()
+        val local = LocalKeyManager.getInstance(context)
+        if (local.hasPendingDomainReset(account.name, "chromesync") || local.hasPendingDomainReset(account.name, "hw_protected"))
+            throw VaultLockedException()
+    }
     private fun <T> keys(action: (ByteArray, VaultKeys) -> T): T = repository.store.locked { session ->
         check()
         val state = session.load()
@@ -46,7 +52,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             if (state.parent == null) return@locked emptyList()
             if (state.parent != Proto.decode(metadata).string(1)) throw VaultResetException()
             // A pending owner delete cannot be used for signing while its remote outcome is unresolved.
-            val denied = state.ownerMutation?.takeIf { it.kind == PasskeyOwnerKind.DELETE }?.steps?.map { it.name }?.toSet().orEmpty()
+            val denied = PasskeyOwnerMutations.signingDenied(state)
             SyncedPasskey.visible(state.records.filter { Proto.decode(it).string(1) !in denied }.map { PasskeyResourceCodec.read(it, keys) })
         } }
     }
@@ -75,18 +81,24 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         } catch (failure: Throwable) { result.forEach(PasskeyDomainKey::close); throw failure }
     }
     fun <T> withSecret(tag: String, rpId: String, allowed: List<ByteArray>, verifyOwner: () -> Unit, rapt: String? = null,
-        action: (SyncedPasskey, PasskeySecret) -> T): T {
-        verifyOwner(); check()
+        secretUpdate: ((SyncedPasskey, PasskeySecret) -> ByteArray?)? = null, requestBinding: ByteArray? = null,
+        action: (SyncedPasskey, PasskeySecret) -> T): T =
+        LocalKeyManager.getInstance(context).withRecoveryAuthority(account.name, accountId) {
+        // The recovery lock precedes the password/passkey locks, matching lifecycle operations.
+        // Reset cannot finish between opening a secret and returning a signed result.
+        verifyOwner(); checkRecoveryAuthority()
+        val token = if (secretUpdate != null) repository.store.locked { it.load().deviceRegistration?.token?.copyOf() } ?: byteArrayOf() else byteArrayOf()
+        try {
         val selectedParent = parent()
         // Re-fetch before redemption: a remote deletion, reset or shadowing is authoritative.
         val selected = list(refresh = true).singleOrNull { it.tag == tag && it.rpId == rpId &&
             (allowed.isEmpty() || allowed.any { id -> MessageDigest.isEqual(id, it.credentialId) }) } ?: throw VaultLockedException()
-        return keys { metadata, wrapping -> store.locked { session ->
+        return@withRecoveryAuthority keys { metadata, wrapping -> store.locked { session ->
             if (Proto.decode(metadata).string(1) != selectedParent) throw VaultResetException()
             // Serialize local management through the actual signing callback, not just the earlier picker snapshot.
             val state = session.state()
             if (state.parent != selectedParent) throw VaultResetException()
-            val denied = state.ownerMutation?.takeIf { it.kind == PasskeyOwnerKind.DELETE }?.steps?.map { it.name }?.toSet().orEmpty()
+            val denied = PasskeyOwnerMutations.signingDenied(state)
             val current = SyncedPasskey.visible(state.records.filter { Proto.decode(it).string(1) !in denied }
                 .map { PasskeyResourceCodec.read(it, wrapping) }).singleOrNull { it.tag == selected.tag && it.sameRegistration(selected) }
                 ?: throw VaultLockedException()
@@ -96,16 +108,45 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
                 if (current.encryptedField == 19) devices = PasskeyDeviceKeyClient(context, repository.sharingTransport()) {
                     verifyOwner(); check()
                 }.get(setOf(current.deviceKeyVersion), domains.isNotEmpty(), rapt)
-                PasskeyCrypto.decrypt(current, domains, devices).use { secret ->
+                PasskeyCrypto.decrypt(current, domains, devices).use opened@ { secret ->
                     verifyOwner(); check()
-                    action(current, secret).also { verifyOwner(); check() }
+                    val after = secretUpdate?.invoke(current, secret)
+                    try {
+                        if (after != null) {
+                            val before = secret.encode()
+                            try {
+                                if (!MessageDigest.isEqual(before, after)) {
+                                    val binding = requestBinding?.takeIf { it.size == 32 } ?: throw ProtocolException()
+                                    val replacement = PasskeyCrypto.updateSecret(current, before, after, domains, devices)
+                                    val baseline = state.records.singleOrNull { Proto.decode(it).string(2) == current.tag } ?: throw ConflictException()
+                                    val manager = PasskeyOwnerManagement(accountId, selectedParent, wrapping,
+                                        PasskeyApi(repository.sharingTransport()), token, { session.state() },
+                                        { session.saveState(it) }, { verifyOwner(); check() })
+                                    manager.secretUpdate(baseline, replacement, binding)
+                                    val committed = session.state().records.singleOrNull { Proto.decode(it).string(2) == current.tag }
+                                        ?.let { PasskeyResourceCodec.read(it, wrapping) } ?: throw ConflictException()
+                                    return@opened PasskeyCrypto.decrypt(committed, domains, devices).use { persisted ->
+                                        verifyOwner(); check(); action(committed, persisted).also { verifyOwner(); check() }
+                                    }
+                                }
+                            } finally { before.fill(0) }
+                        }
+                        action(current, secret).also { verifyOwner(); check() }
+                    } finally { after?.fill(0) }
                 }
             } finally { domains.forEach(PasskeyDomainKey::close); devices.forEach(PasskeyDomainKey::close) }
         } }
+        } finally { token.fill(0) }
     }
     /** Persist launch before the RPC; an uncertain create is reconciled by full snapshots, never blindly retried. */
-    fun create(specifics: SyncedPasskey, verifyOwner: () -> Unit, excluded: List<ByteArray> = emptyList()) {
-        verifyOwner(); check()
+    fun create(specifics: SyncedPasskey, verifyOwner: () -> Unit, excluded: List<ByteArray> = emptyList()) =
+        LocalKeyManager.getInstance(context).withRecoveryAuthority(account.name, accountId) {
+        verifyOwner(); checkRecoveryAuthority()
+        // A reset between preparing the encrypted registration and its commit invalidates it,
+        // including a recreated domain that reuses the same numeric epoch with a different key.
+        val liveDomains = domainKeys()
+        try { PasskeyCrypto.requireDomainAuthority(specifics, liveDomains) }
+        finally { liveDomains.forEach(PasskeyDomainKey::close) }
         val token = repository.store.locked { it.load().deviceRegistration?.token?.copyOf() } ?: throw VaultLockedException()
         try { keys { metadata, keys -> store.locked { session ->
             val old = session.state()
@@ -196,7 +237,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
     fun ownerClose(id: String, verifyOwner: () -> Unit) =
         ownerAction(verifyOwner) { manager, _, _, _ -> manager.close(id) }
     fun createSpecifics(rp: String, user: ByteArray, username: String, display: String, pkcs8: ByteArray,
-        verifyOwner: () -> Unit, rapt: String? = null): SyncedPasskey {
+        verifyOwner: () -> Unit, rapt: String? = null, secretDecorator: ((ByteArray) -> ByteArray)? = null): SyncedPasskey {
         val domains = domainKeys()
         var devices = emptyList<PasskeyDomainKey>()
         try {
@@ -205,7 +246,8 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             devices = PasskeyDeviceKeyClient(context, repository.sharingTransport()) { verifyOwner(); check() }
                 .get(emptySet(), true, rapt)
             val device = devices.maxByOrNull { it.version } ?: throw VaultLockedException()
-            val secret = Proto.field(1, pkcs8) + Proto.field(2, ByteArray(32).also(java.security.SecureRandom()::nextBytes))
+            val generated = Proto.field(1, pkcs8) + Proto.field(2, ByteArray(32).also(java.security.SecureRandom()::nextBytes))
+            val secret = try { secretDecorator?.invoke(generated) ?: generated.copyOf() } finally { generated.fill(0) }
             val random = java.security.SecureRandom()
             return try { SyncedPasskey.decode(Proto.field(1, ByteArray(16).also(random::nextBytes)) +
                 Proto.field(2, ByteArray(16).also(random::nextBytes)) + Proto.field(3, SyncedPasskey.checkedRp(rp)) + Proto.field(4, user) +

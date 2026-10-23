@@ -100,7 +100,7 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
                                 }
                                 val matcher = PasswordAffiliationMatcher(this@ChromePasswordService, repository)
                                 values = entries.mapNotNull { entry -> ChromeAffiliatedPassword.affiliated(entry.chromeBytes, requested, response,
-                                    verifiedSharing = matcher.canFill(entry.data, requested.id + "/")) }
+                                    verifiedSharing = matcher.canShare(entry.data, requested.id + "/")) }
                             } finally { entries.forEach { it.chromeBytes.fill(0) } }
                         }
                         8 -> {

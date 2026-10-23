@@ -13,6 +13,7 @@ class SyncedPasskey private constructor(private val proto: Proto) {
     val username: String get() = proto.optionalString(7).orEmpty()
     val displayName: String get() = proto.optionalString(8).orEmpty()
     val editedByUser: Boolean get() = proto.integer(15) == 1L
+    val paymentSupport: Boolean get() = proto.integer(11) == 1L
     val shadowedCredentialIds: List<ByteArray> get() = proto.bytes(5)
     val createdMillis: Long get() = proto.integer(6) ?: 0
     val hidden: Boolean get() = proto.integer(16) == 1L
@@ -39,7 +40,8 @@ class SyncedPasskey private constructor(private val proto: Proto) {
         MessageDigest.isEqual(credentialId, other.credentialId) && rpId == other.rpId && MessageDigest.isEqual(userId, other.userId) &&
         createdMillis == other.createdMillis && keyVersion == other.keyVersion && deviceKeyVersion == other.deviceKeyVersion &&
         encryptedField == other.encryptedField && MessageDigest.isEqual(ciphertext, other.ciphertext) &&
-        proto.bytes(5).map(::hex).toSet() == other.proto.bytes(5).map(::hex).toSet() && hidden == other.hidden
+        proto.bytes(5).map(::hex).toSet() == other.proto.bytes(5).map(::hex).toSet() && hidden == other.hidden &&
+        paymentSupport == other.paymentSupport
     override fun toString(): String = "SyncedPasskey[redacted]"
 
     companion object {
@@ -49,6 +51,7 @@ class SyncedPasskey private constructor(private val proto: Proto) {
             if (p.one(1).size != 16 || p.one(2).size !in 1..1024 || p.one(4).size !in 1..64 ||
                 p.bytes(5).size > 1000 || p.bytes(5).any { it.size !in 1..1024 } ||
                 p.optionalString(7).orEmpty().length > 1024 || p.optionalString(8).orEmpty().length > 1024 ||
+                p.integer(11)?.let { it !in 0..1 } == true ||
                 p.integer(14)?.let { it !in 0..Int.MAX_VALUE } == true ||
                 p.integer(18)?.let { it !in 0..Int.MAX_VALUE } == true ||
                 listOf(9, 12, 19).count { p.optional(it) != null } != 1) throw ProtocolException()

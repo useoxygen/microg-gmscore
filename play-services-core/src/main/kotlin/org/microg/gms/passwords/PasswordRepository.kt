@@ -62,12 +62,14 @@ class PasswordRepository(context: Context, val account: Account, private val exp
             .get(30, TimeUnit.SECONDS)
     }
 
-    override fun refresh(): SyncReceipt {
+    // Capture and consume cached recovery keys under the same account lock as reset.
+    // The pending-reset flag alone cannot fence an old in-memory copy after reset is acknowledged.
+    override fun refresh(): SyncReceipt = LocalKeyManager.getInstance(context).withRecoveryAuthority(account.name, userId) {
         checkEnabled()
         val saved = store.locked { session -> session.load().let { it.customKey to it.trustedVaultKeys.map { raw -> raw.copyOf() } } }
         val registration = registration()
         val api = PasswordApi(authenticatedTransport())
-        return try { VaultSync(api, store, device = registration).synchronize { metadata ->
+        try { VaultSync(api, store, device = registration).synchronize { metadata ->
             checkSnapshotParent(metadata)
             unlock(metadata, saved.first, saved.second)
         }.also { checkAccount() } }
@@ -286,7 +288,9 @@ class PasswordRepository(context: Context, val account: Account, private val exp
     /** A successful WebView result is insufficient: validate keys against this account's actual keybag before persisting. */
     fun acceptTrustedVaultKeys(keys: List<ByteArray>, scheduleRefresh: Boolean = true) {
         checkEnabled()
+        checkTrustedVaultDomainAuthority()
         store.locked { VaultRecovery.acceptTrustedKeys(it, keys) }
+        checkTrustedVaultDomainAuthority()
         if (scheduleRefresh) schedule()
     }
     /** Capture before opening recovery; a later WebView result cannot adopt another vault. */
@@ -302,17 +306,20 @@ class PasswordRepository(context: Context, val account: Account, private val exp
     internal fun acceptVersionedTrustedVaultKeys(keys: List<VersionedTrustedVaultKey>, expectedParent: String,
         expectedUserId: String, scheduleRefresh: Boolean = true, authorize: () -> Unit) {
         checkTrustedVaultIdentity(expectedUserId)
+        checkTrustedVaultDomainAuthority()
         if (expectedVaultParent != null && expectedVaultParent != expectedParent) throw VaultResetException()
         store.locked { session -> VaultRecovery.acceptVersionedTrustedKeys(session, keys, expectedParent) {
-            authorize(); checkTrustedVaultIdentity(expectedUserId)
+            authorize(); checkTrustedVaultIdentity(expectedUserId); checkTrustedVaultDomainAuthority()
         } }
         if (scheduleRefresh) schedule()
     }
     /** No recovery, network fetch, guessed epoch, or enrollment is performed by this getter. */
     internal fun versionedTrustedVaultKeys(expectedParent: String, expectedUserId: String): List<VersionedTrustedVaultKey> {
         checkTrustedVaultIdentity(expectedUserId)
+        checkTrustedVaultDomainAuthority()
         return store.locked { session ->
             checkTrustedVaultIdentity(expectedUserId)
+            checkTrustedVaultDomainAuthority()
             val state = session.load()
             if (state.pendingMetadata != null) throw VaultResetException()
             val metadata = VaultRecovery.trustedMetadata(state)
@@ -327,6 +334,7 @@ class PasswordRepository(context: Context, val account: Account, private val exp
                 keys.forEach { raw.add(it.material) }
                 VaultKeys.unlock(metadata, trustedVaultKeys = raw).destroy()
                 checkTrustedVaultIdentity(expectedUserId)
+                checkTrustedVaultDomainAuthority()
                 returned = true
                 keys
             } finally { raw.forEach { it.fill(0) }; if (!returned) keys.forEach { it.destroy() } }
@@ -336,10 +344,25 @@ class PasswordRepository(context: Context, val account: Account, private val exp
         checkEnabled()
         if (userId != expectedUserId) throw VaultLockedException()
     }
+    internal fun clearTrustedVaultRecovery(expectedParent: String?, expectedUserId: String, authorize: () -> Unit) {
+        checkAccount()
+        if (userId != expectedUserId) throw VaultLockedException()
+        if (!LocalKeyManager.getInstance(context).hasPendingDomainReset(account.name, "chromesync")) throw PendingMutationException()
+        if (expectedVaultParent != null && expectedParent != null && expectedVaultParent != expectedParent) throw VaultResetException()
+        store.locked { session -> VaultRecovery.clearTrustedKeys(session, expectedParent) {
+            authorize(); checkAccount()
+            if (userId != expectedUserId || !LocalKeyManager.getInstance(context).hasPendingDomainReset(account.name, "chromesync"))
+                throw VaultLockedException()
+        } }
+    }
+    private fun checkTrustedVaultDomainAuthority() {
+        if (LocalKeyManager.getInstance(context).hasPendingDomainReset(account.name, "chromesync")) throw VaultLockedException()
+    }
     private fun unlock(metadata: ByteArray, customKey: ByteArray? = null, cachedTrustedKeys: List<ByteArray> = emptyList()): VaultKeys {
         val type = Proto.decode(Proto.decode(metadata).one(3)).integer(2)
+        if (type == 5L) checkTrustedVaultDomainAuthority()
         return if (type == 5L) VaultKeys.unlockTrustedVault(metadata) { force ->
-            checkEnabled()
+            checkEnabled(); checkTrustedVaultDomainAuthority()
             if (!force && cachedTrustedKeys.isNotEmpty()) cachedTrustedKeys.map { it.copyOf() } else runBlocking {
                 LocalKeyManager.getInstance(context).getLocalKeysOrSync(context, account.name, "chromesync", "password-sync", forceRefresh = force,
                     validateLegacyKeys = { candidates ->
@@ -349,6 +372,9 @@ class PasswordRepository(context: Context, val account: Account, private val exp
                     })
                     .mapNotNull { it.keyMaterial?.toByteArray() }
             }
+        }.let { keys ->
+            try { checkTrustedVaultDomainAuthority(); keys }
+            catch (failure: Exception) { keys.destroy(); throw failure }
         } else VaultKeys.unlock(metadata, customKey = customKey)
     }
     private fun registration(): DeviceTokenProvider {

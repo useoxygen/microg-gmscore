@@ -14,16 +14,21 @@ object LegacyPasskeyBridgePolicy {
             uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.userInfo == null && uri.rawQuery == null &&
                 uri.rawFragment == null && uri.rawPath.isNullOrEmpty() && uri.port in -1..65535
         }.getOrDefault(false)
-    fun requestDigest(packageName: String, signer: ByteArray, source: String, origin: String, create: Boolean, options: ByteArray): ByteArray {
-        if (packageName.isBlank() || packageName.length > 256 || signer.size != 32 || source !in setOf("app", "browser") ||
+    fun requestDigest(packageName: String, signer: ByteArray, source: String, origin: String, create: Boolean, options: ByteArray, hybridToken: String? = null): ByteArray {
+        if (packageName.isBlank() || packageName.length > 256 || signer.size != 32 || source !in setOf("app", "browser", "hybrid") ||
             origin.isBlank() || origin.length > 4096 || options.size !in 1..512 * 1024) throw ProtocolException()
+        if (source == "hybrid") {
+            if (packageName != "com.google.android.gms" || origin != "cable://authenticated" ||
+                hybridToken == null || runCatching { java.util.UUID.fromString(hybridToken).toString() == hybridToken }.getOrDefault(false) != true) throw ProtocolException()
+        } else if (hybridToken != null) throw ProtocolException()
         return MessageDigest.getInstance("SHA-256").digest(Proto.field(1, packageName) + Proto.field(2, signer) +
-            Proto.field(3, source) + Proto.field(4, origin) + Proto.integer(5, if (create) 1 else 0) + Proto.field(6, options))
+            Proto.field(3, source) + Proto.field(4, origin) + Proto.integer(5, if (create) 1 else 0) + Proto.field(6, options) + (hybridToken?.let { Proto.field(7, it) } ?: byteArrayOf()))
     }
     fun systemCaller(systemUid: Int, actualUid: Int, systemPackage: Boolean, packagesForUid: Set<String>): Boolean =
         systemUid >= 0 && actualUid == systemUid && systemPackage && packagesForUid == setOf("com.google.android.gms")
     fun supported(create: Boolean, algorithms: Collection<Int>, attestation: String?, attachment: String?, extensions: Set<String>): Boolean =
-        if (create) PasskeyRequestSupport.create(algorithms, attestation, attachment, extensions) && extensions.all { it == "prf" }
+        if (create) PasskeyRequestSupport.create(algorithms, attestation, attachment, extensions - "payment") &&
+            extensions.all { it in setOf("prf", "payment") }
         else PasskeyRequestSupport.get(extensions)
     fun owner(grantedAt: Long, now: Long, sameGeneration: Boolean, resumed: Boolean, focused: Boolean,
         secure: Boolean, unlocked: Boolean, interactive: Boolean): Boolean =

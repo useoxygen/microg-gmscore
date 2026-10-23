@@ -32,6 +32,7 @@ class PasskeyOwnerManagementTest {
         val deletes = ArrayList<String>()
         val updates = ArrayList<ByteArray>()
         var snapshots = 0
+        var beforeList: () -> Unit = {}
         var afterSave: (PasskeyState) -> Unit = {}
         var deleting: (String) -> Unit = { name -> remote.remove(name); Unit }
         var updating: (ByteArray) -> ByteArray = { raw -> remote[Proto.decode(raw).string(1)] = raw.copyOf(); raw }
@@ -50,6 +51,7 @@ class PasskeyOwnerManagementTest {
                 val request = Proto.decode(raw)
                 when (method) {
                     PasswordMethod.LIST_WEBAUTHN -> {
+                        beforeList()
                         assertEquals(boundParent, request.string(1)); snapshots++
                         remote.values.fold(byteArrayOf()) { all, record -> all + Proto.field(1, record) }
                     }
@@ -271,13 +273,13 @@ class PasskeyOwnerManagementTest {
         }
     }
 
-    @Test fun stateV2RetainsUncertainCreateAndOwnerObligationsWhileV1CannotSmuggleOwnerFields() {
+    @Test fun currentStateRetainsUncertainCreateAndOwnerObligationsWhileV1CannotSmuggleOwnerFields() {
         val raw = resource(data(1))
         val operation = PasskeyOwnerMutation("synthetic-operation", owner, parent, PasskeyOwnerKind.DELETE,
             listOf(PasskeyOwnerStep(raw, null, PasskeyOwnerPhase.INDETERMINATE)))
         val old = PasskeyState(parent, listOf(raw), 123, raw, true, listOf(Proto.field(1, "old-create")), operation,
             listOf(operation.encode()))
-        val encoded = old.encode(); assertEquals(2L, Proto.decode(encoded).integer(1))
+        val encoded = old.encode(); assertEquals(3L, Proto.decode(encoded).integer(1))
         val reopened = PasskeyState.decode(encoded)
         assertArrayEquals(raw, reopened.pending); assertTrue(reopened.pendingLaunched)
         assertEquals(PasskeyOwnerPhase.INDETERMINATE, reopened.ownerMutation!!.steps.single().phase)
@@ -290,5 +292,101 @@ class PasskeyOwnerManagementTest {
         try {
             assertThrows(VaultResetException::class.java) { PasskeySnapshots.reconcile(reopened, "users/me/birthdays/reset", emptyList(), keys, 2000) }
         } finally { keys.destroy() }
+    }
+
+    private fun changedSecret(value: SyncedPasskey) = SyncedPasskey.decode(Proto.decode(value.encode()).replace(12, ByteArray(28) { 42 }).encode())
+    @Test fun requestBoundSecretUpdateUsesActualRpcAndFullReadbackBeforeRetiringItsSigningFence() {
+        val original = data(1); val binding = ByteArray(32) { 7 }
+        Fixture(listOf(original)).use { f ->
+            f.controller().secretUpdate(f.baseline(original), changedSecret(original), binding)
+            assertEquals(1, f.updates.size); assertEquals(2, f.snapshots)
+            assertNull(f.state().ownerMutation); assertTrue(PasskeyOwnerMutations.signingDenied(f.state()).isEmpty())
+            val receipt = PasskeyOwnerMutation.decode(f.state().ownerHistory.single())
+            assertEquals(PasskeyOwnerKind.SECRET_UPDATE, receipt.kind); assertArrayEquals(binding, receipt.requestBinding)
+            assertEquals(PasskeyOwnerPhase.COMMITTED, receipt.steps.single().phase)
+            assertFalse(PasskeyResourceCodec.read(f.updates.single(), f.keys).editedByUser)
+        }
+    }
+    @Test fun acknowledgedSecretUpdateWithFailedReadbackStaysFencedAndNeverBlindlyReplays() {
+        val original = data(1)
+        Fixture(listOf(original)).use { f ->
+            f.beforeList = { if (f.updates.isNotEmpty()) throw PasswordRpcException(14, false) }
+            assertThrows(PasswordRpcException::class.java) { f.controller().secretUpdate(f.baseline(original), changedSecret(original), ByteArray(32)) }
+            assertEquals(PasskeyOwnerPhase.INDETERMINATE, f.state().ownerMutation!!.steps.single().phase)
+            assertEquals(setOf(Proto.decode(f.baseline(original)).string(1)), PasskeyOwnerMutations.signingDenied(f.state()))
+            f.beforeList = {}; f.controller().refresh()
+            assertEquals(1, f.updates.size); assertNull(f.state().ownerMutation)
+        }
+    }
+    @Test fun acknowledgedButUnpersistedSecretUpdateCannotClaimSuccessOrReleaseSigning() {
+        val original = data(1)
+        Fixture(listOf(original)).use { f ->
+            val baseline = f.baseline(original)
+            f.updating = { it } // A plausible acknowledgement without the requested persisted effect.
+            assertThrows(PendingMutationException::class.java) {
+                f.controller().secretUpdate(baseline, changedSecret(original), ByteArray(32))
+            }
+            assertEquals(1, f.updates.size); assertEquals(2, f.snapshots)
+            assertArrayEquals(baseline, f.remote.values.single())
+            assertEquals(setOf(Proto.decode(baseline).string(1)), PasskeyOwnerMutations.signingDenied(f.state()))
+            assertTrue(f.state().ownerHistory.isEmpty())
+        }
+    }
+    @Test fun uncertainSecretUpdateBlocksAnotherRequestAndGenericRetryUntilAnExplicitClosure() {
+        val original = data(1)
+        Fixture(listOf(original)).use { f ->
+            val baseline = f.baseline(original)
+            f.updating = { throw PasswordRpcException(14, true) }
+            assertThrows(PasswordRpcException::class.java) { f.controller().secretUpdate(baseline, changedSecret(original), ByteArray(32) { 1 }) }
+            val operation = f.state().ownerMutation!!
+            assertThrows(PendingMutationException::class.java) { f.controller().secretUpdate(baseline, changedSecret(original), ByteArray(32) { 2 }) }
+            assertThrows(PendingMutationException::class.java) { f.controller().retry(operation.id) }
+            assertEquals(1, f.updates.size)
+            f.controller().close(operation.id)
+            assertNull(f.state().ownerMutation)
+            assertArrayEquals(ByteArray(32) { 1 }, PasskeyOwnerMutation.decode(f.state().ownerHistory.single()).requestBinding)
+        }
+    }
+    @Test fun lostSecretUpdateResponseReconcilesTheCommittedCiphertextWithoutAnotherWrite() {
+        val original = data(1)
+        Fixture(listOf(original)).use { f ->
+            f.updating = { raw -> f.remote[Proto.decode(raw).string(1)] = raw; throw PasswordRpcException(14, true) }
+            assertThrows(PasswordRpcException::class.java) { f.controller().secretUpdate(f.baseline(original), changedSecret(original), ByteArray(32)) }
+            f.controller().refresh()
+            assertEquals(1, f.updates.size); assertNull(f.state().ownerMutation)
+            assertEquals(PasskeyOwnerPhase.COMMITTED, PasskeyOwnerMutation.decode(f.state().ownerHistory.single()).steps.single().phase)
+        }
+    }
+    @Test fun secretMutationCannotAdoptAnotherRpCredentialAccountBirthdayOrInvalidBinding() {
+        val original = data(1)
+        Fixture(listOf(original)).use { f ->
+            val baseline = f.baseline(original)
+            assertThrows(ProtocolException::class.java) { f.controller().secretUpdate(baseline, changedSecret(original), byteArrayOf()) }
+            assertThrows(ConflictException::class.java) { f.controller().secretUpdate(baseline, data(2), ByteArray(32)) }
+            assertThrows(ConflictException::class.java) { f.controller().secretUpdate(baseline, data(1, rp = "other.invalid"), ByteArray(32)) }
+            // A secret migration cannot opt into payment, change its device authority, or modify opaque metadata.
+            for (field in listOf(11, 18, 98)) {
+                val altered = SyncedPasskey.decode(Proto.decode(changedSecret(original).encode()).replaceInteger(field, 1).encode())
+                assertThrows(ConflictException::class.java) { f.controller().secretUpdate(baseline, altered, ByteArray(32)) }
+            }
+            f.ownerAllowed = false
+            assertThrows(VaultLockedException::class.java) { f.controller().secretUpdate(baseline, changedSecret(original), ByteArray(32)) }
+            assertTrue(f.updates.isEmpty())
+        }
+        for (gate in listOf("account", "birthday")) Fixture(listOf(original)).use { f ->
+            val baseline = f.baseline(original)
+            if (gate == "account") f.activeAccount = "replacement-account" else f.activeParent = "users/me/birthdays/reset"
+            assertThrows(Exception::class.java) { f.controller().secretUpdate(baseline, changedSecret(original), ByteArray(32)) }
+            assertTrue(f.updates.isEmpty()); assertEquals(0, f.snapshots)
+        }
+    }
+    @Test fun schemaThreeFencesSecretAuthorityAndKeepsItsExactRequestDigestAcrossReopen() {
+        val original = data(1); val raw = resource(original)
+        val operation = PasskeyOwnerMutation("secret-attempt", owner, parent, PasskeyOwnerKind.SECRET_UPDATE,
+            listOf(PasskeyOwnerStep(raw, raw, PasskeyOwnerPhase.INDETERMINATE)), ByteArray(32) { 8 })
+        val encoded = PasskeyState(parent, listOf(raw), ownerMutation = operation).encode()
+        assertArrayEquals(operation.requestBinding, PasskeyState.decode(encoded).ownerMutation!!.requestBinding)
+        assertThrows(ProtocolException::class.java) { PasskeyState.decode(Proto.decode(encoded).replaceInteger(1, 2).encode()) }
+        assertThrows(ProtocolException::class.java) { PasskeyOwnerMutation.decode(Proto.decode(operation.encode()).replace(6, null).encode()) }
     }
 }

@@ -13,7 +13,11 @@ class PasswordAffiliationMatcher(context: Context, private val vault: PasswordVa
         is DevicePasswordVault -> vault.store
         else -> null
     }
-    fun canFill(data: PasswordData, requestedRealm: String): Boolean = data.canFillRealm(data.realm) &&
+    fun canFill(data: PasswordData, requestedRealm: String): Boolean = vault.enabled &&
+        (PasswordPublicSuffix.canFill(data, requestedRealm) || canShare(data, requestedRealm))
+
+    /** Chrome field3 means verified credential-sharing affiliation, never the separate PSL relation. */
+    fun canShare(data: PasswordData, requestedRealm: String): Boolean = vault.enabled && data.canFillRealm(data.realm) &&
         (data.canFillRealm(requestedRealm) || canFillRealm(data.realm, requestedRealm))
 
     fun canFillRealm(storedRealm: String, requestedRealm: String): Boolean {

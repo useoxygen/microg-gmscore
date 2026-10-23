@@ -14,13 +14,23 @@ import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import com.google.android.gms.fido.fido2.api.common.ErrorCode
 import com.upokecenter.cbor.CBORObject
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.microg.gms.fido.core.RequestHandlingException
 import org.microg.gms.fido.core.hybrid.HandshakePhase
 import org.microg.gms.fido.core.hybrid.ble.HybridBleAdvertiser
 import org.microg.gms.fido.core.hybrid.generateEcKeyPair
-import org.microg.gms.fido.core.hybrid.hex
+import org.microg.gms.fido.core.hybrid.HybridAuthenticatedFrames
+import org.microg.gms.fido.core.hybrid.HybridAccountSessions
+import org.microg.gms.fido.core.hybrid.HybridConnectionGuard
 import org.microg.gms.fido.core.hybrid.model.QrCodeData
 import org.microg.gms.fido.core.hybrid.transport.AuthenticatorTunnelTransport
 import org.microg.gms.fido.core.hybrid.transport.TunnelCallback
@@ -46,23 +56,47 @@ import java.security.interfaces.ECPublicKey
 private const val TAG = "AuthenticatorController"
 
 @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
-class HybridAuthenticatorController(context: Context) {
+class HybridAuthenticatorController(context: Context, private val accountPrfAvailable: Boolean = false) {
+    private val connection = HybridConnectionGuard()
+    private val messages = Channel<Pair<TunnelWebsocket?, ByteArray>>(16)
+    private val worker = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     private var bleAdvertiser: HybridBleAdvertiser? = null
     private var transport: AuthenticatorTunnelTransport? = null
-    private var handshakePhase = HandshakePhase.NONE
+    @Volatile private var handshakePhase = HandshakePhase.NONE
     private var noiseState: NoiseHandshakeState? = null
-    private var crypter: NoiseCrypter? = null
+    @Volatile private var crypter: NoiseCrypter? = null
+
+    private val operationActive = java.util.concurrent.atomic.AtomicBoolean()
+    @Volatile private var activeRequestDigest: ByteArray? = null
+    @Volatile private var ownerOperation: Job? = null
+    @Volatile private var frameReader: HybridAuthenticatedFrames? = null
+    @Volatile private var accountSession: HybridAccountSessions.Session? = null
+    fun issueAccountRequest(options: ByteArray, rp: String, hash: ByteArray, create: Boolean): String =
+        HybridAccountSessions.issue(accountSession ?: error("Hybrid session unavailable"), options, rp, hash, create,
+            activeRequestDigest ?: error("Hybrid request unavailable"))
+    fun completeAccountRequest(token: String) { accountSession?.let { HybridAccountSessions.complete(it, token) } }
+    private fun invalidate() {
+        connection.invalidate()
+        ownerOperation?.cancel()
+        frameReader = null
+        activeRequestDigest = null
+        handshakePhase = HandshakePhase.NONE
+        crypter = null
+        accountSession?.revoke(); accountSession = null
+    }
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     fun release() {
+        invalidate()
+        messages.close(); worker.cancel()
         runCatching { bleAdvertiser?.stopAdvertising() }.onFailure {
-            Log.w(TAG, "release: stopAdvertising failed", it)
+            Log.w(TAG, "release: stopAdvertising failed")
         }
         bleAdvertiser = null
 
         runCatching { transport?.stopConnecting() }.onFailure {
-            Log.w(TAG, "release: websocket close failed", it)
+            Log.w(TAG, "release: websocket close failed")
         }
         transport = null
     }
@@ -84,9 +118,11 @@ class HybridAuthenticatorController(context: Context) {
             @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
             override fun onSocketConnect(websocket: TunnelWebsocket?, bytes: ByteArray) {
                 runCatching {
+                    connection.connected()
                     val generatedPlaintext = CryptoHelper.generatedSeed(bytes)
                     startBleAdvertiser(eidKey, generatedPlaintext) { errorCode ->
                         Log.w(TAG, "BLE advertise failed (errorCode=$errorCode), aborting connection")
+                        invalidate()
                         if (!cont.isCompleted) cont.tryResumeWithError(
                             RequestHandlingException(ErrorCode.UNKNOWN_ERR, "BLE advertising failed: errorCode=$errorCode")
                         )
@@ -103,37 +139,49 @@ class HybridAuthenticatorController(context: Context) {
             }
 
             override fun onSocketError(error: TunnelException) {
+                invalidate()
                 if (!cont.isCompleted) cont.tryResumeWithError(RequestHandlingException(ErrorCode.UNKNOWN_ERR, error.message ?: "error"))
             }
 
             override fun onSocketClose() {
+                invalidate()
                 if (!cont.isCompleted) cont.tryResumeWithError(RequestHandlingException(ErrorCode.UNKNOWN_ERR, "Tunnel closed"))
             }
 
-            @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
             override fun onMessage(websocket: TunnelWebsocket?, data: ByteArray) {
-                Log.d(TAG, "Received ${data.size} bytes (phase=$handshakePhase)")
-                runBlocking {
-                    runCatching {
-                        when (handshakePhase) {
-                            HandshakePhase.CLIENT_HELLO_SENT -> if (data.size >= 65) handleClientHello(websocket, data, peerPublicKey) else error("Unexpected handshake payload size")
-                            HandshakePhase.READY -> handleCtapRequest(websocket, data, handleAuthenticator).also {
-                                completed.invoke(it != null)
-                                if (!cont.isCompleted) cont.tryResumeData(it)
-                            }
-
-                            else -> error("Data received in invalid phase=$handshakePhase")
-                        }
-                    }.onFailure {
-                        if (!cont.isCompleted) cont.tryResumeWithError(it)
-                    }
+                if (!messages.trySend(websocket to data.copyOf()).isSuccess) {
+                    invalidate()
+                    if (!cont.isCompleted) cont.tryResumeWithError(SecurityException("Hybrid frame queue unavailable"))
                 }
             }
         })
 
+        // Never block OkHttp's reader on owner UI: close/error must revoke a pending account request immediately.
+        worker.launch {
+            for ((websocket, data) in messages) {
+                try {
+                    when (handshakePhase) {
+                        HandshakePhase.CLIENT_HELLO_SENT -> {
+                            require(data.size >= 65)
+                            handleClientHello(websocket, data, peerPublicKey)
+                        }
+                        HandshakePhase.READY -> handleCtapRequest(websocket, data, handleAuthenticator) { response, success ->
+                            completed.invoke(success)
+                            if (!cont.isCompleted) cont.tryResumeData(response)
+                        }
+                        else -> error("Hybrid session unavailable")
+                    }
+                } catch (e: Exception) {
+                    invalidate()
+                    if (!cont.isCompleted) cont.tryResumeWithError(SecurityException("Hybrid request failed"))
+                } finally { data.fill(0) }
+            }
+        }
         transport!!.startConnecting()
 
         cont.invokeOnCancellation {
+            invalidate()
+            messages.close(); worker.cancel()
             runCatching { bleAdvertiser?.stopAdvertising() }
             runCatching { transport?.stopConnecting() }
         }
@@ -142,15 +190,14 @@ class HybridAuthenticatorController(context: Context) {
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     private fun handleClientHello(ws: TunnelWebsocket?, data: ByteArray, peerPublicKey: ECPublicKey) {
         bleAdvertiser?.stopAdvertising()
+        val generation = connection.capture()
         val state = noiseState ?: error("Noise state not initialized")
         val pcEphemeralPubKey = data.copyOfRange(0, 65)
         val clientHelloPayload = data.copyOfRange(65, data.size)
         state.mixHash(pcEphemeralPubKey)
         state.mixKey(pcEphemeralPubKey)
         val decryptedPayload = state.decryptAndHash(clientHelloPayload)
-        if (decryptedPayload.isNotEmpty()) {
-            Log.w(TAG, "ClientHello has non-empty payload: ${decryptedPayload.hex()}")
-        }
+        require(decryptedPayload.isEmpty()) { "Invalid hybrid handshake" }
         val ephemeralKeyPair: Pair<ECPublicKey, ECPrivateKey> = generateEcKeyPair()
         val phoneEphemeralPubKey = CryptoHelper.uncompress(ephemeralKeyPair.first)
         state.mixHash(phoneEphemeralPubKey)
@@ -165,8 +212,14 @@ class HybridAuthenticatorController(context: Context) {
         ws?.send(serverHello)
 
         val (rxKey, txKey) = state.splitSessionKeys()
-        crypter = NoiseCrypter(rxKey, txKey)
-        handshakePhase = HandshakePhase.READY
+        connection.install(generation) {
+            crypter = NoiseCrypter(rxKey, txKey)
+            frameReader = HybridAuthenticatedFrames(crypter!!, ::invalidate)
+            handshakePhase = HandshakePhase.READY
+            accountSession = HybridAccountSessions.open(state.handshakeDigest()) {
+                connection.live(generation) && handshakePhase == HandshakePhase.READY && crypter != null && transport != null
+            }
+        }
 
         val message = encryptGetInfoPayload() ?: error("Failed to encrypt post-handshake message")
 
@@ -182,8 +235,7 @@ class HybridAuthenticatorController(context: Context) {
         val getInfoBytes = AuthenticatorGetInfoResponse(
             versions = arrayListOf("FIDO_2_0", "FIDO_2_1"),
             aaguid = ByteArray(16),
-            // This target currently returns no authenticated PRF or hmac-secret result.
-            extensions = emptyList(),
+            extensions = if (accountPrfAvailable) listOf("prf") else emptyList(),
             options = AuthenticatorGetInfoResponse.Companion.Options(
                 residentKey = true,
                 userPresence = true,
@@ -193,7 +245,6 @@ class HybridAuthenticatorController(context: Context) {
         ).encodePayload()
 
         Log.d(TAG, "GetInfo response size: ${getInfoBytes.size} bytes")
-        Log.d(TAG, "GetInfo response (hex): ${getInfoBytes.hex()}")
 
         val getInfoByteString = CBORObject.FromObject(getInfoBytes)
 
@@ -207,60 +258,41 @@ class HybridAuthenticatorController(context: Context) {
 
         val messageBytes = postHandshakeMessage.EncodeToBytes()
         Log.d(TAG, "Post-handshake message size: ${messageBytes.size} bytes")
-        Log.d(TAG, "Post-handshake message (hex): ${messageBytes.hex()}")
         return crypter.encrypt(messageBytes)
     }
 
-    private suspend fun handleCtapRequest(ws: TunnelWebsocket?, data: ByteArray, handleAuthenticator: suspend (Ctap2Request) -> Ctap2Response?): ByteArray? {
-        val crypt = this.crypter ?: error("Crypter not initialized (handshake incomplete)")
-        val decrypted = crypt.decrypt(data) ?: error("Failed to decrypt CTAP request")
-        if (decrypted.isEmpty()) {
-            ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_LENGTH.code))
-            return null
-        }
+    private fun handleCtapRequest(ws: TunnelWebsocket?, data: ByteArray, handleAuthenticator: suspend (Ctap2Request) -> Ctap2Response?,
+        complete: (ByteArray, Boolean) -> Unit) {
+        val crypt = this.crypter ?: error("Hybrid session unavailable")
+        val generation = connection.capture()
+        val decrypted = frameReader?.read(data) ?: throw SecurityException("Hybrid peer disconnected")
         val frameType = decrypted[0].toInt() and 0xFF
-        if (frameType == 0x00) {
-            Log.d(TAG, "Received post-handshake response from initiator")
-            if (decrypted.size > 1) {
-                try {
-                    val payload = decrypted.copyOfRange(1, decrypted.size)
-                    val cbor = CBORObject.DecodeFromBytes(payload)
-                    Log.d(TAG, "Post-handshake payload: $cbor")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not parse post-handshake payload (may be empty)", e)
-                }
-            } else {
-                Log.d(TAG, "Post-handshake response has no payload (acknowledgment only)")
-            }
-            return null
-        }
         if (frameType == 0x01) {
             if (decrypted.size < 2) {
                 ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP2_ERR_INVALID_CBOR.code))
-                return null
+                return
             }
             val commandCode = Ctap2CommandCode.entries.find { it.byte == decrypted[1] }
             if (commandCode == null) {
                 ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_COMMAND.code))
-                return null
+                return
             }
             val params = if (decrypted.size > 2) {
                 try {
                     Log.d(TAG, "CBOR size: ${decrypted.size - 2} bytes")
                     CBORObject.Read(ByteArrayInputStream(decrypted, 2, decrypted.size - 2))
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to parse CBOR parameters", e)
+                    Log.e(TAG, "Failed to parse CBOR parameters")
                     null
                 }
             } else {
                 null
             }
-            Log.d(TAG, "Command: $commandCode, parameters: $params")
             val request = when (commandCode) {
                 Ctap2CommandCode.AuthenticatorMakeCredential -> {
                     if (params == null) {
                         ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP2_ERR_MISSING_PARAMETER.code))
-                        return null
+                        return
                     }
                     AuthenticatorMakeCredentialRequest.decodeFromCbor(params)
                 }
@@ -268,7 +300,7 @@ class HybridAuthenticatorController(context: Context) {
                 Ctap2CommandCode.AuthenticatorGetAssertion -> {
                     if (params == null) {
                         ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP2_ERR_MISSING_PARAMETER.code))
-                        return null
+                        return
                     }
                     AuthenticatorGetAssertionRequest.decodeFromCbor(params)
                 }
@@ -279,48 +311,38 @@ class HybridAuthenticatorController(context: Context) {
 
                 else -> {
                     ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_COMMAND.code))
-                    return null
+                    return
                 }
             }
-            try {
-                val response = handleAuthenticator(request)
-                Log.d(TAG, "Request: $request")
-                Log.d(TAG, "Response: $response")
-                if (response == null) {
-                    ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_OTHER.code))
-                    return null
-                }
-                val responseBytes = byteArrayOf(0) + response.encodePayloadAsCbor().EncodeToBytes()
-                ws?.sendCtapResponse(responseBytes)
-                return responseBytes
-            } catch (e: Exception) {
-                Log.w(TAG, "error handling request: ", e)
-                ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_OTHER.code))
-                return null
+            if (!operationActive.compareAndSet(false, true)) {
+                ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_CHANNEL_BUSY.code))
+                return
             }
-        }
-        if (frameType == 0x02) {
-            Log.d(TAG, "Received UPDATE message")
-            if (decrypted.size > 1) {
-                val payload = decrypted.copyOfRange(1, decrypted.size)
-                Log.d(TAG, "UPDATE payload: ${payload.hex()}")
-            }
-            return null
-        }
-        if (frameType == 0x03) {
-            Log.d(TAG, "Received JSON message")
-            if (decrypted.size > 1) {
-                val payload = decrypted.copyOfRange(1, decrypted.size)
+            activeRequestDigest = java.security.MessageDigest.getInstance("SHA-256").digest(decrypted)
+            val operation = worker.launch(start = CoroutineStart.LAZY) {
                 try {
-                    val jsonString = String(payload, Charsets.UTF_8)
-                    Log.d(TAG, "JSON: $jsonString")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not parse JSON payload", e)
-                }
+                    val response = handleAuthenticator(request)
+                    check(connection.live(generation) && handshakePhase == HandshakePhase.READY && crypt === crypter)
+                    val responseBytes = if (response == null) byteArrayOf(CtapStatus.CTAP1_ERR_OTHER.code)
+                        else byteArrayOf(0) + response.encodePayloadAsCbor().EncodeToBytes()
+                    ws?.sendCtapResponse(responseBytes)
+                    if (request !is AuthenticatorGetInfoRequest) complete(responseBytes, response != null)
+                } catch (_: CancellationException) {
+                    // Shutdown/socket loss revoked authority; never emit a late result or error frame.
+                } catch (_: Exception) {
+                    if (connection.live(generation) && crypt === crypter) {
+                        val refused = byteArrayOf(CtapStatus.CTAP1_ERR_OTHER.code)
+                        ws?.sendCtapResponse(refused)
+                        complete(refused, false)
+                    }
+                } finally { activeRequestDigest = null; operationActive.set(false) }
             }
-            return null
+            ownerOperation = operation
+            if (connection.live(generation)) operation.start() else operation.cancel()
+            return
         }
-        return null
+        // UPDATE/JSON carry no account authority. This receiver does not expose their contents.
+        require(frameType in setOf(0x02, 0x03))
     }
 
     private fun TunnelWebsocket.sendCtapResponse(ctapResponse: ByteArray) {
@@ -331,7 +353,7 @@ class HybridAuthenticatorController(context: Context) {
             Log.d(TAG, "Sending encrypted CTAP response: ${encrypted.size} bytes (framed)")
             send(encrypted)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send CTAP response", e)
+            Log.e(TAG, "Failed to send CTAP response")
         }
     }
 }

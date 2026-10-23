@@ -24,6 +24,7 @@ class PasswordAccountCleanupWorker(context: Context, parameters: WorkerParameter
         PasswordOwnerOperations.purgeRemovedAccounts(applicationContext)
         SyncedPasskeyVault.purgeRemovedAccounts(applicationContext)
         org.microg.gms.auth.folsom.utils.LocalKeyManager.getInstance(applicationContext).purgeRemovedAccounts()
+        EnclavePinIdentity.purgeRemovedAccounts(applicationContext)
         val accounts = AccountManager.get(applicationContext)
         val active = accounts.getAccountsByType("com.google").map { account ->
             val id = accounts.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() } ?: return Result.retry()

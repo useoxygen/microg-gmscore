@@ -43,6 +43,10 @@ fun encodeCredBlobAuthenticationExtension(blob: ByteArray): ByteArray = CBORObje
     set("credBlob", blob.encodeAsCbor())
 }.EncodeToBytes()
 
+fun encodeCredBlobCreationExtension(stored: Boolean): ByteArray = CBORObject.NewMap().apply {
+    set("credBlob", stored.encodeAsCbor())
+}.EncodeToBytes()
+
 fun PublicKeyCredentialRpEntity.encodeAsCbor() = CBORObject.NewMap().apply {
     set("id", id.encodeAsCbor())
     if (!name.isNullOrBlank()) set("name", name.encodeAsCbor())

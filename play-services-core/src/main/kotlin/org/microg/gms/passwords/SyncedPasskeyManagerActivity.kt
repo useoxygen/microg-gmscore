@@ -78,7 +78,8 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                         Text(stringResource(R.string.passwords_passkey_management_progress,
                             operation.steps.count { it.phase == PasskeyOwnerPhase.COMMITTED }, operation.steps.size))
                         Text(stringResource(R.string.passwords_passkey_management_pending))
-                        if (!state.reset && operation.steps.none { it.phase == PasskeyOwnerPhase.CONFLICT })
+                        if (!state.reset && operation.kind != PasskeyOwnerKind.SECRET_UPDATE &&
+                            operation.steps.none { it.phase == PasskeyOwnerPhase.CONFLICT })
                             TextButton(onClick = { resolving = true }, enabled = !busy) {
                                 Text(stringResource(R.string.passwords_retry_owner))
                             }

@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -49,7 +51,7 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(R.string.passwords_recovery_enroll_phone), style = MaterialTheme.typography.headlineSmall)
                 if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) {
                     Text(stringResource(R.string.passwords_unlock))
@@ -78,6 +80,27 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
                         TextButton(onClick = ::recoverWithGoogle, enabled = !busy) {
                             Text(stringResource(R.string.passwords_recovery_enroll_recover))
                         }
+                        OutlinedButton(onClick = ::manageRecovery, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_domain_manage))
+                        }
+                        OutlinedButton(onClick = { manageRecoverableVault("chromesync") }, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_recoverable_vault_passwords))
+                        }
+                        OutlinedButton(onClick = { manageRecoverableVault("hw_protected") }, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_recoverable_vault_passkeys))
+                        }
+                        OutlinedButton(onClick = ::managePinRecovery, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_pin_renewal_title))
+                        }
+                        OutlinedButton(onClick = ::manageEnclavePin, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_enclave_pin_title))
+                        }
+                        OutlinedButton(onClick = { restoreRecovery("chromesync") }, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_restore_passwords))
+                        }
+                        OutlinedButton(onClick = { restoreRecovery("hw_protected") }, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_restore_passkeys))
+                        }
                     }
                 }
                 TextButton(onClick = { cancel(); finish() }) { Text(stringResource(android.R.string.cancel)) }
@@ -103,6 +126,49 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
     private fun validAccount(): Boolean {
         val accounts = AccountManager.get(this)
         return accounts.getAccountsByType("com.google").contains(account) && accounts.getUserData(account, "GoogleUserId") == accountId
+    }
+    private fun manageRecovery() {
+        try {
+            requireOwner()
+            if (!validAccount() || !hasSecureScreenLock) throw VaultLockedException()
+            startActivity(Intent(this, org.microg.gms.auth.folsom.ui.SecurityDomainLifecycleActivity::class.java)
+                .putExtra("account", account.name).putExtra("google_user_id", accountId)
+                .putExtra("password_parent", parent))
+        } catch (_: Exception) { message = R.string.passwords_recovery_enroll_failed }
+    }
+    private fun manageRecoverableVault(domain: String) {
+        try {
+            requireOwner()
+            if (!validAccount() || !hasSecureScreenLock) throw VaultLockedException()
+            startActivity(Intent(this, RecoverableVaultActivity::class.java)
+                .putExtra("account", account.name).putExtra("google_user_id", accountId)
+                .putExtra("domain", domain).putExtra("password_parent", if (domain == "chromesync") parent else null))
+        } catch (_: Exception) { message = R.string.passwords_recovery_enroll_failed }
+    }
+    private fun managePinRecovery() {
+        try {
+            requireOwner()
+            if (!allowed.get() || !validAccount() || !hasSecureScreenLock || busy) throw VaultLockedException()
+            startActivity(Intent(this, GpmPinRenewalActivity::class.java)
+                .putExtra("account", account.name).putExtra("google_user_id", accountId))
+        } catch (_: Exception) { message = R.string.passwords_recovery_enroll_failed }
+    }
+    private fun manageEnclavePin() {
+        try {
+            requireOwner()
+            if (!allowed.get() || !validAccount() || !hasSecureScreenLock || busy) throw VaultLockedException()
+            startActivity(Intent(this, EnclavePinActivity::class.java)
+                .putExtra("account", account.name).putExtra("google_user_id", accountId))
+        } catch (_: Exception) { message = R.string.passwords_recovery_enroll_failed }
+    }
+    private fun restoreRecovery(domain: String) {
+        try {
+            requireOwner()
+            if (!allowed.get() || !validAccount() || !hasSecureScreenLock || busy) throw VaultLockedException()
+            startActivity(Intent(this, RecoveryRestoreActivity::class.java)
+                .putExtra("account", account.name).putExtra("google_user_id", accountId).putExtra("domain", domain)
+                .putExtra("password_parent", parent))
+        } catch (_: Exception) { message = R.string.passwords_recovery_enroll_failed }
     }
     private fun perform(action: RecoveryEnrollmentAction) {
         try { requireOwner(); if (!validAccount() || !hasSecureScreenLock) throw VaultLockedException() }

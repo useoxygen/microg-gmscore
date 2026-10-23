@@ -91,20 +91,24 @@ class TunnelWebsocket(val url: String, val callback: TunnelWebCallback) {
                             Log.d(TAG, "runReader() called when websocket is disconnected")
                             close()
                         } catch (e: IOException) {
-                            Log.w(TAG, "connect: Socket failed to close", e)
+                            Log.w(TAG, "connect: Socket failed to close")
                         }
                     } else {
                         val request = Request.Builder().url(url).header("Sec-WebSocket-Protocol", "fido.cable").build()
 
-                        Log.d(TAG, "connect: request: $request")
 
                         socket = client.newWebSocket(request, object : WebSocketListener() {
+                            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                                closeWebsocket()
+                            }
+
                             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                                 closeWebsocket()
                             }
 
                             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                                Log.e(TAG, "Tunnel failure: ${t.message}", t)
+                                Log.e(TAG, "Tunnel failure")
+                                socketStatus = SocketStatus.DISCONNECTED
                                 callback.error(TunnelException("Websocket failed", t))
                             }
 
@@ -121,7 +125,7 @@ class TunnelWebsocket(val url: String, val callback: TunnelWebCallback) {
                     }
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "connect: ", e)
+                Log.d(TAG, "connect: ")
                 callback.error(TunnelException("Websocket connect failed", e))
             }
         }

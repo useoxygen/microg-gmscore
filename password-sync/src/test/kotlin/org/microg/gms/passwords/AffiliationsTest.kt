@@ -188,4 +188,47 @@ class AffiliationsTest {
             assertThrows(ProtocolException::class.java) { AffiliationFacet.parse(value) }
         }
     }
+
+    @Test fun extendedSuffixesAreAppliedOneLevelAtATimeAndCannotSkipMissingAncestors() {
+        val facet = AffiliationFacet.parse("https://login.team.tenant.example.com")
+        assertEquals("example.com", AffiliationDomains.mainDomain(facet, setOf("tenant.example.com")))
+        assertEquals("tenant.example.com", AffiliationDomains.mainDomain(facet, setOf("example.com", "team.tenant.example.com")))
+        assertEquals("team.tenant.example.com", AffiliationDomains.mainDomain(facet, setOf("example.com", "tenant.example.com")))
+        assertEquals("login.team.tenant.example.com", AffiliationDomains.mainDomain(facet,
+            setOf("example.com", "tenant.example.com", "team.tenant.example.com")))
+    }
+
+    @Test fun relatedGroupsMergeTransitivelyWhileSharingAuthorityAndTenantBoundariesStaySeparate() {
+        val first = AffiliationFacet.parse("https://a.example.com")
+        val second = AffiliationFacet.parse("https://b.example.com")
+        val third = AffiliationFacet.parse("https://x.example.org")
+        val fourth = AffiliationFacet.parse("https://y.example.org")
+        val secondApp = AffiliationFacet.parse(app.id.replace("com.example", "com.other"))
+        fun brandedGroup(name: String, icon: String?, vararg entries: AffiliationFacet): ByteArray =
+            group(*entries) + Proto.field(2, Proto.field(1, name) + (icon?.let { Proto.field(2, it) } ?: byteArrayOf()))
+        val requested = listOf(first, app, second, third, fourth, secondApp)
+        val raw = Proto.field(2, brandedGroup("First", "https://brand.example/first", first, app)) +
+            Proto.field(2, brandedGroup("No icon", null, second, third)) +
+            Proto.field(2, brandedGroup("Last", "https://brand.example/last", fourth, secondApp))
+        val response = AffiliationResponse.decode(raw, requested)
+        assertEquals(1, response.groups.size)
+        assertEquals(requested.toSet(), response.groupedFacets(app).map { it.facet }.toSet())
+        assertEquals("Last", response.groups.single().branding!!.name)
+        assertTrue(response.isGrouped(app, secondApp))
+        assertEquals(setOf(first), response.credentialSharingFacets(first))
+        assertEquals(setOf(app), response.credentialSharingFacets(app))
+        val isolated = AffiliationResponse.decode(raw + Proto.field(3, "example.com"), requested)
+        assertEquals(2, isolated.groups.size)
+        assertFalse(isolated.isGrouped(first, secondApp))
+    }
+
+    @Test fun serverMainDomainsOverrideComputedDisplayGroupingWithoutGrantingCredentialRelease() {
+        val first = AffiliationFacet.parse("https://login.example.com")
+        val second = AffiliationFacet.parse("https://accounts.example.org")
+        val raw = listOf(first, second).fold(byteArrayOf()) { out, value -> out + Proto.field(2,
+            Proto.field(1, facet(value) + Proto.field(3, "declared.example"))) }
+        val response = AffiliationResponse.decode(raw, listOf(first, second))
+        assertEquals(1, response.groups.size); assertTrue(response.isGrouped(first, second))
+        assertEquals(setOf(first), response.credentialSharingFacets(first))
+    }
 }

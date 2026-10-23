@@ -4,7 +4,7 @@ package org.microg.gms.passwords
 import java.security.MessageDigest
 import java.util.UUID
 
-enum class PasskeyOwnerKind { RENAME, DELETE }
+enum class PasskeyOwnerKind { RENAME, DELETE, SECRET_UPDATE }
 enum class PasskeyOwnerPhase { QUEUED, LAUNCHED, INDETERMINATE, REFUSED, CONFLICT, COMMITTED }
 
 /** Before/after resources retain opaque ciphertext, version and unknown fields; stored only in account AEAD. */
@@ -25,12 +25,14 @@ class PasskeyOwnerStep(val before: ByteArray, val after: ByteArray?, val phase: 
 }
 
 class PasskeyOwnerMutation(val id: String, val accountId: String, val parent: String, val kind: PasskeyOwnerKind,
-    val steps: List<PasskeyOwnerStep>) {
-    fun steps(values: List<PasskeyOwnerStep>) = PasskeyOwnerMutation(id, accountId, parent, kind, values)
+    val steps: List<PasskeyOwnerStep>, val requestBinding: ByteArray? = null) {
+    fun steps(values: List<PasskeyOwnerStep>) = PasskeyOwnerMutation(id, accountId, parent, kind, values, requestBinding)
     fun encode(): ByteArray {
         val p = Proto.decode(Proto.field(1, id) + Proto.field(2, accountId) + Proto.field(3, parent) +
             Proto.integer(4, kind.ordinal.toLong()))
-        return p.replaceRepeated(5, steps.map(PasskeyOwnerStep::encode)).encode()
+        return p.replaceRepeated(5, steps.map(PasskeyOwnerStep::encode)).let {
+            if (requestBinding == null) it else it.replace(6, requestBinding)
+        }.encode()
     }
     override fun toString() = "PasskeyOwnerMutation[redacted]"
     companion object {
@@ -43,19 +45,23 @@ class PasskeyOwnerMutation(val id: String, val accountId: String, val parent: St
                 ?.let { PasskeyOwnerKind.entries[it.toInt()] } ?: throw ProtocolException()
             val steps = p.bytes(5).map(PasskeyOwnerStep::decode)
             if (id.length !in 1..128 || account.length !in 1..256 || steps.isEmpty() || steps.size > 10_000 ||
-                steps.map { it.name }.toSet().size != steps.size || (kind == PasskeyOwnerKind.RENAME && steps.size != 1) ||
-                steps.any { (it.after != null) != (kind == PasskeyOwnerKind.RENAME) }) throw ProtocolException()
+                steps.map { it.name }.toSet().size != steps.size || (kind != PasskeyOwnerKind.DELETE && steps.size != 1) ||
+                steps.any { (it.after != null) != (kind != PasskeyOwnerKind.DELETE) }) throw ProtocolException()
+            val binding = p.optional(6)
+            if (kind == PasskeyOwnerKind.SECRET_UPDATE && binding?.size != 32 || kind != PasskeyOwnerKind.SECRET_UPDATE && binding != null) throw ProtocolException()
             steps.forEach { step ->
                 PasskeyApi.checkedName(step.name, parent)
                 step.after?.let { if (Proto.decode(it).string(1) != step.name) throw ProtocolException() }
             }
-            return PasskeyOwnerMutation(id, account, parent, kind, steps)
+            return PasskeyOwnerMutation(id, account, parent, kind, steps, binding)
         }
     }
 }
 
 /** Source ajno/ajnj/ajnk: active deletion includes hidden/older siblings; a shadowed row deletes only itself. */
 object PasskeyOwnerMutations {
+    fun signingDenied(state: PasskeyState): Set<String> = state.ownerMutation?.takeIf { it.kind != PasskeyOwnerKind.RENAME }
+        ?.steps?.map { it.name }?.toSet().orEmpty()
     fun shadowed(selected: SyncedPasskey, all: List<SyncedPasskey>): Boolean = all.any { item ->
         item.rpId == selected.rpId && item.shadowedCredentialIds.any { MessageDigest.isEqual(it, selected.credentialId) }
     }
@@ -65,6 +71,9 @@ object PasskeyOwnerMutations {
 
     fun renameMatches(actual: SyncedPasskey, desired: SyncedPasskey): Boolean = actual.sameRegistration(desired) &&
         actual.username == desired.username && actual.displayName == desired.displayName && actual.editedByUser
+    fun updateMatches(kind: PasskeyOwnerKind, actual: SyncedPasskey, desired: SyncedPasskey): Boolean =
+        if (kind == PasskeyOwnerKind.RENAME) renameMatches(actual, desired) else actual.sameRegistration(desired) &&
+            actual.username == desired.username && actual.displayName == desired.displayName && actual.editedByUser == desired.editedByUser
 
     /** Full snapshots only confirm outcomes. They never queue or launch an unknown attempt again. */
     fun reconcile(state: PasskeyState, keys: VaultKeys): PasskeyState {
@@ -76,7 +85,7 @@ object PasskeyOwnerMutations {
             if (step.phase == PasskeyOwnerPhase.COMMITTED) return@map step
             val current = byName[step.name]
             val achieved = if (step.after == null) current == null else current?.let {
-                renameMatches(PasskeyResourceCodec.read(it, keys), PasskeyResourceCodec.read(step.after, keys))
+                updateMatches(operation.kind, PasskeyResourceCodec.read(it, keys), PasskeyResourceCodec.read(step.after, keys))
             } == true
             when {
                 achieved -> step.phase(PasskeyOwnerPhase.COMMITTED)
@@ -128,6 +137,24 @@ class PasskeyOwnerManagement(private val accountId: String, private val parent: 
         val after = PasskeyResourceCodec.write(data.withOwnerNames(username, displayName), keys, baseline)
         prepare(state, PasskeyOwnerKind.RENAME, listOf(PasskeyOwnerStep(baseline.copyOf(), after)))
     }
+    /** The complete caller/request digest is durable with the selected account/RP/credential resources. */
+    fun secretUpdate(baseline: ByteArray, replacement: SyncedPasskey, requestBinding: ByteArray) {
+        if (requestBinding.size != 32) throw ProtocolException()
+        val state = refresh()
+        val original = selected(state, baseline)
+        fun metadata(data: SyncedPasskey) = listOf(9, 12, 19, 14).fold(Proto.decode(data.encode())) { p, field -> p.replace(field, null) }.encode()
+        if (original.tag != replacement.tag || original.rpId != replacement.rpId ||
+            !MessageDigest.isEqual(original.credentialId, replacement.credentialId) ||
+            !MessageDigest.isEqual(original.userId, replacement.userId) ||
+            !MessageDigest.isEqual(metadata(original), metadata(replacement))) throw ConflictException()
+        val after = PasskeyResourceCodec.write(replacement, keys, baseline)
+        prepare(state, PasskeyOwnerKind.SECRET_UPDATE, listOf(PasskeyOwnerStep(baseline.copyOf(), after)), requestBinding.copyOf())
+        // A validated update reply is followed by a real complete readback before WebAuthn written:true/PRF output.
+        val verified = refresh()
+        if (verified.ownerMutation != null || verified.records.singleOrNull { Proto.decode(it).string(1) == Proto.decode(baseline).string(1) }
+                ?.let { PasskeyOwnerMutations.updateMatches(PasskeyOwnerKind.SECRET_UPDATE, PasskeyResourceCodec.read(it, keys), replacement) } != true)
+            throw PendingMutationException()
+    }
     fun delete(baseline: ByteArray, reviewedGroup: List<ByteArray>) {
         val state = refresh()
         val data = selected(state, baseline)
@@ -140,9 +167,9 @@ class PasskeyOwnerManagement(private val accountId: String, private val parent: 
             throw ConflictException()
         prepare(state, PasskeyOwnerKind.DELETE, steps)
     }
-    private fun prepare(state: PasskeyState, kind: PasskeyOwnerKind, steps: List<PasskeyOwnerStep>) {
+    private fun prepare(state: PasskeyState, kind: PasskeyOwnerKind, steps: List<PasskeyOwnerStep>, requestBinding: ByteArray? = null) {
         if (state.ownerHistory.size >= 1000 || token.isEmpty()) throw ProtocolException()
-        val operation = PasskeyOwnerMutation(UUID.randomUUID().toString(), accountId, parent, kind, steps)
+        val operation = PasskeyOwnerMutation(UUID.randomUUID().toString(), accountId, parent, kind, steps, requestBinding)
         verifyOwner(); save(state.ownerState(operation))
         execute(operation.id)
     }
@@ -152,6 +179,7 @@ class PasskeyOwnerManagement(private val accountId: String, private val parent: 
         val operation = state.ownerMutation ?: return
         if (operation.id != id) throw ConflictException()
         checkOperation(operation)
+        if (operation.kind == PasskeyOwnerKind.SECRET_UPDATE) throw PendingMutationException()
         if (operation.steps.any { it.phase == PasskeyOwnerPhase.CONFLICT }) throw ConflictException()
         if (state.ownerHistory.size >= 999) throw ProtocolException()
         val queued = operation.steps.filter { it.phase != PasskeyOwnerPhase.COMMITTED }
@@ -188,11 +216,14 @@ class PasskeyOwnerManagement(private val accountId: String, private val parent: 
                 } else {
                     val result = api.update(step.after, token)
                     if (PasskeyApi.checkedName(Proto.decode(result).string(1), parent) != step.name ||
-                        !PasskeyOwnerMutations.renameMatches(PasskeyResourceCodec.read(result, keys),
+                        !PasskeyOwnerMutations.updateMatches(current.kind, PasskeyResourceCodec.read(result, keys),
                             PasskeyResourceCodec.read(step.after, keys))) throw ProtocolException()
                     state.records.map { if (Proto.decode(it).string(1) == step.name) result else it }
                 }
-                verifyOwner(); change(PasskeyOwnerPhase.COMMITTED, records)
+                // Secret update acknowledgement is insufficient for a WebAuthn write result.
+                // Keep its signing fence live until a complete remote snapshot confirms it.
+                verifyOwner(); change(if (current.kind == PasskeyOwnerKind.SECRET_UPDATE)
+                    PasskeyOwnerPhase.INDETERMINATE else PasskeyOwnerPhase.COMMITTED, records)
             } catch (failure: Exception) {
                 change(when {
                     !dispatched -> PasskeyOwnerPhase.QUEUED

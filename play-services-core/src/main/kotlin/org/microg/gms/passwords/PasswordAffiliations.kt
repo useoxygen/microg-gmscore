@@ -56,7 +56,7 @@ class PasswordAffiliations(context: Context, private val repository: PasswordRep
         val response = lookup(listOf(facet), refresh = false) ?: return null
         val info = response.info(facet) ?: return null
         return PasswordAffiliationDisplay(info.branding?.name?.takeIf { it.isNotBlank() }, info.branding?.iconUrl,
-            info.changePasswordUrl, AffiliationDomains.mainDomain(facet, response.pslExtensions))
+            info.changePasswordUrl, info.mainDomain ?: AffiliationDomains.mainDomain(facet, response.pslExtensions))
     }
 
     companion object {
@@ -68,7 +68,7 @@ class PasswordAffiliations(context: Context, private val repository: PasswordRep
             }, null).cached(listOf(facet)) ?: return@runCatching null
             val info = response.info(facet) ?: return@runCatching null
             PasswordAffiliationDisplay(info.branding?.name?.takeIf { it.isNotBlank() }, info.branding?.iconUrl,
-                info.changePasswordUrl, AffiliationDomains.mainDomain(facet, response.pslExtensions))
+                info.changePasswordUrl, info.mainDomain ?: AffiliationDomains.mainDomain(facet, response.pslExtensions))
         }.getOrNull()
     }
 }

@@ -36,6 +36,11 @@ internal object SyncedPasskeyPrf {
         PasskeyPrfRequest.legacy(it.entries.toList(), create)
     }
     fun output(result: PasskeyPrfResult) = AuthenticationExtensionsPrfOutputs(result.enabled, result.first, result.second)
+    /** The vault commits this replacement and reopens it before any caller evaluates PRF. */
+    fun migrate(secret: PasskeySecret): ByteArray? {
+        val encoded = secret.encode()
+        return try { PasskeyPrfMigration.upgrade(encoded) } finally { encoded.fill(0) }
+    }
     fun json(enabled: Boolean, first: ByteArray?, second: ByteArray?): JSONObject = JSONObject().apply {
         if (enabled) put("enabled", true)
         if (second != null && first == null || first?.size?.let { it != 32 } == true || second?.size?.let { it != 32 } == true)

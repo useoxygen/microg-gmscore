@@ -42,7 +42,7 @@ internal object SyncedPasskeyProvider {
         val tickets = PasskeyRequestTickets(context)
         return SyncedPasskeyVault.accounts(context).take(5).flatMap { vault -> runCatching {
             val values = PasskeySnapshots.candidates({ vault.list() }, { vault.list(refresh = true) })
-            values.filter { (prf == null || it.encryptedField != 9) && it.rpId == options.rpId && (options.allowList.isNullOrEmpty() ||
+            values.filter { it.rpId == options.rpId && (options.allowList.isNullOrEmpty() ||
                 options.allowList!!.any { allowed -> MessageDigest.isEqual(allowed.id, it.credentialId) }) }.take(40).map { item ->
                 PublicKeyCredentialEntry(context = context, username = item.username.ifEmpty { item.displayName.ifEmpty { vault.account.name } },
                     displayName = item.displayName.ifEmpty { null },
@@ -64,6 +64,7 @@ internal object SyncedPasskeyProvider {
     fun get(activity: PublicKeyProxyActivity, request: ProviderGetCredentialRequest): Boolean {
         if (activity.intent.data?.scheme != "microg-passkey") return false
         activity.lifecycleScope.launchWhenResumed {
+            var blobWrite: PasskeyBlobWriteRequest? = null
             try {
                 val option = request.credentialOptions.singleOrNull() as? GetPublicKeyCredentialOption ?: throw SecurityException()
                 val caller = verifyCaller(activity, request.callingAppInfo)
@@ -74,13 +75,18 @@ internal object SyncedPasskeyProvider {
                 if (!SyncedPasskeyRequestSupport.get(option.requestJson)) throw SecurityException()
                 val prf = SyncedPasskeyRequestSupport.prf(option.requestJson, false)
                 val blobs = SyncedPasskeyBlobReads.request(option.requestJson)
+                blobWrite = SyncedPasskeyBlobReads.write(option.requestJson)
+                val binding = MessageDigest.getInstance("SHA-256").digest(ticket.encode())
                 val options = options(activity, base, caller, option.clientDataHash)
                 options.checkIsValid(activity, origin(activity, caller, request.callingAppInfo.packageName), request.callingAppInfo.packageName)
                 recover(activity, vault)
                 val verify = { verifyCaller(activity, request.callingAppInfo); vault.check() }
                 var owner = authenticate(activity, base.rpId, verify)
                 val result = PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
-                    vault.withSecret(ticket.string(3), base.rpId, base.allowList.orEmpty().map { it.id }, owner, rapt) { item, secret ->
+                    vault.withSecret(ticket.string(3), base.rpId, base.allowList.orEmpty().map { it.id }, owner, rapt,
+                        secretUpdate = if (prf != null || blobWrite != null) { _, secret ->
+                            SyncedPasskeyBlobReads.update(secret, prf != null, blobWrite)
+                        } else null, requestBinding = binding) { item, secret ->
                         SyncedPasskeyBlobReads.read(secret, blobs).use { blobResult ->
                             val key = secret.privateKey()
                             try {
@@ -94,7 +100,8 @@ internal object SyncedPasskeyProvider {
                                 owner()
                                 val json = credential(item.credentialId, AuthenticatorAssertionResponse(item.credentialId, clientData, auth.encode(), signed, item.userId),
                                     output?.let { AuthenticationExtensionsClientOutputs(null, null, null, it, null) }).toJson()
-                                SyncedPasskeyBlobReads.output(json, blobs, blobResult).also { owner() }
+                                SyncedPasskeyBlobReads.output(json, blobs, blobResult,
+                                    if (blobWrite != null) true else null).also { owner() }
                             } finally { runCatching { key.destroy() } }
                         }
                     }
@@ -105,12 +112,14 @@ internal object SyncedPasskeyProvider {
                 })
                 owner(); activity.finishWithSuccess(GetCredentialResponse(androidx.credentials.PublicKeyCredential(result)))
             } catch (_: Exception) { activity.finishWithException() }
+            finally { blobWrite?.close() }
         }
         return true
     }
     fun create(activity: PublicKeyProxyActivity, request: ProviderCreateCredentialRequest): Boolean {
         if (activity.intent.data?.scheme != "microg-passkey") return false
         activity.lifecycleScope.launchWhenResumed {
+            var blobCreate: PasskeyBlobCreateRequest? = null
             try {
                 val option = request.callingRequest as? CreatePublicKeyCredentialRequest ?: throw SecurityException()
                 val caller = verifyCaller(activity, request.callingAppInfo)
@@ -119,6 +128,7 @@ internal object SyncedPasskeyProvider {
                 val base = JSONObject(option.requestJson).parsePublicKeyCredentialCreationOptions()
                 if (ticket.string(4) != base.rp.id || !SyncedPasskeyRequestSupport.create(option.requestJson)) throw SecurityException()
                 val prf = SyncedPasskeyRequestSupport.prf(option.requestJson, true)
+                blobCreate = SyncedPasskeyBlobReads.create(option.requestJson)
                 val browser = caller.realms.single().startsWith("https://")
                 val options: RequestOptions = if (browser) BrowserPublicKeyCredentialCreationOptions.Builder()
                     .setPublicKeyCredentialCreationOptions(base).setOrigin(android.net.Uri.parse(origin(activity, caller, request.callingAppInfo.packageName)))
@@ -139,12 +149,14 @@ internal object SyncedPasskeyProvider {
                     val key = KeyPairGenerator.getInstance("EC").run { initialize(ECGenParameterSpec("secp256r1")); generateKeyPair() }
                     val pkcs8 = key.private.encoded ?: throw SecurityException()
                     try {
-                        val specifics = vault.createSpecifics(base.rp.id, base.user.id, base.user.name, base.user.displayName, pkcs8, owner, rapt)
+                        val specifics = vault.createSpecifics(base.rp.id, base.user.id, base.user.name, base.user.displayName, pkcs8, owner, rapt,
+                            secretDecorator = blobCreate?.let { blob -> { raw -> blob.apply(raw) } })
                         val (clientData, hash) = getClientDataAndHash(activity, options, request.callingAppInfo.packageName)
                         if (hash.size != 32) throw SecurityException()
                         val pub = key.public as ECPublicKey
                         val cose = CoseKey(EC2Algorithm.ES256, pub.w.affineX, pub.w.affineY, 1, 32)
-                        val auth = authenticator(base.rp.id, AttestedCredentialData(ByteArray(16), specifics.credentialId, cose.encode()))
+                        val auth = authenticator(base.rp.id, AttestedCredentialData(ByteArray(16), specifics.credentialId, cose.encode()),
+                            blobCreate?.takeIf { it.credBlobRequested }?.let { encodeCredBlobCreationExtension(it.credBlobStored) })
                         // Only a successful remote create and durable local save can claim a synced registration.
                         vault.create(specifics, owner, base.excludeList.orEmpty().map { it.id })
                         specifics to AuthenticatorAttestationResponse(specifics.credentialId, clientData,
@@ -168,8 +180,10 @@ internal object SyncedPasskeyProvider {
                 val extensions = if (output == null && !SyncedPasskeyRequestSupport.credProps(option.requestJson)) null else
                     AuthenticationExtensionsClientOutputs(null, null,
                         if (SyncedPasskeyRequestSupport.credProps(option.requestJson)) AuthenticationExtensionsCredPropsOutputs(true) else null, output, null)
-                owner(); activity.finishWithSuccess(CreatePublicKeyCredentialResponse(credential(result.first.credentialId, result.second, extensions).toJson()))
+                owner(); activity.finishWithSuccess(CreatePublicKeyCredentialResponse(SyncedPasskeyBlobReads.creationOutput(
+                    credential(result.first.credentialId, result.second, extensions).toJson(), blobCreate)))
             } catch (_: Exception) { activity.finishWithException() }
+            finally { blobCreate?.close() }
         }
         return true
     }
@@ -233,8 +247,9 @@ internal object SyncedPasskeyRequestSupport {
         val selection = if (json.has("authenticatorSelection")) json.getJSONObject("authenticatorSelection") else null
         val extensions = extensionNames(json) ?: return@runCatching false
         SyncedPasskeyPrf.json(extensionObject(json) ?: return@runCatching false, true)
+        SyncedPasskeyBlobReads.create(request).use { }
         PasskeyRequestSupport.create(algorithms, if (json.has("attestation")) json.getString("attestation") else null,
-            selection?.let { if (it.has("authenticatorAttachment")) it.getString("authenticatorAttachment") else null }, extensions)
+            selection?.let { if (it.has("authenticatorAttachment")) it.getString("authenticatorAttachment") else null }, extensions - setOf("credBlob", "largeBlob"))
     }.getOrDefault(false)
     fun get(request: String): Boolean = runCatching {
         val json = JSONObject(request)

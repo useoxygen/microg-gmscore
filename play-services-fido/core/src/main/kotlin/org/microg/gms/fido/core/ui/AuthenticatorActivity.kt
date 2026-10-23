@@ -34,6 +34,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import org.microg.gms.common.GmsService
 import org.microg.gms.fido.core.*
+import org.microg.gms.fido.core.hybrid.HybridAccountRequests
 import org.microg.gms.fido.core.transport.Transport
 import org.microg.gms.fido.core.transport.Transport.*
 import org.microg.gms.fido.core.transport.TransportHandler
@@ -117,6 +118,7 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
                 return finishWithError(NOT_SUPPORTED_ERR, "FIDO2 API is not supported on devices below N")
             }
             val options = options ?: return finishWithError(DATA_ERR, "The request options are not valid")
+            if (source == SOURCE_HYBRID) HybridAccountRequests.verifyAuthenticator(this, options)
             this.callerPackage = callerPackage
             this.callerSignature = packageManager.getFirstSignatureDigest(callerPackage, "SHA-256")?.toBase64()
                 ?: return finishWithError(UNKNOWN_ERR, "Could not determine signature of app")
@@ -166,7 +168,10 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
     suspend fun handleRequest(options: RequestOptions, allowInstantLevel: AllowedInstantLevel = AllowedInstantLevel.INSTANT) {
         try {
             val origin = getOrigin(this, options, callerPackage)
-            options.checkIsValid(this, origin, callerPackage)
+            val backend = (application as? AccountPasskeyBackendProvider)?.accountPasskeyBackend
+            val delegatedPayment = source == SOURCE_BROWSER && backend?.delegatedBrowserRequest(this, options, callerPackage) == true
+            if (source == SOURCE_HYBRID) HybridAccountRequests.verifyAuthenticator(this, options)
+            else if (!delegatedPayment) options.checkIsValid(this, origin, callerPackage)
             val appName = getApplicationName(this, options, callerPackage)
             val callerName = packageManager.getApplicationLabel(callerPackage).toString()
 
@@ -175,10 +180,9 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
 
             Log.d(TAG, "FIDO caller validated")
 
-            val backend = (application as? AccountPasskeyBackendProvider)?.accountPasskeyBackend
             // The account backend independently verifies the browser's release signer and exact origin.
             // Its owner confirmation does not create a local remembered-browser fido.db record.
-            if (!accountChoiceOffered && source != SOURCE_HYBRID && backend != null &&
+            if (!accountChoiceOffered && backend != null &&
                 backend.available(this, options, callerPackage, source.orEmpty())) {
                 accountChoiceOffered = true
                 makeOpaque()
@@ -188,6 +192,12 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
                     return
                 }
             }
+            // Local transports have no PRF consumer. Never silently downgrade an advertised account PRF request.
+            if (source == SOURCE_HYBRID && options.authenticationExtensions?.prfExtension != null) {
+                finishWithError(NOT_SUPPORTED_ERR, "Account PRF passkey required"); return
+            }
+            // An SPC RP exception belongs exclusively to the account consumer, which rechecks stored opt-in.
+            if (delegatedPayment) { finishWithError(NOT_ALLOWED_ERR, "No payment passkey selected"); return }
 
             val noLocalUserForSignInstantBlock = options.type == RequestOptionsType.SIGN && database.getKnownRegistrationInfo(options.rpId).isEmpty()
 
@@ -339,6 +349,9 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
     }
 
     private fun finishWithCredential(publicKeyCredential: PublicKeyCredential, user: PublicKeyCredentialUserEntity? = null) {
+        if (source == SOURCE_HYBRID && runCatching { HybridAccountRequests.verifyAuthenticator(this, options ?: error("Missing options")) }.isFailure) {
+            finishWithError(NOT_ALLOWED_ERR, "Hybrid session expired"); return
+        }
         val intent = Intent()
         intent.putExtra(FIDO2_KEY_CREDENTIAL_EXTRA, publicKeyCredential.serializeToBytes())
         if (source == SOURCE_HYBRID && user != null) {

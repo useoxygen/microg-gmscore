@@ -39,10 +39,18 @@ import java.util.Random
 import java.io.RandomAccessFile
 import java.io.InputStream
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.ConcurrentHashMap
 import org.microg.gms.passwords.EnrollmentState
 import org.microg.gms.passwords.EnrollmentPhase
 import org.microg.gms.passwords.EnrollmentWire
+import org.microg.gms.passwords.DomainLifecycleState
+import org.microg.gms.passwords.DomainLifecycleKind
+import org.microg.gms.passwords.DomainLifecyclePhase
+import org.microg.gms.passwords.DomainLifecycleKey
+import org.microg.gms.passwords.DomainLifecycleWire
+import org.microg.gms.passwords.RecoverableVaultState
+import org.microg.gms.passwords.GpmPinRenewalState
+import org.microg.gms.passwords.RecoveryRestoreState
+import org.microg.gms.passwords.EnclavePinState
 
 private const val TAG = "LocalKeyManager"
 private const val STORE_DIR = "folsom"
@@ -173,6 +181,34 @@ class LocalKeyManager(private val context: Context) {
     private fun FolsomKeyStore.findAccount(obfuscatedId: String): AccountData? = accounts.find { it.key == obfuscatedId }?.value_
     private fun AccountData.findDomain(domainId: String): DomainData? = domains.find { it.key == domainId }?.value_
 
+    private fun pendingReset(domain: DomainData, domainId: String): Boolean {
+        val raw = domain.lifecycle?.toByteArray() ?: return false
+        return try {
+            val state = DomainLifecycleState.decode(raw)
+            try {
+                val attempt = state.attempt ?: return false
+                if (attempt.domain != domainId) true else attempt.kind == DomainLifecycleKind.RESET &&
+                    !attempt.authorityCleared && attempt.phase != DomainLifecyclePhase.REFUSED
+            } finally { state.destroy() }
+        } catch (_: Exception) { true } finally { raw.fill(0) }
+    }
+    /** Password-cache and direct recovery consumers both honor this durable destructive-operation fence. */
+    fun hasPendingDomainReset(accountName: String, domainId: String): Boolean {
+        require(FolsomDomainPolicy.valid(domainId))
+        val userId = stableAccountId(accountName)
+        val account = readStore().findAccount(obfuscateAccountName(accountName))
+        if (account == null) {
+            if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+            return false
+        }
+        if (account.googleUserId != null && account.googleUserId != userId) throw TinkEncryptionException("Recovery account changed")
+        val domain = account.findDomain(domainId)
+        if (domain?.googleUserId != null && domain.googleUserId != userId) throw TinkEncryptionException("Recovery account changed")
+        val result = domain?.let { pendingReset(it, domainId) } ?: false
+        if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
+        return result
+    }
+
     private fun <T> updateEntry(
         list: List<T>,
         keySelector: (T) -> String?,
@@ -243,6 +279,15 @@ class LocalKeyManager(private val context: Context) {
     fun getKeysForDomain(accountName: String, domainId: String, validateLegacyKeys: ((List<Keys>) -> Boolean)? = null): List<Keys> {
         return keySnapshot(accountName, domainId, validateLegacyKeys).keys
     }
+    internal fun recoveryGeneration(accountName: String, domainId: String, expectedUserId: String): Long =
+        keySnapshot(accountName, domainId, expectedUserId = expectedUserId).generation
+    internal fun recoveredDomainIds(accountName: String, expectedUserId: String, prefix: String): List<String> =
+        withRecoveryAuthority(accountName, expectedUserId) {
+            val result = FolsomRecoveredDomains.list(readStore().findAccount(obfuscateAccountName(accountName)),
+                expectedUserId, prefix, ::pendingReset)
+            if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+            result
+        }
     private fun keySnapshot(accountName: String, domainId: String, validateLegacyKeys: ((List<Keys>) -> Boolean)? = null,
         expectedUserId: String? = null): FolsomKeySnapshot {
         val obfuscatedId = obfuscateAccountName(accountName)
@@ -252,6 +297,7 @@ class LocalKeyManager(private val context: Context) {
         updateStore { store ->
             val account = store.findAccount(obfuscatedId) ?: return@updateStore store
             val domain = account.findDomain(domainId) ?: return@updateStore store
+            if (pendingReset(domain, domainId)) throw TinkEncryptionException("Recovery reset is pending")
             if (account.googleUserId != null && account.googleUserId != userId || domain.googleUserId != null && domain.googleUserId != userId)
                 throw TinkEncryptionException("Recovery keys belong to a removed account")
             val recovered = protection.read(domainId, domain.keys)
@@ -281,6 +327,7 @@ class LocalKeyManager(private val context: Context) {
             if (stableAccountId(accountName) != userId) throw TinkEncryptionException("Recovery account changed")
             val account = store.findAccount(obfuscatedId) ?: AccountData(googleUserId = userId)
             val domain = account.findDomain(domainId) ?: DomainData(googleUserId = userId)
+            if (pendingReset(domain, domainId)) throw TinkEncryptionException("Recovery reset is pending")
             if (account.googleUserId != null && account.googleUserId != userId || domain.googleUserId != null && domain.googleUserId != userId)
                 throw TinkEncryptionException("Recovery keys belong to a removed account")
             val current = FolsomStaleKeyPolicy.generation(domain)
@@ -303,6 +350,7 @@ class LocalKeyManager(private val context: Context) {
         updateStore { store ->
             val account = store.findAccount(obfuscatedId) ?: AccountData()
             val domain = account.findDomain(domainId) ?: DomainData()
+            if (pendingReset(domain, domainId)) throw TinkEncryptionException("Recovery reset is pending")
             val updatedDomain = domain.copy(
                 recoverabilityStatus = status.convertStatus(),
                 recoverabilityStatusTimestamp = addJitter(System.currentTimeMillis())
@@ -325,6 +373,7 @@ class LocalKeyManager(private val context: Context) {
         updateStore { store ->
             val account = store.findAccount(obfuscatedId) ?: return@updateStore store
             val domain = account.findDomain(domainId) ?: DomainData()
+            if (pendingReset(domain, domainId)) throw TinkEncryptionException("Recovery reset is pending")
             store.updateAccount(obfuscatedId, account.updateDomain(domainId, domain.copy(keys = emptyList())))
         }
     }
@@ -343,6 +392,7 @@ class LocalKeyManager(private val context: Context) {
         updateStore { store ->
             val account = store.findAccount(obfuscatedId)?.takeIf { it.googleUserId == null || it.googleUserId == userId } ?: AccountData(googleUserId = userId)
             val domain = account.findDomain(domainId) ?: DomainData()
+            if (pendingReset(domain, domainId)) throw TinkEncryptionException("Recovery reset is pending")
             if (expectedGeneration != null && (FolsomStaleKeyPolicy.generation(domain) != expectedGeneration || !FolsomStaleKeyPolicy.stale(expectedGeneration)))
                 throw TinkEncryptionException("Recovery refresh changed")
             store.updateAccount(
@@ -372,15 +422,10 @@ class LocalKeyManager(private val context: Context) {
     internal fun <T> withChromesyncEnrollment(accountName: String, expectedUserId: String,
         action: (ChromesyncEnrollmentSession) -> T): T {
         val lockName = obfuscateAccountName(expectedUserId)
-        val mutex = enrollmentLocks.getOrPut(lockName) { Any() }
-        return synchronized(mutex) {
-            RandomAccessFile(File(context.noBackupFilesDir, "folsom-enroll-$lockName.lock"), "rw").use { lock ->
-                lock.channel.lock().use {
-                    if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")
-                    val session = ChromesyncEnrollmentSession(accountName, expectedUserId)
-                    try { action(session) } finally { session.destroy() }
-                }
-            }
+        return FolsomAccountLock.withLock(context.noBackupFilesDir, lockName) {
+            if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+            val session = ChromesyncEnrollmentSession(accountName, expectedUserId)
+            try { action(session) } finally { session.destroy() }
         }
     }
 
@@ -423,7 +468,7 @@ class LocalKeyManager(private val context: Context) {
             try {
                 updateStore { store ->
                     verify()
-                    val account = checked(store.findAccount(obfuscatedId))
+                    val account = FolsomAccountProtection.bind(checked(store.findAccount(obfuscatedId)), expectedUserId)
                     val previousRaw = account.chromesyncEnrollment?.toByteArray() ?: byteArrayOf()
                     val previous = try { EnrollmentState.decode(previousRaw) } finally { previousRaw.fill(0) }
                     try {
@@ -454,6 +499,334 @@ class LocalKeyManager(private val context: Context) {
                 }
                 verify()
             } finally { encoded.fill(0) }
+        }
+    }
+
+    internal fun <T> withDomainLifecycle(accountName: String, expectedUserId: String, domainId: String,
+        action: (DomainLifecycleSession) -> T): T {
+        DomainLifecycleWire.checkedDomain(domainId)
+        return withChromesyncEnrollment(accountName, expectedUserId) {
+            val session = DomainLifecycleSession(accountName, expectedUserId, domainId)
+            try { action(session) } finally { session.destroy() }
+        }
+    }
+
+    /** Acquire before repository/passkey locks so reset cannot race a credential signature or creation. */
+    internal fun <T> withRecoveryAuthority(accountName: String, expectedUserId: String, action: () -> T): T =
+        withChromesyncEnrollment(accountName, expectedUserId) { action() }
+
+    /** Shared account lock and protected opaque journal for the OS recoverable-keystore consumer. */
+    internal fun <T> withRecoverableVault(accountName: String, accountId: String,
+        action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
+        withRecoveryJournal(accountName, accountId, RecoveryJournal.RECOVERABLE_VAULT, action)
+
+    internal fun <T> withGpmPinRenewal(accountName: String, accountId: String,
+        action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
+        withRecoveryJournal(accountName, accountId, RecoveryJournal.GPM_PIN_RENEWAL, action)
+
+    internal fun <T> withRecoveryRestore(accountName: String, accountId: String,
+        action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
+        withRecoveryJournal(accountName, accountId, RecoveryJournal.RESTORE, action)
+
+    internal fun <T> withEnclavePin(accountName: String, accountId: String,
+        action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
+        withRecoveryJournal(accountName, accountId, RecoveryJournal.ENCLAVE_PIN, action)
+
+    internal fun <T> withFolsomConsent(accountName: String, accountId: String,
+        action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
+        withRecoveryJournal(accountName, accountId, RecoveryJournal.CONSENT, action)
+
+    /** This snapshot contains consent values only, never the account's recovery keys or private pairs. */
+    internal fun consentSnapshot(accountName: String, accountId: String): AccountData = withRecoveryAuthority(accountName, accountId) {
+        consentSnapshotUnderRecoveryLock(accountName, accountId)
+    }
+    /** Caller already holds this account's recovery OS lock. Never acquire that lock recursively. */
+    internal fun consentSnapshotUnderRecoveryLock(accountName: String, accountId: String): AccountData {
+        if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed")
+        val account = readStore().findAccount(obfuscateAccountName(accountName))
+        if (account?.googleUserId != null && account.googleUserId != accountId) throw TinkEncryptionException("Recovery account changed")
+        return AccountData(googleUserId = accountId, domains = account?.domains.orEmpty().mapNotNull { entry ->
+            val id = entry.key ?: return@mapNotNull null
+            val domain = entry.value_ ?: return@mapNotNull null
+            if (!FolsomAccountProtection.canRead(account?.googleUserId, domain.googleUserId, accountId, false)) return@mapNotNull null
+            AccountData.DomainsEntry(key = id, value_ = DomainData(googleUserId = accountId, consent = domain.consent))
+        }).also { if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed") }
+    }
+    internal fun consentJournalUnderRecoveryLock(accountName: String, accountId: String): ByteArray {
+        if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed")
+        val account = readStore().findAccount(obfuscateAccountName(accountName))
+        if (account?.googleUserId != accountId) throw TinkEncryptionException("Recovery account changed")
+        return account.consentJournal?.toByteArray() ?: byteArrayOf()
+    }
+
+    /** CAS the orchestration receipt and selected explicit consent in the same protected root-store update. */
+    internal fun compareFolsomConsent(accountName: String, accountId: String, before: FolsomConsentState, after: FolsomConsentState,
+        domain: String? = null, value: Boolean? = null, authorize: () -> Unit) = withRecoveryAuthority(accountName, accountId) {
+        fun verify() { authorize(); if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed") }
+        val expected = before.encode(); val replacement = after.encode()
+        try { verify(); updateStore { store ->
+            verify()
+            val obfuscatedId = obfuscateAccountName(accountName)
+            val existing = store.findAccount(obfuscatedId) ?: AccountData(googleUserId = accountId)
+            if (existing.googleUserId != null && existing.googleUserId != accountId) throw TinkEncryptionException("Recovery account changed")
+            for (id in FolsomConsentPolicy.coupled) existing.findDomain(id)?.let {
+                if (pendingReset(it, id)) throw TinkEncryptionException("Recovery reset pending")
+            }
+            val raw = existing.consentJournal?.toByteArray() ?: byteArrayOf()
+            val current = try { FolsomConsentState.decode(raw) } finally { raw.fill(0) }
+            try {
+                val encoded = current.encode()
+                try { if (!MessageDigest.isEqual(encoded, expected)) throw TinkEncryptionException("Recovery consent changed") }
+                finally { encoded.fill(0) }
+            } finally { current.destroy() }
+            var bound = FolsomAccountProtection.bind(existing, accountId).copy(consentJournal = replacement.toByteString())
+            if (domain != null && value != null) bound = FolsomConsentPolicy.store(bound, accountId, domain, value)
+            verify(); store.updateAccount(obfuscatedId, bound)
+        }; verify() } finally { expected.fill(0); replacement.fill(0) }
+    }
+
+    private enum class RecoveryJournal { RECOVERABLE_VAULT, GPM_PIN_RENEWAL, RESTORE, ENCLAVE_PIN, CONSENT }
+
+    /** The caller holds withRecoveryRestore across authenticated restore/readback and this atomic commit. */
+    internal fun commitRecoveryRestore(accountName: String, accountId: String, domainId: String,
+        expectedJournal: ByteArray, replacementJournal: ByteArray, expectedKeys: List<Keys>, recoveredKeys: List<Keys>,
+        authorize: () -> Unit) = commitRecoveryRestoreDomains(accountName, accountId, expectedJournal, replacementJournal,
+            mapOf(domainId to expectedKeys), mapOf(domainId to recoveredKeys), authorize)
+
+    /** One OS recovery session may restore both domains. Publish their keys and the receipt together. */
+    internal fun commitRecoveryRestoreDomains(accountName: String, accountId: String,
+        expectedJournal: ByteArray, replacementJournal: ByteArray,
+        expectedKeys: Map<String, List<Keys>>, recoveredKeys: Map<String, List<Keys>>, authorize: () -> Unit) {
+        if (expectedKeys.isEmpty() || expectedKeys.keys != recoveredKeys.keys || expectedKeys.size > 2)
+            throw TinkEncryptionException("Recovery domains unavailable")
+        expectedKeys.keys.forEach(DomainLifecycleWire::checkedDomain)
+        require(expectedJournal.size <= FolsomStoreEnvelope.MAX_BYTES && replacementJournal.size <= FolsomStoreEnvelope.MAX_BYTES)
+        fun verify() {
+            // This owner-only callback must not acquire recovery/repository locks. Domain
+            // reset and key/journal comparisons are checked directly under this store lock.
+            authorize()
+            if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed")
+        }
+        fun checkedKeys(keys: List<Keys>, allowEmpty: Boolean): Map<Int, ByteString> {
+            if (keys.size > MAX_KEYS_PER_DOMAIN || !allowEmpty && keys.isEmpty() ||
+                keys.any { (it.keyVersion ?: 0) <= 0 || it.keyMaterial?.size?.let { size -> size in 16..4096 } != true } ||
+                keys.map { it.keyVersion }.toSet().size != keys.size) throw TinkEncryptionException("Recovery key versions unavailable")
+            return keys.associate { it.keyVersion!! to it.keyMaterial!! }
+        }
+        val expected = expectedKeys.mapValues { checkedKeys(it.value, true) }
+        val replacement = recoveredKeys.mapValues { checkedKeys(it.value, false) }
+        fun same(first: ByteString, second: ByteString): Boolean {
+            val a = first.toByteArray(); val b = second.toByteArray()
+            return try { MessageDigest.isEqual(a, b) } finally { a.fill(0); b.fill(0) }
+        }
+        if (expected.any { (domain, keys) -> keys.any { (epoch, material) ->
+            replacement[domain]?.get(epoch)?.let { same(it, material) } != true } })
+            throw TinkEncryptionException("Recovery would discard existing keys")
+        verify()
+        updateStore { store ->
+            verify()
+            val obfuscatedId = obfuscateAccountName(accountName)
+            val account = store.findAccount(obfuscatedId) ?: throw TinkEncryptionException("Recovery journal unavailable")
+            if (account.googleUserId != accountId) throw TinkEncryptionException("Recovery account changed")
+            for (id in listOf("chromesync", "hw_protected")) account.findDomain(id)?.let {
+                if (pendingReset(it, id)) throw TinkEncryptionException("Recovery reset is pending")
+            }
+            val journal = account.recoveryRestore?.toByteArray() ?: byteArrayOf()
+            try { if (!MessageDigest.isEqual(journal, expectedJournal)) throw TinkEncryptionException("Recovery journal changed") }
+            finally { journal.fill(0) }
+            var updatedAccount = account.copy(recoveryRestore = replacementJournal.toByteString())
+            for ((domainId, expectedDomain) in expected) {
+                val domain = account.findDomain(domainId) ?: DomainData(googleUserId = accountId)
+                if (domain.googleUserId != null && domain.googleUserId != accountId) throw TinkEncryptionException("Recovery account changed")
+                val currentRecords = protection.read(domainId, domain.keys).keys
+                val current = checkedKeys(currentRecords, true)
+                if (current.keys != expectedDomain.keys || current.any { (epoch, material) ->
+                    expectedDomain[epoch]?.let { same(it, material) } != true }) throw TinkEncryptionException("Recovery keys changed")
+                val retained = recoveredKeys.getValue(domainId).map { key -> currentRecords.singleOrNull { it.keyVersion == key.keyVersion }
+                    ?.copy(keyMaterial = key.keyMaterial) ?: key }
+                val updated = FolsomStaleKeyPolicy.fresh(domain).copy(keys = protection.protect(domainId, retained),
+                    googleUserId = accountId, recoverabilityStatus = StoredStatus.RECOVERABLE,
+                    lastFetchTimestamp = System.currentTimeMillis(), lastModifiedTimestamp = System.currentTimeMillis())
+                updatedAccount = updatedAccount.updateDomain(domainId, updated)
+            }
+            verify()
+            store.updateAccount(obfuscatedId, updatedAccount)
+        }
+        verify()
+    }
+
+    private fun <T> withRecoveryJournal(accountName: String, accountId: String, journal: RecoveryJournal,
+        action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
+        withChromesyncEnrollment(accountName, accountId) {
+            val obfuscatedId = obfuscateAccountName(accountName)
+            fun verify() {
+                if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed")
+            }
+            fun checked(account: AccountData?): AccountData {
+                if (account?.googleUserId != null && account.googleUserId != accountId ||
+                    account?.googleUserId == null && !account?.accountKeyPairs.isNullOrEmpty())
+                    throw TinkEncryptionException("Recovery key provenance unavailable")
+                return account ?: AccountData(googleUserId = accountId)
+            }
+            val opened = ArrayList<ByteArray>()
+            val load = {
+                verify()
+                val account = checked(readStore().findAccount(obfuscatedId))
+                val stored = when (journal) {
+                    RecoveryJournal.RECOVERABLE_VAULT -> account.recoverableVault
+                    RecoveryJournal.GPM_PIN_RENEWAL -> account.gpmPinRenewal
+                    RecoveryJournal.RESTORE -> account.recoveryRestore
+                    RecoveryJournal.ENCLAVE_PIN -> account.enclavePin
+                    RecoveryJournal.CONSENT -> account.consentJournal
+                }
+                (stored?.toByteArray() ?: byteArrayOf()).also { opened.add(it); verify() }
+            }
+            val save: (ByteArray) -> Unit = { bytes ->
+                require(bytes.size <= FolsomStoreEnvelope.MAX_BYTES)
+                verify()
+                updateStore { store ->
+                    verify()
+                    val account = FolsomAccountProtection.bind(checked(store.findAccount(obfuscatedId)), accountId)
+                    val replacement = when (journal) {
+                        RecoveryJournal.RECOVERABLE_VAULT -> account.copy(recoverableVault = bytes.toByteString())
+                        RecoveryJournal.GPM_PIN_RENEWAL -> account.copy(gpmPinRenewal = bytes.toByteString())
+                        RecoveryJournal.RESTORE -> account.copy(recoveryRestore = bytes.toByteString())
+                        RecoveryJournal.ENCLAVE_PIN -> account.copy(enclavePin = bytes.toByteString())
+                        RecoveryJournal.CONSENT -> account.copy(consentJournal = bytes.toByteString())
+                    }
+                    store.updateAccount(obfuscatedId, replacement).also { verify() }
+                }
+                verify()
+            }
+            try { action(load, save) } finally { opened.forEach { it.fill(0) } }
+        }
+    internal inner class DomainLifecycleSession(private val accountName: String, private val expectedUserId: String,
+        private val domainId: String) {
+        private val obfuscatedId = obfuscateAccountName(accountName)
+        private val opened = ArrayList<DomainLifecycleState>()
+        private val pairs = ArrayList<ByteArray>()
+        internal fun destroy() { opened.forEach { it.destroy() }; pairs.forEach { it.fill(0) } }
+        private fun verify() {
+            if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+        }
+        private fun checked(account: AccountData?): AccountData {
+            if (account?.googleUserId != null && account.googleUserId != expectedUserId ||
+                account?.googleUserId == null && !account?.accountKeyPairs.isNullOrEmpty())
+                throw TinkEncryptionException("Recovery key provenance unavailable")
+            return account ?: AccountData(googleUserId = expectedUserId)
+        }
+        fun load(): DomainLifecycleState {
+            verify()
+            val account = checked(readStore().findAccount(obfuscatedId))
+            val domain = account.findDomain(domainId)
+            if (domain?.googleUserId != null && domain.googleUserId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+            val raw = domain?.lifecycle?.toByteArray() ?: byteArrayOf()
+            return try { DomainLifecycleState.decode(raw).also { opened.add(it); verify() } } finally { raw.fill(0) }
+        }
+        fun existingPair(): ByteArray? {
+            verify()
+            val account = checked(readStore().findAccount(obfuscatedId))
+            val existing = account.accountKeyPairs.filter { it.keyPairType == pairType() }
+            if (existing.size > 1) throw TinkEncryptionException("Ambiguous recovery key")
+            return existing.singleOrNull()?.let { key ->
+                val private = key.privateKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                val public = key.publicKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                try { buildKeyPairBytes(private, public).also { EnrollmentWire.checkPair(it); pairs.add(it); verify() } }
+                finally { private.fill(0); public.fill(0) }
+            }
+        }
+        private fun pairType() = if (domainId == "hw_protected") 3 else 1
+        fun save(state: DomainLifecycleState) {
+            verify(); opened.add(state)
+            val attempt = state.attempt
+            if (attempt != null && (attempt.accountId != expectedUserId || attempt.domain != domainId)) throw TinkEncryptionException("Recovery account changed")
+            state.pair?.let(EnrollmentWire::checkPair)
+            val encoded = state.encode()
+            try { updateStore { store ->
+                verify()
+                var account = FolsomAccountProtection.bind(checked(store.findAccount(obfuscatedId)), expectedUserId)
+                var domain = account.findDomain(domainId) ?: DomainData(googleUserId = expectedUserId)
+                if (domain.googleUserId != null && domain.googleUserId != expectedUserId) throw TinkEncryptionException("Recovery account changed")
+                val previousRaw = domain.lifecycle?.toByteArray() ?: byteArrayOf()
+                val previous = try { DomainLifecycleState.decode(previousRaw) } finally { previousRaw.fill(0) }
+                try {
+                    if (previous.pair != null && (state.pair == null || !MessageDigest.isEqual(previous.pair, state.pair)))
+                        throw TinkEncryptionException("Recovery key changed")
+                    if (attempt?.phase == DomainLifecyclePhase.COMMITTED) {
+                        if (attempt.kind == DomainLifecycleKind.RESET) {
+                            // Only confirmed server absence clears local recovery authority. The journal fence remains.
+                            domain = FolsomStaleKeyPolicy.reset(domain, expectedUserId)
+                            if (domainId == "chromesync") account.chromesyncEnrollment?.let { stored ->
+                                val raw = stored.toByteArray()
+                                val redacted = try { FolsomAccountProtection.redactEnrollment(raw) } finally { raw.fill(0) }
+                                try { account = account.copy(chromesyncEnrollment = redacted.toByteString()) }
+                                finally { redacted.fill(0) }
+                            }
+                            account.recoverableVault?.let { stored ->
+                                val raw = stored.toByteArray()
+                                val redacted = try { RecoverableVaultState.clearDomain(raw, domainId) } finally { raw.fill(0) }
+                                try { account = account.copy(recoverableVault = redacted.toByteString()) }
+                                finally { redacted.fill(0) }
+                            }
+                            if (domainId == "hw_protected") account.gpmPinRenewal?.let { stored ->
+                                val raw = stored.toByteArray()
+                                val redacted = try { GpmPinRenewalState.clearDomain(raw, domainId) } finally { raw.fill(0) }
+                                try { account = account.copy(gpmPinRenewal = redacted.toByteString()) }
+                                finally { redacted.fill(0) }
+                            }
+                            account.recoveryRestore?.let { stored ->
+                                val raw = stored.toByteArray()
+                                val redacted = try { RecoveryRestoreState.clearDomain(raw, domainId) } finally { raw.fill(0) }
+                                try { account = account.copy(recoveryRestore = redacted.toByteString()) }
+                                finally { redacted.fill(0) }
+                            }
+                            if (domainId == "hw_protected") account.enclavePin?.let { stored ->
+                                val raw = stored.toByteArray()
+                                val redacted = try { EnclavePinState.clearDomain(raw, domainId) } finally { raw.fill(0) }
+                                try { account = account.copy(enclavePin = redacted.toByteString()) }
+                                finally { redacted.fill(0) }
+                            }
+                            account.consentJournal?.let { stored ->
+                                val raw = stored.toByteArray()
+                                val redacted = try { FolsomConsentState.clearDomain(raw, domainId) } finally { raw.fill(0) }
+                                try { account = account.copy(consentJournal = redacted.toByteString()) }
+                                finally { redacted.fill(0) }
+                            }
+                        } else if (attempt.kind != DomainLifecycleKind.ADD_MEMBER) {
+                            val pair = state.pair ?: throw TinkEncryptionException("Recovery key unavailable")
+                            val oldPairs = account.accountKeyPairs.filter { it.keyPairType == pairType() }
+                            if (oldPairs.size > 1) throw TinkEncryptionException("Ambiguous recovery key")
+                            oldPairs.singleOrNull()?.let { old ->
+                                val private = old.privateKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                                val public = old.publicKey?.toByteArray() ?: throw TinkEncryptionException("Recovery key unavailable")
+                                val known = try { buildKeyPairBytes(private, public) } finally { private.fill(0); public.fill(0) }
+                                try { if (!MessageDigest.isEqual(known, pair)) throw TinkEncryptionException("Recovery key changed") }
+                                finally { known.fill(0) }
+                            }
+                            if (oldPairs.isEmpty()) account = account.copy(accountKeyPairs = account.accountKeyPairs + KeyPair(
+                                publicKey = EnrollmentWire.publicKey(pair).toByteString(), privateKey = pair.toByteString(), keyPairType = pairType()))
+                            val material = attempt.knownKeys.map(DomainLifecycleKey::decode).toMutableList()
+                            try {
+                                attempt.proposedKey?.let { bytes ->
+                                    DomainLifecycleKey.decode(bytes).use { material.add(it.atEpoch(attempt.resultEpoch)) }
+                                }
+                                if (material.isEmpty() || material.size > MAX_KEYS_PER_DOMAIN || material.any { it.epoch <= 0 } ||
+                                    material.map { it.epoch }.toSet().size != material.size) throw TinkEncryptionException("Recovery key versions unavailable")
+                                val keys = material.sortedBy { it.epoch }.map { key ->
+                                    val raw = key.material
+                                    try { Keys(keyVersion = key.epoch, keyMaterial = raw.toByteString()) } finally { raw.fill(0) }
+                                }
+                                domain = FolsomStaleKeyPolicy.fresh(domain).copy(keys = protection.protect(domainId, keys),
+                                    googleUserId = expectedUserId, recoverabilityStatus = StoredStatus.RECOVERABLE,
+                                    lastFetchTimestamp = System.currentTimeMillis())
+                            } finally { material.forEach { it.close() } }
+                        }
+                    }
+                    verify()
+                    store.updateAccount(obfuscatedId, account.copy(googleUserId = expectedUserId).updateDomain(domainId,
+                        domain.copy(lifecycle = encoded.toByteString(), googleUserId = expectedUserId)))
+                } finally { previous.destroy() }
+            }; verify() } finally { encoded.fill(0) }
         }
     }
 
@@ -566,7 +939,6 @@ class LocalKeyManager(private val context: Context) {
         } ?: emptyList()
 
     companion object {
-        private val enrollmentLocks = ConcurrentHashMap<String, Any>()
         @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: LocalKeyManager? = null

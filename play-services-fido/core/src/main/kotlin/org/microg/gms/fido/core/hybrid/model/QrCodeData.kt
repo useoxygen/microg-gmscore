@@ -43,9 +43,7 @@ data class QrCodeData(
                 return null
             }
             val encoded = data.substring(PREFIX_FIDO.length)
-            Log.d(TAG, "encoded: $encoded")
             val qrCodeDataByte = resolveQrCodeData(encoded)
-            Log.d(TAG, "qrCodeDataByte: $qrCodeDataByte")
             return qrCodeDataByte?.let {
                 if (it.isEmpty()) return null
                 val cbor = runCatching { CBORObject.DecodeFromBytes(it) }.getOrNull()
@@ -180,7 +178,7 @@ data class QrCodeData(
                 val keyFactory = KeyFactory.getInstance(EC_ALGORITHM)
                 return keyFactory.generatePublic(keySpec) as ECPublicKey
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to decompress EC public key", e)
+                Log.e(TAG, "Failed to decompress EC public key")
                 return null
             }
         }
@@ -251,7 +249,7 @@ data class QrCodeData(
 
                 return result
             } catch (e: Exception) {
-                Log.e(TAG, "Base17 decoding failed", e)
+                Log.e(TAG, "Base17 decoding failed")
                 return null
             }
         }

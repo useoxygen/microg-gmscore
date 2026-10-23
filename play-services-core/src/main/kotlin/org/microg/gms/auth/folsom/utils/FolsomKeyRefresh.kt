@@ -19,6 +19,9 @@ internal object FolsomStaleKeyPolicy {
         val before = generation(domain)
         return domain.copy(keyRefreshGeneration = advance(before, if (stale(before)) 1 else 2))
     }
+    /** Reset erases keys and metadata, but its generation must never permit an old refresh token to recur. */
+    fun reset(domain: DomainData, userId: String): DomainData =
+        DomainData(googleUserId = userId, keyRefreshGeneration = generation(fresh(domain)))
     fun usable(keys: List<Keys>): Boolean = keys.isNotEmpty() && keys.all {
         (it.keyVersion ?: 0) > 0 && (it.keyMaterial?.size ?: 0) in 1..4096
     }

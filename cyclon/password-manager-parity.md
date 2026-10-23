@@ -18,10 +18,17 @@ below remains tied to its original source and fixture; it does not accept this e
 implementation. At source `36246827`, the consolidated batch passed **294 password-sync
 and 108 Core host tests**, with zero failures, errors or skips, and compiled both product
 and instrumentation APKs. Historical counts below describe their recorded older snapshots.
-Explicit-owner existing-`chromesync` physical-member enrollment is implemented and host-tested
-(CYC-687). New-domain/`hw_protected` membership, type3 hardware enrollment,
-LSKF/GPM-PIN, full trusted-vault rotation/reset, advanced passkey options and the listed
-provider, family and cross-device acceptance gates remain open.
+That result precedes the expanded batch now being gathered. Source-verified domain
+create/enroll/rotate/reset, caller-bound owner resolutions, reset authority cleanup,
+passkey blob creation/write, durable missing-secret PRF migration and delegated Chrome
+payment discovery/assertion are implemented and awaiting the consolidated host run.
+Genuine platform LSKF snapshot upload, existing GPM PIN renewal, and native
+PIN/password/pattern backup restore are implemented. New/change PIN enclave commands, genuine Google account reauthentication, native GPM PIN
+restore, direct SDK recovery, coupled consent and authenticated hybrid account PRF are now
+connected, including SDK consent-prompt tickets that prepare an owner-reviewed attempt
+without granting consent or starting a backup. Final integration review and the gathered
+host batch remain pending. Source-faithful PSL matching is also connected.
+No new host, provider, family or cross-device acceptance is implied by the older result.
 
 The compiled product APK SHA-256 is
 `8800ea4542f0b25b47eb6064906186594b2a8da13e7bd4b6778208978cb08b57`;
@@ -236,7 +243,10 @@ The implementation now connects bounded hash-prefix lookup to an account-encrypt
 expiring cache and scheduled refresh with durable retry fences. Production lookup requires
 a dedicated configured affiliation API key; an empty key performs no Google lookup. The
 client uses fixed HTTPS endpoints, excludes OAuth/cookies/unrelated keys and rejects
-redirects. Branding and change-password links remain metadata. PSL does not authorize a fill.
+redirects. Branding and change-password links remain metadata. A separate source-faithful
+HTML matcher uses the embedded private PSL, wildcard/exception rules, exact scheme/effective
+port and the accounts/myaccount Google exception; blocked, non-HTML, federated and
+inconsistent-origin records remain excluded. Chrome sharing flags do not acquire PSL authority.
 
 A separate direct-Digital-Asset-Links path requires reciprocal application declaration
 and HTTPS origin proof for the current installed signer. It checks the app declaration
@@ -247,8 +257,9 @@ branding wrappers. Unknown schemes grant no fill authority.
 
 Host vectors and policy tests cover canonical facets, credential-sharing versus grouping,
 expired/retried cache, proof boundaries and wrappers. An earlier unauthenticated lookup
-returned403. Configured production admission, native/official-client behavior and remaining
-PSL matching are still open; no host result establishes provider acceptance.
+returned403. Private-PSL matching, stepwise extensions and transitive display groups are
+implemented for the gathered host batch. Configured production admission and native/official
+client acceptance remain open; host checks do not establish provider acceptance.
 
 ## Password management and notes comparison
 
@@ -360,29 +371,81 @@ The journal lives inside the existing encrypted Folsom account store and is remo
 existing account cleanup. The connected UI compiles and all 18 enrollment regressions
 passed in the consolidated `36246827` host run; provider, device and cross-device acceptance remain pending.
 
-This consumer does not create a new domain, enroll `hw_protected`, claim type3
-hardware protection, enroll LSKF/GPM-PIN or sharing keys, or implement the full trusted-vault
-enable/rotate/clear/reset flow. No recovery or enrollment is triggered by the getter.
+The expanded CYC-687 implementation now adds new-domain creation and explicit existing
+member enrollment, rotation and reset in both supported domains. Complete member snapshots,
+exact previous/current epoch checks and real SecureBox membership proofs precede confirmation.
+A reset fence survives uncertain dispatch and cache clearing; confirmed reset clears recovered
+keys and affected enrollment/recovery journals before the fence can be acknowledged.
+Owner Binder resolutions bind the actual caller UID/current signer, stable account and domain,
+expire after two minutes and cannot turn a launched unknown operation into an automatic replay.
+No recovery or enrollment is triggered by a key getter.
+
+Platform LSKF backup uses the actual privileged Android RecoveryController, its signed
+certificate trust and real OS snapshot. It wraps the full 97-byte member pair and uploads the
+exact account vault before joining and verifying each separate recovery member. Native restore
+lists real backups, accepts the old device's PIN/password/pattern privately, derives the pinned
+hash and starts an actual OS ephemeral recovery session. One owner-confirmed guess produces one
+OpenVault request. The recovered AES key must authenticate the selected member pair; current
+member and rotation proofs then validate recovered domain keys. Password recovery additionally
+verifies current Nigori and the pinned birthday. Account key/journal confirmation uses an atomic
+compare-and-set. Unknown guesses never replay automatically; a restart can finish locally only
+when the validated private pair was durably saved before interruption.
+
+Existing GPM PIN renewal consumes the real type5 PIN metadata, authenticates trusted recovery
+certificates using the OS trust source, and performs exact vault upload and SDS replacement
+with fresh readback. New/change PIN uses an actual Android Keystore identity, honest hardware/software key
+classification, pinned Noise NK and the complete AMD/DICE/leaf/handshake attestation chain.
+A private owner Google PIN-reset reauthentication flow validates a real main-frame200/204
+response; the RAPT remains local to the fresh operation. Actual enclave wrapping, vault
+upload and current member readback precede confirmation. Native GPM PIN recovery uses
+the source UTF8/six-digit forms. Direct SDK generate-only source4 never opens the vault;
+source3 restoration imports all returned supported domains through one OS session and
+atomically commits their keys and receipt. SDK recovery uses the trusted source caller and
+does not require enabling the separate Services password vault. Coupled account/domain
+consent uses genuine lower LSKF setup, exact source leave/update effects and selected-domain
+persistence; getSyncStatus returns the source seven integer states. Protected owner resolution
+keeps finite mutation receipts and requires explicit review before another attempt. The five descriptor-only Passwords lifecycle methods have no verified producer or
+request/response schema in this pinned APK and its examined official modules. Their contracts
+remain open; see [the contract audit](passwords-rpc-contract-gaps.md). Generic Chrome Nigori
+transition cryptography does not establish those RPC envelopes. Creating an SDS domain alone
+does not convert an existing Nigori password vault. This new runtime and its fixtures await the gathered host run and genuine
+provider/device acceptance.
+
+The family-sharing source comparison found no separate client sharing-key enrollment RPC:
+Google reads committed cross-user keys from Nigori and creates absent password metadata with
+CreateMetadata(users/me). The implementation follows that path and refuses a missing committed
+keybag; the earlier standalone sharing-key enrollment gap was unsupported by the reference.
 
 ## Bounded passkey extensions
 
-Native Credential Manager and legacy GMS FIDO create/get now connect real PRF evaluation
-to authenticated existing Encrypted field2 secrets. Inputs use the WebAuthn PRF
-domain-separated hash and exact credential-ID selection. The typed SafeParcel result uses
-field 1 `enabled` and field 2 concatenated first/optional-second 32-byte results; native JSON
-uses nested `prf.results` values. Field9/missing-secret records remain unsupported for PRF,
-without automatic migration or a substitute secret. Hybrid PRF is unadvertised.
+Native Credential Manager and legacy GMS FIDO create/get connect PRF evaluation to the
+selected authenticated credential. Inputs use the WebAuthn domain-separated hash and exact
+credential-ID selection. Typed SafeParcel results use field1 enabled and field2 concatenated
+first/optional-second32-byte results; native JSON uses nested prf.results. Missing-secret
+migration derives the source HKDF secret from actual private-key PKCS8 material and durably
+commits authenticated ciphertext before returning output. Authenticated hybrid account PRF is connected to the same real account vault. It consumes
+the source already-hashed inputs and returns unsigned CTAP make/get extension results. A
+one-use process-local lease binds the authenticated Noise transcript, original CTAP digest,
+complete translated options, RP and client-data hash through the private owner flow. Socket
+loss and authenticated caBLE Shutdown revoke authority while owner UI is pending; no selected
+account request falls back to the local FIDO database.
 
-Native Credential Manager get also reads existing `credBlob` and `largeBlob` data inside
-the authenticated `withSecret` scope. `getCredBlob:true` supplies field3 bytes to signed
-CBOR before ECDSA and to the native JSON output; an absent credBlob returns empty bytes.
-`largeBlob:{read:true}` uses field4 raw DEFLATE and requires explicit original size field5
-of at most 2 KiB, with bounded compressed input and complete-stream/no-trailing/expansion
-checks. Invalid/absent large blobs omit the blob result, while valid data is returned as
-`largeBlob.blob`. Temporary secret/output buffers are cleared. These flows do not advertise
-blob creation, writes, capacity/support or legacy blob handling. The 11 PRF and 17 blob
-regressions passed in the consolidated `36246827` host run, including independent vectors,
-native adapter/signed-CBOR delivery and valid compressed framing larger than 2 KiB.
+Native Credential Manager reads signed credBlob and raw-DEFLATE largeBlob data inside the
+owner/caller/RP/account/birthday-authorized secret scope. Creation supports the bounded32-byte
+credBlob and actual Boolean CBOR result. Large blob support and writes accept at most2048
+uncompressed bytes and preserve immutable identity/device/payment/opaque record fields. The
+original request digest and SECRET_UPDATE journal fence signing until authenticated server
+readback confirms the exact mutation. PRF migration and blob writes share one update when both
+are requested. Unknown writes retain provenance and cannot use generic retry without the
+original request. These new paths await the gathered host run.
+
+Chrome-delegated payment discovery and assertions require its exact installed release signer,
+Binder UID/package, real synced thirdPartyPaymentsSupport flag and a nonempty allow list for
+cross-RP selection. The privileged browser supplies the payment client-data hash and owns the
+transaction UI. Native CM SPC remains unsupported consistently with the reference routing.
+The pinned legacy AuthenticationExtensions ABI ends at fields2..14 and supplies no proven
+blob fields; arbitrary legacy fields are not invented. The pinned GMS producer is ES256/P256,
+so non-ES256 is not recorded as a source-proven missing reference capability.
 
 ## Remaining parity and acceptance
 
@@ -489,13 +552,13 @@ No password or preference cloud writes ran in that historical review round.
 | --- | --- |
 | Device registration and push | Native/server registration, heartbeat, token-backed CRUD and follow-up workers passed. Actual native Google push, durable hint acknowledgement and background readback passed on 4bf07f7e after normal messaging startup on enable. Token invalidation, network-reconnect, reboot/lifetime and official-producer acceptance remain open. |
 | Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native list/cache reopening passed; preference writes, official-client callbacks, management controls and provider behavior still need verification. |
-| Affiliations | Dedicated-key lookup, encrypted cache/refresh, direct reciprocal DAL, common fill matching and branding wrappers are connected. Production admission, official/native acceptance and PSL-based matching remain CYC-673. |
-| Legacy credentials | Get/save/delete use caller-bound encrypted one-use owner flows. Legacy GMS FIDO create/get use the real account-synced vault with exact caller/signer/origin, Gaia/birthday and owner gates, including existing-secret PRF and its typed result ABI. Local/hybrid paths remain separate; hybrid PRF and legacy blobs are unadvertised. Other unsupported advanced options and provider/device acceptance remain CYC-688/CYC-689. |
-| Encryption recovery | Exact-account/domain recovery, encrypted Folsom migration, caller admission, stale obligations, source-shaped member-key decoding and schema6 verified key-epoch retention are implemented. Explicit-owner existing-`chromesync` physical type1 enrollment is connected, with protected stable pair/request, durable launch and full proof readback; host validation is pending. New-domain/`hw_protected`/type3 membership, LSKF/GPM-PIN/sharing-key enrollment and full trusted-vault enable/rotate/clear/reset remain CYC-687; provider/device/cross-device acceptance remains open, including CYC-691. |
+| Affiliations | Dedicated-key lookup, encrypted cache/refresh, direct reciprocal DAL, common fill matching and branding wrappers are connected. Private-PSL matching and source-correct Chrome grouped-only flags are implemented awaiting host validation. Production admission and official/native acceptance remain CYC-673. |
+| Legacy credentials | Get/save/delete use caller-bound encrypted one-use owner flows. Legacy GMS FIDO create/get use the real account-synced vault with exact caller/signer/origin, Gaia/birthday and owner gates, including existing-secret PRF and its typed result ABI. Authenticated hybrid requests now reach the real account vault with live transcript/request leases and PRF; the local database remains separate. Legacy blobs have no proven typed ABI. Other unsupported advanced options and provider/device acceptance remain CYC-688/CYC-689. |
+| Encryption recovery | Exact-account/domain recovery, encrypted Folsom migration, caller admission, stale obligations, source-shaped member-key decoding and schema6 verified key-epoch retention are implemented. Explicit-owner existing-`chromesync` physical type1 enrollment is connected, with protected stable pair/request, durable launch and full proof readback; host validation is pending. Domain create/enroll/rotate/reset, real platform LSKF backup/restore and existing GPM PIN renewal are implemented awaiting gathered host validation. New/change PIN enclave, native GPM PIN recovery and direct SDK bulk/generate/list consumers are implemented pending validation; coupled consent/getSyncStatus and protected owner resolution are implemented under CYC-687; provider/device/cross-device acceptance remains open, including CYC-691. |
 | Conflict recovery UI | Explicit local/remote/drop/new-ID retry and local adoption of a reset vault are connected. Unknown writes keep durable provenance and never automatically replay. Current device acceptance is CYC-689. |
 | Password management | Identity edits, durable copy/verify/delete moves, bounded Google CSV, encrypted archive import/export and SAF owner reauthentication are connected. Checkup preserves saved flags/mutes. The owner-requested two-RPC fresh breach consumer is implemented; provider grant/admission, server interoperability and device acceptance remain CYC-692/CYC-689. |
-| Family sharing | Exact family eligibility, enrolled authenticated HPKE keys, fresh-recipient checks and launch receipts are connected. Incoming background policy matches the pinned default: import new, preserve conflicts, skip invalid siblings, consume processed invitations; same-sender updates default off. New key enrollment remains CYC-687; second-family-account acceptance is CYC-690. |
-| Synced passkeys | Account-bound Credential Manager and legacy GMS FIDO create/get consume real encrypted Google records and device/domain keys, with verified remote commit before create success. Native owner rename/delete and explicit unresolved-operation controls are connected (CYC-693). Existing-secret PRF is connected; existing credBlob/largeBlob reads are CM-only, with signed credBlob and bounded raw-DEFLATE output. Field9/missing-secret PRF migration, hybrid PRF, blob creation/write/capacity, legacy blobs, payment/non-ES256 and other unsupported options remain unadvertised. Enrollment, provider/device and cross-device acceptance remain CYC-687/CYC-688/CYC-689/CYC-691. |
+| Family sharing | Exact family eligibility, enrolled authenticated HPKE keys, fresh-recipient checks and launch receipts are connected. Incoming background policy matches the pinned default: import new, preserve conflicts, skip invalid siblings, consume processed invitations; same-sender updates default off. Get/CreateMetadata and committed Nigori keybag behavior match the reference; no separate sharing-key registry RPC was found. Second-family-account acceptance is CYC-690. |
+| Synced passkeys | Account-bound Credential Manager, legacy GMS FIDO and authenticated caBLE hybrid create/get use the real vault with current owner/domain authority. Native rename/delete, missing-secret PRF migration, bounded blob creation/read/write and Chrome-delegated payment are connected. Hybrid leases bind transcript, original request and immutable options with immediate disconnect/shutdown revocation. Gathered validation and CYC-687/CYC-688/CYC-689/CYC-691 acceptance remain pending. |
 | Wi-Fi | Explicit account opt-in, encrypted cloud adapter, owned-network native consumer and durable uncertain-outcome fences are connected. READ_WIFI_CREDENTIAL/NETWORK_SETTINGS require the companion image grants; old images refuse. Native/image acceptance remains CYC-689. |
 | Core agent fill | `security.password.fill` takes empty inputs and returns only `filled`; private native delivery targets the retained field. A durable receiving-app observation/input/capture fence lasts until authoritative UID process death or reboot. Owner-assisted native fields only; browser/WebView origins are refused. Device/controller acceptance remains CYC-689. |
 | Phone | Earlier signed installations and synthetic CRUD/restoration are historical evidence. All new device work is deferred by the owner because another chat has priority; no components were replaced in this batch. CYC-689 tracks a gathered coordinated acceptance run. |

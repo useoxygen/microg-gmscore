@@ -150,6 +150,8 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.READ_WIFI_CREDENTIAL" />
     <uses-permission android:name="android.permission.NETWORK_SETTINGS" />
+    <!-- Real RecoveryController snapshots require the matching privileged image grant. -->
+    <uses-permission android:name="android.permission.RECOVER_KEYSTORE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -682,6 +684,18 @@
         <activity android:name="org.microg.gms.passwords.LegacySyncedPasskeyActivity"
             android:exported="false" android:excludeFromRecents="true" android:process=":ui" />
         <activity android:name="org.microg.gms.passwords.PasswordRecoveryEnrollmentActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.auth.folsom.ui.SecurityDomainLifecycleActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.auth.folsom.ui.FolsomConsentActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.RecoverableVaultActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.GpmPinRenewalActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.EnclavePinActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.RecoveryRestoreActivity"
             android:exported="false" android:process=":ui" />
 
         <service android:name="org.microg.gms.auth.proxy.AuthProxyService">

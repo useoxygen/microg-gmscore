@@ -28,6 +28,7 @@ class FolsomKeyRefreshTest {
         fun reopen(): Disk = Disk(read())
         fun mark() = save(FolsomStaleKeyPolicy.mark(read()))
         fun owner(keys: List<Keys>) = save(FolsomStaleKeyPolicy.fresh(read()).copy(keys = keys))
+        fun reset() = save(FolsomStaleKeyPolicy.reset(read(), "synthetic-id"))
         fun client(fetch: suspend () -> List<Keys>) = FolsomKeyRefresh(
             read = { val domain = read(); FolsomKeySnapshot(FolsomStaleKeyPolicy.generation(domain), domain.keys) },
             prepare = { snapshot, force ->
@@ -106,6 +107,27 @@ class FolsomKeyRefreshTest {
         assertEquals(listOf(keyC), disk.read().keys)
         assertFalse(FolsomStaleKeyPolicy.stale(FolsomStaleKeyPolicy.generation(disk.read())))
         assertEquals(listOf(keyC), runBlocking { disk.reopen().client { throw AssertionError("Owner keys are fresh") }.load(false) })
+    }
+
+    @Test fun resetAndNewRefreshCannotReuseTheOldInFlightRefreshGeneration() {
+        val disk = Disk(DomainData(keys = listOf(keyA), googleUserId = "synthetic-id"))
+        var oldGeneration = -1L
+        assertThrows(TinkEncryptionException::class.java) { runBlocking {
+            disk.client {
+                oldGeneration = FolsomStaleKeyPolicy.generation(disk.read())
+                disk.reset()
+                assertTrue(disk.read().keys.isEmpty())
+                assertTrue(disk.read().legacyKeys.isEmpty())
+                disk.mark() // A different post-reset refresh starts while the old response is still in flight.
+                assertTrue(FolsomStaleKeyPolicy.generation(disk.read()) > oldGeneration)
+                listOf(keyB)
+            }.load(true)
+        } }
+        val reopened = disk.reopen()
+        assertTrue(reopened.read().keys.isEmpty()); assertEquals(0, disk.commits)
+        assertTrue(FolsomStaleKeyPolicy.generation(reopened.read()) > oldGeneration)
+        assertEquals(listOf(keyC), runBlocking { reopened.client { listOf(keyC) }.load(false) })
+        assertEquals(listOf(keyC), reopened.read().keys)
     }
 
     @Test fun explicitForceRefreshPersistsTheObligationBeforeItsMemberRead() {

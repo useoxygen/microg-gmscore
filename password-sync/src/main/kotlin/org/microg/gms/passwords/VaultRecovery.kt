@@ -6,6 +6,22 @@ import java.util.UUID
 
 /** These actions are owner decisions, never background retry policy. */
 object VaultRecovery {
+    /** Verified domain reset invalidates cached recovery authority without erasing encrypted owner data. */
+    fun clearTrustedKeys(session: VaultSession, expectedParent: String?, authorize: () -> Unit = {}) {
+        expectedParent?.let(PasswordApi::checkedParent)
+        authorize()
+        val state = session.load()
+        if (state.metadata == null && state.trustedVaultKeys.isEmpty() && state.versionedTrustedVaultKeys == null) return
+        val metadata = state.metadata ?: throw VaultLockedException()
+        if (expectedParent != null && (Proto.decode(metadata).string(1) != expectedParent || state.pendingMetadata?.let {
+                Proto.decode(it).string(1) != expectedParent
+            } == true)) throw VaultResetException()
+        authorize()
+        state.trustedVaultKeys.forEach { it.fill(0) }; state.trustedVaultKeys.clear()
+        state.versionedTrustedVaultKeys?.destroy(); state.versionedTrustedVaultKeys = null
+        session.save(state)
+    }
+
     fun acceptTrustedKeys(session: VaultSession, keys: List<ByteArray>) {
         if (keys.isEmpty() || keys.size > 100 || keys.any { it.size !in 16..4096 }) throw ProtocolException()
         val state = session.load()

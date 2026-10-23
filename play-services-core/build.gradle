@@ -159,6 +159,8 @@ android {
 
         // Dedicated affiliation service admission, never borrowed from another Google API.
         buildConfigField "String", "PASSWORD_AFFILIATION_API_KEY", groovy.json.JsonOutput.toJson(localProperties.get("password.affiliationApiKey", "").toString())
+        // Separate CryptAuth Vault admission for owner-consented lock-screen recovery.
+        buildConfigField "String", "RECOVERABLE_VAULT_API_KEY", groovy.json.JsonOutput.toJson(localProperties.get("recovery.vaultApiKey", "").toString())
 
         buildConfigField "String", "SAFETYNET_KEY", "\"${localProperties.get("safetynet.key", "")}\""
         buildConfigField "String", "RECAPTCHA_SITE_KEY", "\"${localProperties.get("recaptcha.siteKey", "")}\""

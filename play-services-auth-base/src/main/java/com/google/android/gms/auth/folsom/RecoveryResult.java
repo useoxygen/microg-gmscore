@@ -15,6 +15,27 @@ import com.google.android.gms.common.internal.safeparcel.SafeParcelableCreatorAn
 
 @SafeParcelable.Class
 public class RecoveryResult extends AbstractSafeParcelable {
+    @Field(1) public int result;
+    @Field(2) public long retryAfter;
+
+    public RecoveryResult() {}
+
+    @Constructor
+    public RecoveryResult(@Param(1) int result, @Param(2) long retryAfter) {
+        this.result = result;
+        this.retryAfter = retryAfter;
+    }
+
+    public int getResult() { return result; }
+    public long getRetryAfter() { return retryAfter; }
+
+    @Override public boolean equals(Object other) {
+        return other instanceof RecoveryResult && result == ((RecoveryResult) other).result
+                && retryAfter == ((RecoveryResult) other).retryAfter;
+    }
+    @Override public int hashCode() { return java.util.Objects.hash(result, retryAfter); }
+    @NonNull @Override public String toString() { return "RecoveryResult[redacted]"; }
+
     @Override
     public void writeToParcel(@NonNull Parcel dest, int flags) {
         CREATOR.writeToParcel(this, dest, flags);

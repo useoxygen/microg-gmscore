@@ -39,6 +39,7 @@ import org.microg.gms.auth.folsom.ui.GenericActivity
 import org.microg.gms.cyclon.CyclonMaterialTheme
 import org.microg.gms.fido.core.*
 import org.microg.gms.fido.core.protocol.*
+import org.microg.gms.fido.core.hybrid.HybridAccountRequests
 import org.microg.gms.fido.core.ui.AuthenticatorActivity
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -61,6 +62,8 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
     private lateinit var request: LegacyPasskeyRequest
     private lateinit var options: RequestOptions
     private var prf: PasskeyPrfRequest? = null
+    private var paymentCreate by mutableStateOf(false)
+    private var paymentGet by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,6 +76,8 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
         setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
             LazyColumn(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 item { Text(stringResource(R.string.passwords_legacy_passkey_title), style = MaterialTheme.typography.headlineSmall) }
+                if (paymentCreate) item { Text(stringResource(R.string.passwords_legacy_payment_create, options.rpId)) }
+                if (paymentGet) item { Text(stringResource(R.string.passwords_legacy_payment_get, options.rpId, request.origin)) }
                 if (loading) item { LinearProgressIndicator() }
                 items(choices) { choice -> Button(onClick = { selected.complete(choice) }) {
                     Column { Text(choice.account.name); Text(choice.label) }
@@ -87,7 +92,9 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
                 options = request.parsed()
                 verifyRequest()
                 prf = LegacySyncedPasskeyBackend.prf(options)
-                options.checkIsValid(this@LegacySyncedPasskeyActivity, request.origin, request.caller)
+                paymentCreate = LegacySyncedPasskeyBackend.paymentEnrollment(options)
+                paymentGet = !request.create && LegacySyncedPasskeyBackend.delegatedBrowserRequest(this@LegacySyncedPasskeyActivity, options, request.caller)
+                if (!paymentGet && request.source != AuthenticatorActivity.SOURCE_HYBRID) options.checkIsValid(this@LegacySyncedPasskeyActivity, request.origin, request.caller)
                 var owner = authenticate { verifyRequest() }
                 choices = withContext(Dispatchers.IO) {
                     owner()
@@ -97,7 +104,8 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
                         val parent = available.parent()
                         val vault = SyncedPasskeyVault(this@LegacySyncedPasskeyActivity, available.account, available.accountId, parent)
                         if (request.create) listOf(Choice(vault.account, vault.accountId, parent, null, options.rpId))
-                        else vault.list(refresh = true).filter { item -> (prf == null || item.encryptedField != 9) && item.rpId == options.rpId &&
+                        else vault.list(refresh = true).filter { item -> item.rpId == options.rpId &&
+                            (!paymentGet || item.paymentSupport) &&
                             (options.signOptions.allowList.isNullOrEmpty() || options.signOptions.allowList!!.any { MessageDigest.isEqual(it.id, item.credentialId) })
                         }.take(40).map { Choice(vault.account, vault.accountId, parent, it.tag,
                             "${it.rpId}\n${it.username.ifEmpty { it.displayName }}") }
@@ -134,7 +142,8 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
                 val credentialId = result.second.rawId?.takeIf { it.size in 1..1024 } ?: throw VaultLockedException()
                 // Post-create PRF recovery is a separate read: its reauth must never repeat the mutation.
                 val output = if (!request.create || prf == null) null else PasskeyReauthRetry.run(operation = { rapt -> withContext(Dispatchers.IO) {
-                    vault.withSecret(result.first ?: throw VaultLockedException(), options.rpId, listOf(credentialId), owner, rapt) { item, secret ->
+                    vault.withSecret(result.first ?: throw VaultLockedException(), options.rpId, listOf(credentialId), owner, rapt,
+                        secretUpdate = { _, secret -> SyncedPasskeyPrf.migrate(secret) }, requestBinding = request.digest) { item, secret ->
                         secret.prf(prf ?: throw VaultLockedException(), item.credentialId).use(SyncedPasskeyPrf::output)
                     }
                 } }, reauthenticate = { lookup ->
@@ -157,7 +166,9 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
     private fun verifyRequest() {
         LegacyPasskeyTicketStore.system(this)
         if (!MessageDigest.isEqual(request.digest, LegacyPasskeyBridgePolicy.requestDigest(request.caller, request.signer,
-                request.source, request.origin, request.create, request.options)) || !LegacySyncedPasskeyBackend.supported(options)) throw VaultLockedException()
+                request.source, request.origin, request.create, request.options, request.hybridToken)) || !LegacySyncedPasskeyBackend.supported(options)) throw VaultLockedException()
+        if (request.source == AuthenticatorActivity.SOURCE_HYBRID) HybridAccountRequests.verify(request.hybridToken, options)
+        else if (request.hybridToken != null) throw VaultLockedException()
         val (signer, origin) = LegacySyncedPasskeyBackend.caller(this, options, request.caller, request.source)
         if (!MessageDigest.isEqual(signer, request.signer) || origin != request.origin) throw VaultLockedException()
     }
@@ -198,7 +209,10 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
         if (requestCode == externalCode) external?.complete(resultCode == RESULT_OK)
     }
     private fun get(vault: SyncedPasskeyVault, tag: String, owner: () -> Unit, rapt: String?): PublicKeyCredential =
-        vault.withSecret(tag, options.rpId, options.signOptions.allowList.orEmpty().map { it.id }, owner, rapt) { item, secret ->
+        vault.withSecret(tag, options.rpId, options.signOptions.allowList.orEmpty().map { it.id }, owner, rapt,
+            secretUpdate = if (prf == null) null else { item, secret -> authorizeSelected(item); SyncedPasskeyPrf.migrate(secret) },
+            requestBinding = if (prf == null) null else request.digest) { item, secret ->
+            authorizeSelected(item)
             val key = secret.privateKey()
             try {
                 val (clientData, hash) = getClientDataAndHash(this, options, request.caller)
@@ -220,7 +234,8 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
         val key = KeyPairGenerator.getInstance("EC").run { initialize(ECGenParameterSpec("secp256r1")); generateKeyPair() }
         val raw = key.private.encoded ?: throw VaultLockedException()
         try {
-            val item = vault.createSpecifics(base.rp.id, base.user.id, base.user.name, base.user.displayName, raw, owner, rapt)
+            val generated = vault.createSpecifics(base.rp.id, base.user.id, base.user.name, base.user.displayName, raw, owner, rapt)
+            val item = if (paymentCreate) PasskeyPayment.withPaymentSupport(generated) else generated
             val (clientData, hash) = getClientDataAndHash(this, options, request.caller)
             if (hash.size != 32) throw VaultLockedException()
             val pub = key.public as ECPublicKey
@@ -231,6 +246,12 @@ class LegacySyncedPasskeyActivity : AppCompatActivity() {
             return item.tag to credential(item.credentialId, AuthenticatorAttestationResponse(item.credentialId, clientData,
                 NoneAttestationObject(auth).encode(), arrayOf("internal")))
         } finally { raw.fill(0); runCatching { key.private.destroy() } }
+    }
+    private fun authorizeSelected(item: SyncedPasskey) {
+        verifyRequest()
+        LegacySyncedPasskeyBackend.authorizeSelected(item, request.source, request.origin, options) {
+            HybridAccountRequests.verify(request.hybridToken, options)
+        }
     }
     private fun authenticator(rp: String, attested: AttestedCredentialData? = null) = AuthenticatorData(
         MessageDigest.getInstance("SHA-256").digest(rp.toByteArray(Charsets.UTF_8)), true, true, 0, attested).apply {

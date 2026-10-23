@@ -8,11 +8,16 @@ import org.microg.gms.auth.credentials.provider.SyncedPasskeyBlobReads
 import org.microg.gms.auth.credentials.provider.SyncedPasskeyRequestSupport
 import org.microg.gms.fido.core.protocol.AuthenticatorData
 import org.microg.gms.fido.core.protocol.encodeCredBlobAuthenticationExtension
+import org.microg.gms.fido.core.protocol.encodeCredBlobCreationExtension
 import java.security.KeyPairGenerator
 import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 class NativeSyncedPasskeyBlobReadTest {
+    @Test fun creationReportsTheActualStorageDecisionAsSignedCborBoolean() {
+        assertArrayEquals(hex("a16863726564426c6f62f5"), encodeCredBlobCreationExtension(true))
+        assertArrayEquals(hex("a16863726564426c6f62f4"), encodeCredBlobCreationExtension(false))
+    }
     @Test fun bothRawSpellingsAcceptOnlyExplicitReadsAndRejectCreationWritesOrMalformedRequests() {
         assertNull(SyncedPasskeyBlobReads.request("{}"))
         for (field in listOf("extensions", "authenticationExtensions")) {
@@ -83,4 +88,55 @@ class NativeSyncedPasskeyBlobReadTest {
         runCatching { keys.private.destroy() }
     }
     private fun hex(raw: String) = raw.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+    @Test fun creationUsesTheConservativeCredentialCapacityAndRealSupportedOutputShape() {
+        for (size in listOf(0, 32, 33)) {
+            val encoded = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(size) { 7 })
+            val raw = JSONObject().put("extensions", JSONObject().put("credBlob", encoded)
+                .put("largeBlob", JSONObject().put("support", "required")))
+                .put("pubKeyCredParams", org.json.JSONArray("[{\"type\":\"public-key\",\"alg\":-7}]")).toString()
+            assertTrue(SyncedPasskeyRequestSupport.create(raw))
+            SyncedPasskeyBlobReads.create(raw)!!.use { request ->
+                assertEquals(size <= 32, request.credBlobStored)
+                val result = JSONObject(SyncedPasskeyBlobReads.creationOutput("{}", request)).getJSONObject("clientExtensionResults")
+                assertEquals(size <= 32, result.getBoolean("credBlob")); assertTrue(result.getJSONObject("largeBlob").getBoolean("supported"))
+            }
+        }
+    }
+    @Test fun writesRequireOneCredentialAndNeverAcceptReadSupportOrWriteMixing() {
+        val credential = org.json.JSONArray("[{\"type\":\"public-key\",\"id\":\"AQ\"}]")
+        val raw = JSONObject().put("allowCredentials", credential)
+            .put("extensions", JSONObject().put("largeBlob", JSONObject().put("write", "aGVsbG8"))).toString()
+        assertTrue(SyncedPasskeyRequestSupport.get(raw))
+        SyncedPasskeyBlobReads.write(raw)!!.use { write ->
+            val after = write.apply(Proto.field(1, "key"))!!
+            PasskeyBlobReadRequest(false, true).read(after).use { assertArrayEquals("hello".toByteArray(), it.largeBlob) }
+        }
+        assertNull(SyncedPasskeyBlobReads.request(raw))
+        for (count in listOf(0, 2)) {
+            val array = org.json.JSONArray(); repeat(count) { array.put(JSONObject().put("id", "AQ").put("type", "public-key")) }
+            assertFalse(SyncedPasskeyRequestSupport.get(JSONObject(raw).put("allowCredentials", array).toString()))
+        }
+        val output = JSONObject(SyncedPasskeyBlobReads.output("{}", null, null, true)).getJSONObject("clientExtensionResults")
+        assertTrue(output.getJSONObject("largeBlob").getBoolean("written")); assertFalse(output.getJSONObject("largeBlob").has("supported"))
+    }
+    @Test fun prfMigrationAndBlobWriteProduceOnePreservingTransformAndAProofRetryNeedsNoFurtherUpdate() {
+        val keys = KeyPairGenerator.getInstance("EC").run { initialize(ECGenParameterSpec("secp256r1")); generateKeyPair() }
+        val pkcs8 = keys.private.encoded
+        try {
+            PasskeyBlobWriteRequest("persisted".toByteArray()).use { write ->
+                PasskeySecret(pkcs8.copyOf(), null).use { bare ->
+                    val updated = SyncedPasskeyBlobReads.update(bare, true, write)!!
+                    try {
+                        val parsed = Proto.decode(updated)
+                        assertArrayEquals(pkcs8, parsed.one(1)); assertEquals(32, parsed.one(2).size)
+                        PasskeyBlobReadRequest(false, true).read(updated).use { assertArrayEquals("persisted".toByteArray(), it.largeBlob) }
+                        PasskeySecret(pkcs8.copyOf(), updated.copyOf()).use { persisted ->
+                            assertNull(SyncedPasskeyBlobReads.update(persisted, true, write))
+                        }
+                    } finally { updated.fill(0) }
+                }
+            }
+        } finally { pkcs8.fill(0); runCatching { keys.private.destroy() } }
+    }
 }

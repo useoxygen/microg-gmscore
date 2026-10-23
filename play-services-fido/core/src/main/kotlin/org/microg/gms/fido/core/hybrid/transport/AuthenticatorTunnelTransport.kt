@@ -22,7 +22,6 @@ class AuthenticatorTunnelTransport(val tunnelId: ByteArray, val callback: Tunnel
     fun startConnecting() {
         Log.d(TAG, "startConnecting: ")
         val webSocketConnectUrl = buildWebSocketNewUrl(tunnelId)
-        Log.d(TAG, "startConnecting: webSocketConnectUrl=$webSocketConnectUrl")
         if (websocket == null) {
             websocket = TunnelWebsocket(webSocketConnectUrl, this)
         }
@@ -40,7 +39,7 @@ class AuthenticatorTunnelTransport(val tunnelId: ByteArray, val callback: Tunnel
     }
 
     override fun error(error: TunnelException) {
-        Log.d(TAG, "error: ", error)
+        Log.d(TAG, "error: ")
         callback.onSocketError(error)
     }
 

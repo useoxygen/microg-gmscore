@@ -73,7 +73,7 @@ class AffiliationSet internal constructor(facets: List<AffiliationFacetInfo>, va
 /** Independently decoded from the public affiliation protocol and pinned isos/isob/isoj descriptors. */
 class AffiliationResponse private constructor(sharing: List<AffiliationSet>, groups: List<AffiliationSet>, extensions: Set<String>) {
     val sharing: List<AffiliationSet> = Collections.unmodifiableList(sharing.toList())
-    val groups: List<AffiliationSet> = Collections.unmodifiableList(groups.toList())
+    val groups: List<AffiliationSet> = Collections.unmodifiableList(mergeGroups(groups, extensions))
     val pslExtensions: Set<String> = Collections.unmodifiableSet(extensions.toSet())
 
     fun credentialSharingFacets(requested: AffiliationFacet): Set<AffiliationFacet> {
@@ -91,10 +91,10 @@ class AffiliationResponse private constructor(sharing: List<AffiliationSet>, gro
     /** PSL equivalence is a display hint. It is deliberately absent from credentialSharingFacets. */
     fun isGrouped(requested: AffiliationFacet, candidate: AffiliationFacet): Boolean {
         if (requested == candidate || groupedFacets(requested).any { it.facet == candidate }) return true
-        val domain = AffiliationDomains.mainDomain(requested, pslExtensions) ?: return false
-        val candidateDomain = AffiliationDomains.mainDomain(candidate, pslExtensions) ?: return false
+        val domain = info(requested)?.mainDomain ?: AffiliationDomains.mainDomain(requested, pslExtensions) ?: return false
+        val candidateDomain = info(candidate)?.mainDomain ?: AffiliationDomains.mainDomain(candidate, pslExtensions) ?: return false
         if (domain == candidateDomain) return true
-        return groupedFacets(requested).any { AffiliationDomains.mainDomain(it.facet, pslExtensions) == candidateDomain }
+        return groupedFacets(requested).any { (it.mainDomain ?: AffiliationDomains.mainDomain(it.facet, pslExtensions)) == candidateDomain }
     }
 
     override fun toString() = "AffiliationResponse[redacted]"
@@ -102,6 +102,33 @@ class AffiliationResponse private constructor(sharing: List<AffiliationSet>, gro
         const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
         const val MAX_REQUESTED_FACETS = 1000
         private const val MAX_FACETS = 20_000
+
+        /** Chromium145 MergeRelatedGroups: transitive display merging never changes sharing sets. */
+        private fun mergeGroups(groups: List<AffiliationSet>, extensions: Set<String>): List<AffiliationSet> {
+            val parents = IntArray(groups.size) { it }
+            fun root(index: Int): Int {
+                var current = index
+                while (parents[current] != current) current = parents[current]
+                var next = index
+                while (parents[next] != next) { val previous = parents[next]; parents[next] = current; next = previous }
+                return current
+            }
+            val domains = HashMap<String, Int>()
+            groups.forEachIndexed { index, group -> group.facets.forEach { info ->
+                if (info.facet.kind != AffiliationFacet.Kind.ANDROID) {
+                    val domain = info.mainDomain ?: AffiliationDomains.mainDomain(info.facet, extensions)
+                    if (domain != null) domains.putIfAbsent(domain, index)?.let { previous ->
+                        parents[root(index)] = root(previous)
+                    }
+                }
+            } }
+            val components = LinkedHashMap<Int, MutableList<AffiliationSet>>()
+            groups.forEachIndexed { index, group -> components.getOrPut(root(index)) { ArrayList() }.add(group) }
+            return components.values.map { related ->
+                AffiliationSet(related.flatMap { it.facets }, related.lastOrNull { it.branding?.iconUrl != null }?.branding,
+                    synthesized = related.all { it.synthesized })
+            }
+        }
 
         fun decode(raw: ByteArray, requested: Collection<AffiliationFacet>): AffiliationResponse {
             if (raw.size > MAX_RESPONSE_BYTES || requested.isEmpty() || requested.size > MAX_REQUESTED_FACETS) throw ProtocolException()
@@ -187,10 +214,13 @@ object ChromeAffiliatedPassword {
     }
     fun affiliated(chromePassword: ByteArray, requested: AffiliationFacet, response: AffiliationResponse?, verifiedSharing: Boolean = false): ByteArray? {
         val data = PasswordData.decode(Proto.decode(chromePassword).one(1))
+        if ((Proto.decode(data.encode()).integer(1) ?: 0L) != 0L) return null
         val actual = runCatching { AffiliationFacet.parse(data.realm) }.getOrNull() ?: return null
         val sharing = actual.kind != AffiliationFacet.Kind.HTTP && requested.kind != AffiliationFacet.Kind.HTTP &&
             (actual == requested || verifiedSharing || response?.credentialSharingFacets(requested)?.contains(actual) == true)
-        val grouped = actual == requested || response?.isGrouped(requested, actual) == true
+        // Chrome adds its own kPSL bit after decoding a grouped row. PSL is not credential-sharing affiliation.
+        val psl = data.matchesRealmAuthority(data.realm) && PasswordPublicSuffix.match(data.realm, requested.id + "/") == WebPasswordMatch.PUBLIC_SUFFIX
+        val grouped = actual == requested || response?.isGrouped(requested, actual) == true || psl
         if (!sharing && !grouped) return null
         return uiInfo(chromePassword, response) + Proto.integer(3, if (sharing) 1 else 0) + Proto.integer(4, if (grouped) 1 else 0)
     }
@@ -211,10 +241,14 @@ object AffiliationDomains {
         val url = facet.id.toHttpUrlOrNull() ?: return null
         val host = url.host
         val normal = url.topPrivateDomain() ?: return host
-        val extension = extensions.filter { host == it || host.endsWith(".$it") }.maxByOrNull { it.length } ?: return normal
-        if (host == extension) return host
-        val prefix = host.removeSuffix(".$extension")
-        return prefix.substringAfterLast('.') + "." + extension
+        var domain = normal
+        // Each intermediate suffix must be explicitly extended; a deeper entry alone
+        // does not extend an ancestor or join independently hosted tenants.
+        while (domain != host && domain in extensions) {
+            val prefix = host.removeSuffix(".$domain")
+            domain = prefix.substringAfterLast('.') + "." + domain
+        }
+        return domain
     }
 }
 

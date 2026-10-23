@@ -50,10 +50,7 @@ class AuthenticatorMakeCredentialRequest(
     if (enterpriseAttestation != null) set(0x0A, enterpriseAttestation.encodeAsCbor())
     if (attestationFormatsPreference.isNotEmpty()) set(0x0B, attestationFormatsPreference.encodeAsCbor { it.encodeAsCbor() })
 }) {
-    override fun toString() = "AuthenticatorMakeCredentialRequest(clientDataHash=0x${clientDataHash.toBase64(Base64.NO_WRAP)}, " +
-            "rp=$rp,user=$user,pubKeyCredParams=[${pubKeyCredParams.joinToString()}]," +
-            "excludeList=[${excludeList.joinToString()}],extensions=[${extensions.entries.joinToString()}]," +
-            "options=$options,pinAuth=${pinUvAuthParam?.toBase64(Base64.NO_WRAP)},pinProtocol=$pinUvAuthProtocol)"
+    override fun toString() = "AuthenticatorMakeCredentialRequest[redacted]"
 
     companion object {
         class Options(
@@ -94,19 +91,22 @@ class AuthenticatorMakeCredentialRequest(
 class AuthenticatorMakeCredentialResponse(
     val authData: ByteArray,
     val fmt: String,
-    val attStmt: CBORObject
+    val attStmt: CBORObject,
+    val unsignedExtensionOutputs: CBORObject? = null
 ) : Ctap2Response() {
     override fun encodePayloadAsCbor() = CBORObject.NewMap().apply {
         set(0x01, fmt.encodeAsCbor())
         set(0x02, authData.encodeAsCbor())
         set(0x03, attStmt)
+        if (unsignedExtensionOutputs != null) set(0x06, unsignedExtensionOutputs)
     }
 
     companion object {
         fun decodeFromCbor(obj: CBORObject) = AuthenticatorMakeCredentialResponse(
             fmt = obj.get(0x01).AsString(),
             authData = obj.get(0x02).GetByteString(),
-            attStmt = obj.get(0x03)
+            attStmt = obj.get(0x03),
+            unsignedExtensionOutputs = obj.get(0x06)
         )
     }
 }

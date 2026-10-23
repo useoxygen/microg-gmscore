@@ -142,7 +142,7 @@ object CryptoHelper {
             )
             cipher.doFinal(seed)
         } catch (e: Exception) {
-            Log.e(TAG, "AES encryption failed", e)
+            Log.e(TAG, "AES encryption failed")
             ByteArray(16)
         }
 
@@ -151,7 +151,7 @@ object CryptoHelper {
             hmac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
             hmac.doFinal(ciphertext)
         } catch (e: Exception) {
-            Log.e(TAG, "HMAC calculation failed", e)
+            Log.e(TAG, "HMAC calculation failed")
             ByteArray(32)
         }
         val tag = mac.copyOf(4)

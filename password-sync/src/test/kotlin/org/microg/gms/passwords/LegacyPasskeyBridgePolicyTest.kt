@@ -47,8 +47,10 @@ class LegacyPasskeyBridgePolicyTest {
         for (attestation in listOf("direct", "indirect", "enterprise")) assertFalse(create(attestation = attestation))
         assertFalse(create(attachment = "cross-platform"))
         assertTrue(create(extensions = setOf("prf")))
+        assertTrue(create(extensions = setOf("payment", "prf")))
+        assertFalse(LegacyPasskeyBridgePolicy.supported(false, emptyList(), null, null, setOf("payment")))
         assertTrue(LegacyPasskeyBridgePolicy.supported(false, emptyList(), null, null, setOf("prf")))
-        for (extension in listOf("hmac-secret", "appid", "largeBlob", "credBlob", "uvm", "payment", "devicePubKey", "unknown", "credProps")) {
+        for (extension in listOf("hmac-secret", "appid", "largeBlob", "credBlob", "uvm", "devicePubKey", "unknown", "credProps")) {
             assertFalse(create(extensions = setOf(extension)))
             assertFalse(LegacyPasskeyBridgePolicy.supported(false, emptyList(), null, null, setOf(extension)))
         }
