@@ -21,27 +21,34 @@ class PasswordAutofillService : AutofillService() {
                 val target = PasswordAutofillTarget.parse(this@PasswordAutofillService, structure)
                 val response = FillResponse.Builder()
                 val tickets = PasswordRequestTickets(this@PasswordAutofillService)
+                var canSave = false
                 val vaults: List<Pair<android.accounts.Account?, PasswordVault>> = listOf(null to DevicePasswordVault(this@PasswordAutofillService)) +
                     AccountManager.get(this@PasswordAutofillService).getAccountsByType("com.google").mapNotNull { account ->
                         runCatching { account to PasswordRepository(this@PasswordAutofillService, account) }.getOrNull()
                     }
                 vaults.forEach { (account, repo) ->
-                    if (repo.enabled) repo.list().filter { it.data.canFillRealm(target.realm) }
-                        .take(100).forEach { entry ->
-                            val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
-                                setTextViewText(android.R.id.text1, getString(R.string.passwords_fill))
+                    try {
+                        if (repo.enabled) {
+                            val entries = repo.list()
+                            if (entries.none { it.data.blocked && it.data.realm == target.realm }) canSave = true
+                            entries.filter { it.data.canFillRealm(target.realm) }.take(100).forEach { entry ->
+                                val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
+                                    setTextViewText(android.R.id.text1, getString(R.string.passwords_fill))
+                                }
+                                val auth = tickets.issueAutofill(account, entry.id, target.realm, target.caller, false, target.payload(false))
+                                @Suppress("DEPRECATION")
+                                val dataset = Dataset.Builder(presentation).setValue(target.passwordId, null).apply {
+                                    target.usernameId?.let { setValue(it, null) }
+                                    setAuthentication(auth.intentSender)
+                                }.build()
+                                response.addDataset(dataset)
                             }
-                            val auth = tickets.issueAutofill(account, entry.id, target.realm, target.caller, false, target.payload(false))
-                            @Suppress("DEPRECATION")
-                            val dataset = Dataset.Builder(presentation).setValue(target.passwordId, null).apply {
-                                target.usernameId?.let { setValue(it, null) }
-                                setAuthentication(auth.intentSender)
-                            }.build()
-                            response.addDataset(dataset)
                         }
+                    } catch (failure: CancellationException) { throw failure }
+                    catch (_: Exception) { /* A locked account must not suppress another available vault. */ }
                 }
                 val ids = listOfNotNull(target.usernameId, target.passwordId).toTypedArray()
-                response.setSaveInfo(SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD or SaveInfo.SAVE_DATA_TYPE_USERNAME, ids).build())
+                if (canSave) response.setSaveInfo(SaveInfo.Builder(SaveInfo.SAVE_DATA_TYPE_PASSWORD or SaveInfo.SAVE_DATA_TYPE_USERNAME, ids).build())
                 if (!cancellationSignal.isCanceled) callback.onSuccess(response.build())
             } catch (_: Exception) { if (!cancellationSignal.isCanceled) callback.onSuccess(null) }
         }

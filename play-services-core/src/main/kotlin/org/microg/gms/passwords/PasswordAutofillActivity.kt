@@ -32,6 +32,8 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
     private var saving by mutableStateOf(false)
     private var busy by mutableStateOf(false)
     private var failed by mutableStateOf(false)
+    private var localSavingAllowed by mutableStateOf(false)
+    private var savingBlocked by mutableStateOf(false)
     private var accounts by mutableStateOf<List<Account>>(emptyList())
     private var ticket: PasswordRequestTicket? = null
     private var payload: Bundle? = null
@@ -44,10 +46,11 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
                 if (saving) {
                     Text(ticket?.realm.orEmpty())
                     Text(payload?.getString("username").orEmpty())
-                    Button(onClick = { save(null) }, enabled = !busy) { Text(stringResource(R.string.passwords_on_device)) }
+                    if (localSavingAllowed) Button(onClick = { save(null) }, enabled = !busy) { Text(stringResource(R.string.passwords_on_device)) }
                     accounts.forEach { account -> Button(onClick = { save(account) }, enabled = !busy) { Text(account.name) } }
                 }
                 if (failed) Text(stringResource(R.string.passwords_sync_failed))
+                if (savingBlocked) Text(stringResource(R.string.passwords_saving_disabled))
                 if (busy) LinearProgressIndicator()
                 TextButton(onClick = { finish() }) { Text(stringResource(android.R.string.cancel)) }
             }
@@ -70,12 +73,15 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
                 ticket = prepared.first; payload = prepared.second
                 if (prepared.first.mode == 2) fill(prepared.first, prepared.second)
                 else {
-                    accounts = withContext(Dispatchers.IO) {
-                        AccountManager.get(this@PasswordAutofillActivity).getAccountsByType("com.google").filter {
-                            runCatching { PasswordRepository(this@PasswordAutofillActivity, it).enabled }.getOrDefault(false)
+                    val available = withContext(Dispatchers.IO) {
+                        val local = runCatching { DevicePasswordVault(this@PasswordAutofillActivity).acceptsAutomaticSave(prepared.first.realm) }.getOrDefault(false)
+                        local to AccountManager.get(this@PasswordAutofillActivity).getAccountsByType("com.google").filter {
+                            runCatching { PasswordRepository(this@PasswordAutofillActivity, it).acceptsAutomaticSave(prepared.first.realm) }.getOrDefault(false)
                         }
                     }
-                    requireOwner(); saving = true
+                    requireOwner()
+                    localSavingAllowed = available.first; accounts = available.second
+                    saving = localSavingAllowed || accounts.isNotEmpty(); savingBlocked = !saving
                 }
             } catch (_: Exception) { finish() }
         }
@@ -118,15 +124,20 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
                     val password = fields.getString("password")?.takeIf { it.isNotEmpty() } ?: throw SecurityException()
                     val repo: PasswordVault = account?.let { PasswordRepository(this@PasswordAutofillActivity, it) }
                         ?: DevicePasswordVault(this@PasswordAutofillActivity)
-                    val old = repo.list().singleOrNull { it.data.matchesRealmAuthority(selected.realm) && it.data.username == username }
+                    if (!repo.acceptsAutomaticSave(selected.realm)) throw PasswordSaveBlockedException()
+                    val old = repo.list().singleOrNull { !it.data.blocked && it.data.matchesRealmAuthority(selected.realm) && it.data.username == username }
                     val data = old?.data?.withPassword(password, System.currentTimeMillis()) ?: PasswordData.create(
                         selected.realm, selected.realm, username, password, System.currentTimeMillis())
-                    repo.upsert(Proto.field(1, data.encode()))
+                    repo.upsertAutomatic(Proto.field(1, data.encode()))
                 }
                 setResult(RESULT_OK); finish()
-            } catch (_: Exception) { failed = true } finally { busy = false }
+            } catch (_: PasswordSaveBlockedException) { savingBlocked = true }
+            catch (_: Exception) { failed = true } finally { busy = false }
         }
     }
     override fun onOwnerAuthenticationFailed() { finish() }
-    override fun onOwnerLocked() { saving = false; ticket?.payload?.fill(0); ticket = null; payload?.clear(); payload = null; accounts = emptyList() }
+    override fun onOwnerLocked() {
+        saving = false; localSavingAllowed = false; savingBlocked = false
+        ticket?.payload?.fill(0); ticket = null; payload?.clear(); payload = null; accounts = emptyList()
+    }
 }

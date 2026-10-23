@@ -28,6 +28,26 @@ class Proto private constructor(private val parts: List<Part>) {
         parts.filter { it.number != number }.fold(ByteArrayOutputStream()) { out, part -> out.apply { write(part.encoded) } }.toByteArray() +
             (value?.let { field(number, it) } ?: byteArrayOf()))
     fun replaceInteger(number: Int, value: Long): Proto = decode(replace(number, null).encode() + integer(number, value))
+    fun replaceRepeated(number: Int, values: List<ByteArray>): Proto {
+        val out = ByteArrayOutputStream()
+        out.write(replace(number, null).encode())
+        for (value in values) {
+            val encoded = field(number, value)
+            if (encoded.size > MAX_BYTES - out.size()) throw ProtocolException()
+            out.write(encoded)
+        }
+        return decode(out.toByteArray())
+    }
+    /** Incoming field groups are authoritative; absent and unsupported fields stay intact. */
+    fun overlay(incoming: Proto): Proto {
+        val replaced = incoming.parts.map { it.number }.toSet()
+        val out = ByteArrayOutputStream()
+        for (part in parts.filter { it.number !in replaced } + incoming.parts) {
+            if (part.encoded.size > MAX_BYTES - out.size()) throw ProtocolException()
+            out.write(part.encoded)
+        }
+        return decode(out.toByteArray())
+    }
     override fun toString(): String = "Proto[redacted]"
 
     companion object {

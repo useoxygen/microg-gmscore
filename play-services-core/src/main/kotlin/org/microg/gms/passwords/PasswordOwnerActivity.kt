@@ -73,8 +73,7 @@ abstract class PasswordOwnerActivity : AppCompatActivity() {
         super.onPause()
     }
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (event.flags and MotionEvent.FLAG_WINDOW_IS_OBSCURED != 0 ||
-            (Build.VERSION.SDK_INT >= 29 && event.flags and MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED != 0)) return false
+        if (rejectsPasswordTouch(event.flags)) return false
         return super.dispatchTouchEvent(event)
     }
     override fun onStop() {

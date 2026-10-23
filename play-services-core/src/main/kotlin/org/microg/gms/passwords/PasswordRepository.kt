@@ -94,14 +94,9 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
             val metadata = state.metadata ?: throw VaultLockedException()
             val keys = unlock(metadata, state.customKey)
             try {
-                val visible = state.records.associateBy { Proto.decode(it).string(2) }.toMutableMap()
-                state.mutations.filter { it.phase != MutationPhase.CONFLICT }.forEach { pending ->
-                    if (pending.kind == MutationKind.DELETE) visible.remove(pending.tag)
-                    else pending.desired?.let { visible[pending.tag] = it }
-                }
+                val visible = visibleRecords(state)
                 visible.map { (tag, entity) ->
-                    val plain = keys.decrypt(Proto.decode(entity).one(6))
-                    val data = try { PasswordData.decode(plain) } finally { plain.fill(0) }
+                    val data = PasswordResourceCodec.read(entity, keys)
                     val chrome = Proto.field(1, data.encode()) + (state.chromeLocalData[tag]?.let { Proto.field(3, it) } ?: byteArrayOf())
                     PasswordView(tag, data, chrome)
                 }
@@ -109,7 +104,9 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         }
     }
 
-    override fun upsert(chromePassword: ByteArray) {
+    override fun upsert(chromePassword: ByteArray) = upsert(chromePassword, false)
+    override fun upsertAutomatic(chromePassword: ByteArray) = upsert(chromePassword, true)
+    private fun upsert(chromePassword: ByteArray, automatic: Boolean) {
         checkEnabled()
         val wrapper = Proto.decode(chromePassword)
         val data = PasswordData.decode(wrapper.one(1))
@@ -120,10 +117,14 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
             val state = session.load()
             val keys = unlock(state.metadata ?: throw VaultLockedException(), state.customKey)
             try {
+                if (automatic) for (raw in visibleRecords(state).values) {
+                    val existing = PasswordResourceCodec.read(raw, keys)
+                    if (existing.blocked && existing.realm == data.realm) throw PasswordSaveBlockedException()
+                }
                 val base = state.records.singleOrNull { Proto.decode(it).string(2) == tag }
-                val encrypted = keys.encrypt(data.encode())
-                val desired = if (base == null) Proto.field(2, tag) + Proto.field(6, encrypted)
-                    else Proto.decode(base).replace(6, encrypted).encode()
+                val visible = visibleRecords(state)[tag]
+                val merged = visible?.let { PasswordResourceCodec.read(it, keys).mergeFrom(data) } ?: data
+                val desired = PasswordResourceCodec.encrypt(merged, keys, base ?: visible)
                 // Buffer the enqueue save so the local Chrome metadata commits with the mutation.
                 val transaction = object : VaultSession {
                     override fun load() = state
@@ -136,6 +137,15 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
             } finally { keys.destroy() }
         }
         schedule()
+    }
+
+    private fun visibleRecords(state: VaultState): Map<String, ByteArray> {
+        val visible = state.records.associateBy { Proto.decode(it).string(2) }.toMutableMap()
+        state.mutations.filter { it.phase != MutationPhase.CONFLICT }.forEach { pending ->
+            if (pending.kind == MutationKind.DELETE) visible.remove(pending.tag)
+            else pending.desired?.let { visible[pending.tag] = it }
+        }
+        return visible
     }
 
     override fun delete(chromePassword: ByteArray) {

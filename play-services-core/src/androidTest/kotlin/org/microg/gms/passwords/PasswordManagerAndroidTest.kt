@@ -10,20 +10,26 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.inspector.WindowInspector
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.appcompat.view.WindowCallbackWrapper
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.espresso.action.CoordinatesProvider
 import androidx.test.espresso.action.GeneralClickAction
 import androidx.test.espresso.action.Press
 import androidx.test.espresso.action.Tap
 import androidx.test.espresso.matcher.ViewMatchers.withId
+import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.android.gms.R
 import com.google.android.gms.credential.manager.EXTRA_KEY_ACCOUNT_NAME
@@ -34,8 +40,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CopyOnWriteArrayList
+import java.security.MessageDigest
+import java.util.UUID
 
-/** Opt-in owner UI checks; never opens an editor, reveals a password or mutates a login. */
+/** Opt-in owner UI checks. Editor mutations need a separate synthetic-only authorization. */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 28)
 class PasswordManagerAndroidTest {
@@ -118,12 +126,13 @@ class PasswordManagerAndroidTest {
         }
     }
 
-    private fun tap(node: SemanticsNodeInteraction) {
+    private fun tap(node: SemanticsNodeInteraction, dialog: Boolean = false) {
         val bounds = node.assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInWindow
         tapBounds = bounds.toString()
         // Inject through Android's input dispatcher, including the activity's obscured-touch guard.
         // Compose's performClick/semantics actions dispatch directly into its view/callback.
-        onView(withId(android.R.id.content)).perform(GeneralClickAction(Tap.SINGLE,
+        val target = onView(withId(android.R.id.content))
+        (if (dialog) target.inRoot(isDialog()) else target).perform(GeneralClickAction(Tap.SINGLE,
             CoordinatesProvider { view ->
                 val location = IntArray(2)
                 view.rootView.getLocationOnScreen(location)
@@ -131,7 +140,13 @@ class PasswordManagerAndroidTest {
             }, Press.FINGER, InputDevice.SOURCE_TOUCHSCREEN, 0))
     }
 
-    private fun assertNoSecretInputs() = compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+    private fun assertNoSecretInputs() {
+        // The manager's search field is editable metadata; the password/note editor must be absent.
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(1)
+        compose.onNodeWithText(context.getString(R.string.passwords_search)).assertExists()
+        compose.onNodeWithText(context.getString(R.string.passwords_password)).assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.passwords_note)).assertDoesNotExist()
+    }
 
     @Test fun explicitOpenBackgroundAndRecreationRequireFreshPresence() {
         val selected = selectedAccount()
@@ -181,9 +196,109 @@ class PasswordManagerAndroidTest {
                 }
                 compose.onNodeWithText("cyc651-synthetic-user").assertExists()
                 assertNoSecretInputs()
+                val search = compose.onNode(hasSetTextAction()).performScrollTo()
+                search.performTextReplacement("cyc654-no-match-" + UUID.randomUUID())
+                compose.onNodeWithText("https://cyc651.example.invalid/").assertDoesNotExist()
+                search.performTextClearance()
+                compose.onNodeWithText("https://cyc651.example.invalid/").assertExists()
                 scenario.onActivity {
                     assertTrue("Password metadata screen must remain secure", it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
                 }
+            }
+        } finally { if (repository.enabled != wasEnabled) repository.setEnabled(wasEnabled) }
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 29)
+    fun ownerEditsSyntheticMetadataWithSecureDialogAndExactRestoration() {
+        val selected = selectedAccount()
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        // Semantics failures can include editable contents. Never attach them to a test result.
+        try { editMetadata(selected) } catch (_: Throwable) {
+            throw AssertionError("Synthetic metadata UI verification failed; encrypted phone checkpoint is retained until restoration succeeds")
+        }
+    }
+
+    private fun editMetadata(selected: String) {
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        val checkpoint = AndroidVaultStore(context, "password-fixture-metadata-restore/" + account.name)
+        val wasEnabled = repository.enabled
+        assertTrue("Refusing pending writes", repository.store.locked {
+            val state = it.load(); state.mutations.isEmpty() && state.preferenceMutations.isEmpty()
+        })
+        try {
+            repository.setEnabled(true)
+            repository.refresh()
+            val entries = repository.list(false)
+            val original = entries.single { it.data.realm == "https://cyc651.example.invalid/" &&
+                it.data.username == "cyc651-synthetic-user" && !it.data.blocked }
+            // Only this fixture's edit action may be selected by this UI test.
+            assertTrue("Editor selection requires the designated fixture alone", entries.count { !it.data.blocked } == 1)
+            val untouched = entries.filter { it.id != original.id }.associate { it.id to it.data.encode() }
+            val restore = checkpoint.locked { session ->
+                session.load().chromeLocalData["original"] ?: original.data.encode().also {
+                    session.save(VaultState(chromeLocalData = hashMapOf("original" to it)))
+                }
+            }
+            val data = PasswordData.decode(restore)
+            assertTrue("Restore input is outside the fixture", data.tag() == original.id &&
+                data.realm == "https://cyc651.example.invalid/" && data.username == "cyc651-synthetic-user")
+            try {
+                launch(selected).use { scenario ->
+                    openManager(scenario)
+                    compose.waitUntil(30_000) { compose.onAllNodesWithText("cyc651-synthetic-user").fetchSemanticsNodes().size == 1 }
+                    tap(compose.onNodeWithText(context.getString(R.string.passwords_edit)).performScrollTo())
+                    compose.waitUntil(10_000) { compose.onAllNodesWithText(context.getString(R.string.passwords_note)).fetchSemanticsNodes().isNotEmpty() }
+                    scenario.onActivity {
+                        fun descendants(view: View): Sequence<View> = sequence {
+                            yield(view)
+                            if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(descendants(view.getChildAt(index)))
+                        }
+                        val windows = WindowInspector.getGlobalWindowViews().asSequence().flatMap(::descendants)
+                            .filterIsInstance<DialogWindowProvider>().map { it.window }.distinct().toList()
+                        assertTrue("Editor dialog window unavailable", windows.size == 1)
+                        assertTrue("Editor dialog lost FLAG_SECURE", windows.single().attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+                        assertTrue("Editor dialog lacks its obscured-touch guard", windows.single().callback is PasswordDialogTouchGuard)
+                    }
+                    val name = "cyc654-name-" + UUID.randomUUID()
+                    val note = "cyc654-note-" + UUID.randomUUID()
+                    compose.onNode(hasSetTextAction() and hasText(context.getString(R.string.passwords_name)))
+                        .performScrollTo().performTextReplacement(name)
+                    compose.onNode(hasSetTextAction() and hasText(context.getString(R.string.passwords_note)))
+                        .performScrollTo().performTextReplacement(note)
+                    closeSoftKeyboard()
+                    // Save uses Android input delivery through the dialog's own Window callback.
+                    tap(compose.onNodeWithText(context.getString(R.string.passwords_save)), dialog = true)
+                    compose.waitUntil(30_000) { compose.onAllNodesWithText(name).fetchSemanticsNodes().size == 1 }
+                    val readback = PasswordRepository(context, account).list(false).single { it.id == original.id }.data
+                    assertTrue("Metadata edit was not persisted", readback.displayName == name && readback.defaultNote?.value == note)
+                    fun withoutMetadata(value: PasswordData) = Proto.decode(value.encode()).replace(15, null).replace(22, null).encode()
+                    assertTrue("Metadata edit changed other password fields", MessageDigest.isEqual(withoutMetadata(data), withoutMetadata(readback)))
+                }
+            } finally {
+                // Ordinary partial-client upsert intentionally retains omitted fields. Restore the
+                // exact original through the production journal with the latest server version.
+                repository.refresh()
+                repository.store.locked { session ->
+                    val state = session.load()
+                    assertTrue("Uncertain edit retained; checkpoint preserved", state.mutations.isEmpty())
+                    val current = state.records.single { Proto.decode(it).string(2) == original.id }
+                    val keys = VaultKeys.unlock(state.metadata!!, customKey = state.customKey)
+                    try {
+                        val desired = PasswordResourceCodec.encrypt(data, keys, current)
+                        VaultSync(PasswordApi(PasswordTransport { _, _ -> error("Only local enqueue is allowed") }), repository.store)
+                            .enqueue(session, MutationKind.UPDATE, original.id, desired)
+                    } finally { keys.destroy() }
+                }
+                val receipt = repository.refresh()
+                repository.refresh()
+                val after = repository.list(false)
+                assertTrue("Exact restoration is unverified", receipt.conflicts == 0 && receipt.indeterminate == 0 &&
+                    MessageDigest.isEqual(restore, after.single { it.id == original.id }.data.encode()))
+                val others = after.filter { it.id != original.id }.associate { it.id to it.data.encode() }
+                assertTrue("Unrelated record changed", untouched.keys == others.keys &&
+                    untouched.all { (id, bytes) -> MessageDigest.isEqual(bytes, others.getValue(id)) })
+                checkpoint.clear()
             }
         } finally { if (repository.enabled != wasEnabled) repository.setEnabled(wasEnabled) }
     }

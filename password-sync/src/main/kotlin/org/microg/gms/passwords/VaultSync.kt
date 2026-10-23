@@ -148,8 +148,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
                 val proto = Proto.decode(entity)
                 PasswordApi.checkedName(proto.string(1))
                 if (!proto.string(1).startsWith(parent + "/passwords/")) throw ProtocolException()
-                val plaintext = keys.decrypt(proto.one(6))
-                try { Proto.decode(plaintext) } finally { plaintext.fill(0) }
+                PasswordResourceCodec.plaintext(entity, keys)
             }
             state.metadata = metadata
             state.pendingMetadata = null
@@ -246,14 +245,12 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
     }
 
     private fun samePayload(keys: VaultKeys, left: ByteArray, right: ByteArray): Boolean {
-        val a = keys.decrypt(Proto.decode(left).one(6))
-        val b = keys.decrypt(Proto.decode(right).one(6))
+        val a = PasswordResourceCodec.plaintext(left, keys).encode()
+        val b = PasswordResourceCodec.plaintext(right, keys).encode()
         return try { MessageDigest.isEqual(a, b) } finally { a.fill(0); b.fill(0) }
     }
     private fun reencrypt(keys: VaultKeys, entity: ByteArray): ByteArray {
-        val proto = Proto.decode(entity)
-        val plaintext = keys.decrypt(proto.one(6))
-        return try { proto.replace(6, keys.encrypt(plaintext)).encode() } finally { plaintext.fill(0) }
+        return PasswordResourceCodec.reencrypt(entity, keys)
     }
     private fun equal(a: ByteArray?, b: ByteArray?): Boolean = a != null && b != null && MessageDigest.isEqual(a, b)
 }

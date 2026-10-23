@@ -18,6 +18,7 @@ object PasswordProvider {
                         (option.allowedUserIds.isEmpty() || entry.data.username in option.allowedUserIds)
                 }.take(100).map { entry ->
                     PasswordCredentialEntry(context = context, username = entry.data.username,
+                        displayName = entry.data.displayName.takeIf { it.isNotEmpty() },
                         pendingIntent = tickets.issue(account, entry.id, entry.data.realm, caller.identity, false),
                         beginGetPasswordOption = option, isAutoSelectAllowed = false)
                 }

@@ -64,7 +64,7 @@ password pagination uses field 3. Both use separate durable mutation journals.
   DataHolder column, exact account, UID binding, and certificate-verified credential permission.
   Affiliation/UI-enrichment features are not advertised as complete.
 - Native management UI: local/device storage, account choice and opt-in sync, manual save,
-  password edit, delete and custom-passphrase unlock. Owner verification when a screen lock is set,
+  password/name/default-note edit, metadata search, never-save sites, delete and custom-passphrase unlock. Owner verification when a screen lock is set,
   foreground-only grants, secure window and disabled autofill for the manager itself.
 - Android Credential Manager get/create and legacy Autofill get/save use the same vault.
   Exact web origin or certificate-bound Android facet only; browser-delegated origins are
@@ -86,7 +86,7 @@ registration is established by `bfgj`, `bfef`, `bfel`, `iaid`, `iaie`, `iaij`, `
 heartbeat. `SyncIntentOperation`, `ipbb` and `ipba` establish sender, cache-GUID and type-ID
 invalidation routing. These are format/behavior observations, not copied source.
 
-The next implementation adds account-encrypted device registration, a durable 16-byte
+The implementation adds account-encrypted device registration, a durable 16-byte
 creation nonce reused after a lost response, acknowledged client-token/cache-GUID storage,
 heartbeat/token updates, and registered tokens on password and preference mutations.
 State schema v3 reads v1/v2 while fencing older writers. An internal, non-exported push
@@ -111,6 +111,26 @@ The broader comparison remains open: SyncEntities generic entity contracts, affi
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
 behavior and interoperability evidence. Adding a transport method alone does not complete
 one of those flows.
+
+## Password management and notes comparison
+
+The pinned converter `berz` reads main ciphertext field 6 and, only when PasswordSpecificsData
+notes field 22 is absent, falls back to encrypted notes backup field 10. Explicit empty notes
+remain authoritative. Independent code now encrypts both representations together, updates
+server metadata field 8 (realm, blocked flag, last use, issues and credential type), and retains
+resource identity, version and unknown fields. Partial-client edits retain omitted notes and
+unsupported fields; explicit note removal cannot resurrect an older backup. Password changes
+clear old issue flags according to the reference converter. The matching public
+[Chrome 145 password protocol](https://chromium.googlesource.com/chromium/src/+/refs/tags/145.0.7632.218/components/sync/protocol/password_specifics.proto)
+also defines named notes, creation times and hide-by-default; those fields survive default-note edits.
+
+The management screen adds metadata-only search, account holder name/default-note editing,
+and never-save site controls. Passwords and notes are masked in the editor. Never-save rules
+are rechecked under the vault lock before automatic save; manual management remains available.
+Separate Compose dialog windows now have their own secure-window and obscured-touch guard.
+Host validation passes 50 password-sync and 41 Core tests; product and instrumentation APKs
+compile. New isolated Android and native synthetic metadata-editor acceptance is pending.
+Username/site identity changes, moving stores, import/export and password checkup remain open.
 
 ## Remaining parity and acceptance
 
@@ -221,7 +241,7 @@ No password or preference cloud writes ran in this review round.
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |
 | Encryption recovery | Synthetic host cases cover keystore/trusted/custom derivation and keybag rotation. Real account recovery, stale-key refresh, registration, enable/rotate/clear RPCs and cross-device recovery are not accepted. |
 | Conflict recovery UI | Conflicts and uncertain changes are retained. Owner selection of local/remote resolution, retry/drop, and vault-reset recovery still need UI and tests. |
-| Password management | Search, note/name edits, moving between stores, import/export, blocked-site settings and checkup/breach service parity remain. |
+| Password management | Metadata search, note/name editing and blocked-site settings are implemented and host-tested; device/editor acceptance is pending. Username/site identity edits, moving stores, import/export and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
 | Phone | Signed private installation, isolated cases and historical native synthetic CRUD/restoration passed. Secondary-process reads, a scheduled worker, no-lock account listing and manager background/reopen/recreation through injected taps passed. Provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |

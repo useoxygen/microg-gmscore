@@ -28,6 +28,54 @@ class PasswordVaultAndroidTest {
         .joinToString("") { "%02x".format(it.toInt() and 255) }
     private fun fixtureState(marker: String) = VaultState(chromeLocalData = hashMapOf("fixture" to marker.toByteArray()))
 
+    @Test fun passwordDialogCallbackRejectsObscuredInputBeforeDelegating() {
+        assumeTrue(Build.VERSION.SDK_INT >= 29)
+        var delivered = 0
+        val callback = java.lang.reflect.Proxy.newProxyInstance(android.view.Window.Callback::class.java.classLoader,
+            arrayOf(android.view.Window.Callback::class.java)) { _, method, _ ->
+            if (method.name == "dispatchTouchEvent") { delivered++; true } else if (method.returnType == Boolean::class.javaPrimitiveType) false else null
+        } as android.view.Window.Callback
+        val guard = PasswordDialogTouchGuard(callback)
+        val pointer = android.view.MotionEvent.PointerProperties().apply { id = 0; toolType = android.view.MotionEvent.TOOL_TYPE_FINGER }
+        val coordinates = android.view.MotionEvent.PointerCoords().apply { x = 10f; y = 10f; pressure = 1f; size = 1f }
+        for (flags in listOf(0, android.view.MotionEvent.FLAG_WINDOW_IS_OBSCURED, android.view.MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED)) {
+            val event = android.view.MotionEvent.obtain(0, 0, android.view.MotionEvent.ACTION_DOWN, 1, arrayOf(pointer), arrayOf(coordinates),
+                0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, flags)
+            try { assertEquals(flags == 0, guard.dispatchTouchEvent(event)) } finally { event.recycle() }
+        }
+        assertEquals(1, delivered)
+    }
+
+    @Test fun automaticSaveAtomicallyRespectsBlockedSitesAndPreservesMetadata() {
+        assumeTrue(Build.VERSION.SDK_INT >= 28)
+        val identity = identity()
+        val store = AndroidVaultStore(context, identity)
+        val vault = DevicePasswordVault(context, identity)
+        val blocked = PasswordData.blockedSite("https://example.invalid/path", 1234L)
+        val original = PasswordData.create(blocked.realm, blocked.realm, "synthetic", "before", 1234L)
+            .withDisplayName("Fixture name").withDefaultNote("Fixture note", 1234L)
+        val other = PasswordData.create("https://other.invalid/", "https://other.invalid/", "synthetic", "unrelated", 1234L)
+        fun wrapped(value: PasswordData) = Proto.field(1, value.encode())
+        try {
+            vault.upsert(wrapped(original)); vault.upsert(wrapped(other))
+            val proposed = original.withPassword("after", 2345L)
+            // Simulate a block added after the caller inspected the old save suggestions.
+            assertTrue(vault.acceptsAutomaticSave(original.realm))
+            vault.upsert(wrapped(blocked))
+            assertFalse(vault.acceptsAutomaticSave(original.realm))
+            assertThrows(PasswordSaveBlockedException::class.java) { vault.upsertAutomatic(wrapped(proposed)) }
+            assertArrayEquals(original.encode(), DevicePasswordVault(context, identity).list().single { it.id == original.tag() }.data.encode())
+            vault.delete(wrapped(blocked))
+            vault.upsertAutomatic(wrapped(proposed))
+            val reopened = DevicePasswordVault(context, identity).list()
+            val updated = reopened.single { it.id == original.tag() }.data
+            assertEquals("after", updated.password)
+            assertEquals("Fixture name", updated.displayName)
+            assertEquals("Fixture note", updated.defaultNote!!.value)
+            assertArrayEquals(other.encode(), reopened.single { it.id == other.tag() }.data.encode())
+        } finally { store.clear() }
+    }
+
     @Test fun clientTagMatchesGooglesAndroidUriEncodingForPunctuationAndUnicode() {
         assumeTrue(Build.VERSION.SDK_INT >= 28)
         val origin = "https://example.invalid/a'b"

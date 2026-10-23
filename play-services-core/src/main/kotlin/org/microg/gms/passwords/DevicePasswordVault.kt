@@ -5,8 +5,9 @@ import android.content.Context
 import java.security.SecureRandom
 
 /** Chrome's null account denotes a separate, local-only vault; it never selects a Google account. */
-class DevicePasswordVault(context: Context) : PasswordVault {
-    private val store = AndroidVaultStore(context, "local-passwords-v1")
+class DevicePasswordVault private constructor(private val store: AndroidVaultStore) : PasswordVault {
+    constructor(context: Context) : this(AndroidVaultStore(context, "local-passwords-v1"))
+    internal constructor(context: Context, fixtureIdentity: String) : this(AndroidVaultStore(context, fixtureIdentity))
     override val enabled = true
     override fun setEnabled(value: Boolean) { if (!value) throw UnsupportedOperationException() }
     override fun refresh() = SyncReceipt(list().size, 0, 0, 0)
@@ -22,13 +23,14 @@ class DevicePasswordVault(context: Context) : PasswordVault {
         try { state.records.map { raw ->
             val entity = Proto.decode(raw)
             val tag = entity.string(2)
-            val plain = keys.decrypt(entity.one(6))
-            val data = try { PasswordData.decode(plain) } finally { plain.fill(0) }
+            val data = PasswordResourceCodec.read(raw, keys)
             PasswordView(tag, data, Proto.field(1, data.encode()) +
                 (state.chromeLocalData[tag]?.let { Proto.field(3, it) } ?: byteArrayOf()))
         } } finally { keys.destroy() }
     }
-    override fun upsert(chromePassword: ByteArray) = store.locked { session ->
+    override fun upsert(chromePassword: ByteArray) = upsert(chromePassword, false)
+    override fun upsertAutomatic(chromePassword: ByteArray) = upsert(chromePassword, true)
+    private fun upsert(chromePassword: ByteArray, automatic: Boolean) = store.locked { session ->
         val wrapper = Proto.decode(chromePassword)
         val data = PasswordData.decode(wrapper.one(1))
         val tag = data.tag()
@@ -36,9 +38,13 @@ class DevicePasswordVault(context: Context) : PasswordVault {
         initialize(state)
         val keys = VaultKeys.unlock(state.metadata!!, customKey = state.customKey)
         try {
+            if (automatic) for (raw in state.records) {
+                val existing = PasswordResourceCodec.read(raw, keys)
+                if (existing.blocked && existing.realm == data.realm) throw PasswordSaveBlockedException()
+            }
             val old = state.records.singleOrNull { Proto.decode(it).string(2) == tag }
-            val entity = old?.let(Proto::decode)?.replace(6, keys.encrypt(data.encode()))?.encode() ?:
-                Proto.field(1, "local/$tag") + Proto.field(2, tag) + Proto.field(6, keys.encrypt(data.encode()))
+            val merged = old?.let { PasswordResourceCodec.read(it, keys).mergeFrom(data) } ?: data
+            val entity = PasswordResourceCodec.encrypt(merged, keys, old ?: (Proto.field(1, "local/$tag") + Proto.field(2, tag)))
             state.records.removeAll { Proto.decode(it).string(2) == tag }; state.records.add(entity)
             wrapper.optional(3)?.let { state.chromeLocalData[tag] = it }
             session.save(state)
