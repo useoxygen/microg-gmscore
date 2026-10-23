@@ -87,13 +87,14 @@ class MigrationLabActivity : Activity() {
     private fun startRadioProbe() {
         setContentView(TextView(this).apply { text = "Testing DCT advertisement for 15 seconds…" })
         val session = DctSession.create()
+        val advertisedSession = intent.getStringExtra("test_session") ?: session.sessionId
         handler.postDelayed({ finish() }, 15_000)
         val listener = object : DctBluetoothNetwork.Listener {
             override fun onReserved(psm: Int) {
                 Log.i("GmsSwitchLab", "PASS Bluetooth IPv6 PSM reserved: $psm")
                 runCatching {
                     advertising = DctAdvertiser(this@MigrationLabActivity).also {
-                        it.start(session.sessionId, psm) { result -> Log.i("GmsSwitchLab", "DCT advertise result=$result") }
+                        it.start(advertisedSession, psm) { result -> Log.i("GmsSwitchLab", "DCT advertise result=$result") }
                     }
                 }.onFailure { Log.i("GmsSwitchLab", "BLOCKED advertising: ${it.javaClass.simpleName}"); finish() }
             }
