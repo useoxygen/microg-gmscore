@@ -428,6 +428,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
             getStyle(mapContext, storedMapType, mapStyle),
             update
         )
+        TileKeyCheck.subscribe(this) { if (it.map != null) it.applyMapStyle() }
 
         map?.let { BitmapDescriptorFactoryImpl.registerMap(it) }
 
@@ -902,6 +903,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
     }
     override fun onDestroy() {
         Log.d(TAG, "onDestroy");
+        TileKeyCheck.unsubscribe(this)
         userOnInitializedCallbackList.clear()
         lineManager?.onDestroy()
         lineManager = null
