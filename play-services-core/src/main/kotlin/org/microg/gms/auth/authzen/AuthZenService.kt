@@ -52,15 +52,21 @@ internal class AuthZenIngress(
         }
         val payload = (envelope as AuthZenEnvelope.SecureGcm).payload
         diagnostics.event(AuthZenEvent.INGRESS, session, "route" to Route.SECUREGCM, "size_bucket" to sizeBucket(payload.size))
+        // A blocked route does not even parse the message, except for shape logging in a lab-capture build.
+        val blocked = blocker()
+        val capture = labCapture()
+        if (blocked != null && !capture) {
+            diagnostics.event(AuthZenEvent.READINESS, session, "reason" to blocked)
+            return true
+        }
         val message = try {
             SecureMessageParser.decode(payload)
         } catch (e: SecureMessageException) {
             diagnostics.event(AuthZenEvent.CRYPTO_FAILED, session, "stage" to CryptoStage.FRAMING)
             return true
         }
-        val capture = labCapture()
         if (capture) logUnverifiedShape(session, payload, message)
-        blocker()?.let {
+        blocked?.let {
             diagnostics.event(AuthZenEvent.READINESS, session, "reason" to it)
             return true
         }

@@ -112,6 +112,14 @@ class AuthZenFlowTest {
     }
 
     @Test
+    fun theDefaultBuildDoesNotParseMalformedMessages() {
+        blocker = AuthZenBlocker.FEATURE_OFF
+        assertTrue(deliver("AA"))
+        assertEquals(listOf("ingress", "readiness"), logs.map { it.substringBefore(' ').removePrefix("event=") })
+        assertTrue(logs.last().contains("reason=feature_off"))
+    }
+
+    @Test
     fun withoutAVerifiedProfileRequestsAreUnsupported() {
         enroll()
         assertTrue(deliver(ingress = ingress(profiles = AuthZenProfiles.verified)))
