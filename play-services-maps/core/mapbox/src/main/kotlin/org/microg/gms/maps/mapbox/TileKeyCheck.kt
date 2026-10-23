@@ -4,7 +4,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -49,7 +48,7 @@ object TileKeyCheck {
                 } finally {
                     connection.disconnect()
                 }
-            } catch (e: IOException) {
+            } catch (e: Exception) { // IOException, or SecurityException in an app without INTERNET
                 Log.d(TAG, "Tile key check failed: $e")
                 null
             }
