@@ -54,7 +54,8 @@ internal object SyntheticMetadataRestore {
             if (unrelatedBaseline != null) assertTrue("Unrelated data changed before restoration", unrelatedBaseline.keys == unrelated.keys &&
                 unrelatedBaseline.all { (id, bytes) -> MessageDigest.isEqual(bytes, unrelated.getValue(id)) })
             val state = repository.store.locked { it.load() }
-            val local = originalChromeLocalData ?: if (chromeWrapper) Proto.decode(savedOriginal).optional(3) else state.chromeLocalData[tag]
+            val local = if (officialClientExpected != null) originalChromeLocalData else
+                if (chromeWrapper) Proto.decode(savedOriginal).optional(3) else state.chromeLocalData[tag]
             assertTrue("Unrelated journal cannot be resolved by a fixture", state.preferenceMutations.isEmpty() &&
                 state.mutations.all { it.tag == tag && (it.kind == MutationKind.UPDATE || resuming) })
             state.mutations.mapNotNull { it.desired }.forEach { assertEdit(PasswordResourceCodec.read(it, keys)) }
@@ -105,6 +106,7 @@ internal object SyntheticMetadataRestore {
                         override fun load() = latest
                         override fun save(state: VaultState) {
                             if (local != null) state.chromeLocalData[tag] = local
+                            else if (officialClientExpected != null) state.chromeLocalData.remove(tag)
                             session.save(state)
                         }
                     }

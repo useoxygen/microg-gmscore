@@ -14,6 +14,18 @@ import java.security.MessageDigest
 /** Explicit stages around an actual Google web-manager edit; no synthetic producer is substituted. */
 @RunWith(AndroidJUnit4::class)
 class PasswordOfficialClientAndroidTest {
+    @Test fun verifyTheUnchangedOfficialClientCheckpointBeforeRetryingTheUi() = withAccount { repository, checkpoint ->
+        val saved = checkpoint.locked { it.load() }
+        val original = PasswordData.decode(saved.chromeLocalData.getValue("original"))
+        val entries = repository.list(false)
+        val current = entries.single { it.id == original.tag() }
+        assertUnrelated(saved, entries, original.tag())
+        assertTrue("The failed UI attempt changed the original fixture", same(original.encode(), current.data.encode()))
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+            putString("officialCheckpointState", "originalExact=true,unrelatedUnchanged=true,journalEmpty=true")
+        })
+    }
+
     @Test fun checkpointTheSingleApprovedLoginBeforeTheOfficialClientEdit() = withAccount { repository, checkpoint ->
         assertTrue("An earlier official-client checkpoint needs recovery", checkpoint.locked { it.load().chromeLocalData.isEmpty() })
         val entries = repository.list(false)
@@ -54,7 +66,7 @@ class PasswordOfficialClientAndroidTest {
         })
     }
 
-    @Test fun restoreTheOriginalPayloadAfterTheVerifiedOfficialClientEdit() = withAccount { repository, checkpoint ->
+    @Test fun restoreTheOriginalPayloadAfterTheVerifiedOfficialClientEdit() = withAccount(allowOwnRestore = true) { repository, checkpoint ->
         val saved = checkpoint.locked { it.load() }
         val original = PasswordData.decode(saved.chromeLocalData.getValue("original"))
         assertTrue("Restore input is outside the approved fixture", fixture(original))
@@ -66,18 +78,24 @@ class PasswordOfficialClientAndroidTest {
             originalChromeLocalData = Proto.decode(saved.chromeLocalData.getValue("chrome")).optional(3))
         val entries = repository.list(false)
         assertTrue("Exact official-client fixture restoration is unverified", same(original.encode(), entries.single { it.id == original.tag() }.data.encode()))
+        assertTrue("Chrome-local metadata was not exactly restored", same(saved.chromeLocalData.getValue("chrome"), entries.single { it.id == original.tag() }.chromeBytes))
         assertTrue("Unrelated data changed during restoration", sameMap(baseline, entries.filter { it.id != original.tag() }.associate { it.id to it.data.encode() }))
     }
 
-    private fun withAccount(action: (PasswordRepository, AndroidVaultStore) -> Unit) {
+    private fun withAccount(allowOwnRestore: Boolean = false, action: (PasswordRepository, AndroidVaultStore) -> Unit) {
         assumeTrue(arguments.getString("passwordLiveOfficial") == "cyc653")
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
         val selected = arguments.getString("passwordLiveAccount")
         assumeTrue(!selected.isNullOrBlank())
         val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
         val repository = PasswordRepository(context, account)
-        assertTrue("Refusing a preexisting mutation journal", repository.store.locked { it.load().mutations.isEmpty() && it.load().preferenceMutations.isEmpty() })
         val checkpoint = AndroidVaultStore(context, "password-fixture-official-client/" + account.name)
+        val original = checkpoint.locked { it.load().chromeLocalData["original"] }?.let(PasswordData::decode)
+        assertTrue("Refusing a preexisting mutation journal", repository.store.locked { session ->
+            val state = session.load()
+            state.preferenceMutations.isEmpty() && (state.mutations.isEmpty() || allowOwnRestore && original != null &&
+                fixture(original) && state.mutations.all { it.tag == original.tag() })
+        })
         val enabled = repository.enabled
         try { repository.setEnabled(true); repository.refresh(); action(repository, checkpoint) }
         finally { if (!enabled) repository.setEnabled(false) }
