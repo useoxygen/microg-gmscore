@@ -73,6 +73,8 @@ public final class GoogleMapOptions extends AutoSafeParcelable {
     @Field(21)
     @Nullable
     private String mapId;
+    @Field(23)
+    private int mapColorScheme = 0;
 
     /**
      * Creates a new GoogleMapOptions object.
@@ -339,6 +341,13 @@ public final class GoogleMapOptions extends AutoSafeParcelable {
     public boolean getLiteMode() {
         // Is encoded as `-1` if null, `0` if false, `1` if true. The default is false.
         return liteMode == 1;
+    }
+
+    /**
+     * @return the map color scheme: 0 light, 1 dark, 2 follow the system.
+     */
+    public int getMapColorScheme() {
+        return mapColorScheme;
     }
 
     /**

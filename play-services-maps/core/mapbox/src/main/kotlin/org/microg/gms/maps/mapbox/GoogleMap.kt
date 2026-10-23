@@ -123,6 +123,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
 
     var storedMapType: Int = options.mapType
     var mapStyle: MapStyleOptions? = null
+    private var colorScheme: Int = options.mapColorScheme
     val waitingCameraUpdates = mutableListOf<CameraUpdate>()
     var locationEnabled: Boolean = false
 
@@ -278,6 +279,14 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
 
     override fun stopAnimation() = map?.cancelTransitions() ?: Unit
 
+    override fun setMapColorScheme(scheme: Int) {
+        if (scheme == colorScheme) return
+        colorScheme = scheme
+        applyMapStyle()
+    }
+
+    override fun getMapColorScheme(): Int = colorScheme
+
     override fun setMapStyle(options: MapStyleOptions?): Boolean {
         Log.d(TAG, "setMapStyle options: " + options?.getJson())
         mapStyle = options
@@ -425,7 +434,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
         }
 
         map?.setStyle(
-            getStyle(mapContext, storedMapType, mapStyle),
+            getStyle(mapContext, storedMapType, withColorScheme(mapContext, colorScheme, mapStyle)),
             update
         )
         TileKeyCheck.subscribe(this) { if (it.map != null) it.applyMapStyle() }
