@@ -63,6 +63,21 @@ class PasswordResourceCodecTest {
         val deleted = previous.mergeFrom(PasswordData.decode(Proto.decode(item().encode()).replace(22, byteArrayOf()).encode()))
         assertTrue(deleted.notes.isEmpty()); assertNotNull(deleted.encodedNotes)
     }
+    @Test fun aServerRetainedBackupCannotResurrectAnExplicitlyClearedNote() = withKeys { keys ->
+        val original = item()
+        val noted = original.withDefaultNote("fixture note", 2345L)
+        val server = PasswordResourceCodec.encrypt(noted, keys)
+        // Native Google readback retained backup10 when an update omitted it, even while
+        // replacing the main ciphertext. Removing a protobuf field is not a server clear.
+        val omitted = PasswordResourceCodec.encrypt(original, keys, server)
+        val merged = Proto.decode(server).overlay(Proto.decode(omitted)).encode()
+        assertEquals("fixture note", PasswordResourceCodec.read(merged, keys).defaultNote!!.value)
+        val clear = PasswordResourceCodec.encrypt(noted.withDefaultNote("", 3456L), keys, server)
+        val acknowledged = Proto.decode(server).overlay(Proto.decode(clear)).encode()
+        assertTrue(PasswordResourceCodec.read(acknowledged, keys).notes.isEmpty())
+        assertNotNull(PasswordResourceCodec.read(acknowledged, keys).encodedNotes)
+        assertEquals(0, keys.decrypt(Proto.decode(acknowledged).one(10)).size)
+    }
     @Test fun changedPasswordsKeepOnlyExplicitIncomingPhishingIssuesAndBlockedWritesRequireEmptyUsername() = withKeys { keys ->
         val issues = Proto.field(1, Proto.integer(1, 1)) + Proto.field(4, Proto.integer(1, 2))
         val previous = PasswordData.decode(Proto.decode(item().encode()).replace(19, issues).encode())

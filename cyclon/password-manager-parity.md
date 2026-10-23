@@ -139,12 +139,21 @@ The management screen adds metadata-only search, account holder name/default-not
 and never-save site controls. Passwords and notes are masked in the editor. Never-save rules
 are rechecked under the vault lock before automatic save; manual management remains available.
 Separate Compose dialog windows now have their own secure-window and obscured-touch guard.
-Host validation passes 50 password-sync and 41 Core tests; product and instrumentation APKs
-compile. The matching-signer 0e9c8653 build passed all nine isolated Android cases and both
-existing manager listing/lifecycle cases. Its new metadata-editor case failed; that path
-remains unaccepted while the sanitized harness is diagnosed. Original Services was restored
-without clearing data and the temporary test package removed. Native synthetic editor and
-notes-backup server acceptance are pending.
+Host validation has passed 57 password-sync and 41 Core tests; product and instrumentation
+APKs compile. The matching-signer 0e9c8653 build passed all nine isolated Android cases.
+Its initial metadata-editor run left an uncertain fixture restoration; the encrypted restore
+checkpoint survived. On product 2756e591, fixture 6dcec757 recovered the exact synthetic
+payload and cleared the journal (6.232 seconds), then all three manager cases passed
+(23.47 seconds), including native-input name/note save, actual secure-dialog checks,
+metadata-only search and lifecycle grant clearing. Unrelated data was checked.
+
+Phone-only readback confirmed that Google retained backup field 10 when a restore update
+omitted it, even though the main ciphertext contained the original payload. The synthetic
+fixture therefore uses its explicitly authorized delete/re-create path for exact restoration.
+Normal note deletion sends an authoritative empty field 22 and matching empty encrypted
+backup; the explicit server no-resurrection/GetPassword check is pending. The real server-push
+test timed out (97.123 seconds); an FCM token alone is not push-delivery acceptance.
+Original Services was restored without clearing data and temporary test packages removed.
 Username/site identity changes, moving stores, import/export and password checkup remain open.
 
 ## Remaining parity and acceptance

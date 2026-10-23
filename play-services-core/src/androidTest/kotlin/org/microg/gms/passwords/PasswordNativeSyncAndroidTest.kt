@@ -3,6 +3,13 @@ package org.microg.gms.passwords
 
 import android.accounts.AccountManager
 import android.os.Bundle
+import android.os.Build
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.Constraints
@@ -24,10 +31,51 @@ import org.junit.runner.RunWith
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun nativeNotesBackupClearsWithoutResurrectionAndRestoresOriginal() {
+        assumeTrue(arguments.getString("passwordLiveNotes") == "cyc654")
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        withFixture { repository, original ->
+            val checkpoint = AndroidVaultStore(context, "password-fixture-metadata-restore/" + repository.account.name)
+            checkpoint.locked { session ->
+                assertTrue("An earlier metadata checkpoint needs recovery", session.load().chromeLocalData["original"] == null)
+                session.save(VaultState(chromeLocalData = hashMapOf("original" to original.data.encode())))
+            }
+            try {
+                val note = "cyc654-note-" + UUID.randomUUID()
+                val changed = original.data.withDefaultNote(note, System.currentTimeMillis())
+                repository.upsert(Proto.field(1, changed.encode()))
+                val written = repository.refresh()
+                assertTrue("Note write requires reconciliation", written.conflicts == 0 && written.indeterminate == 0)
+                val readback = repository.list(false).single { it.id == original.id }.data
+                assertTrue("Note was not persisted", readback.defaultNote?.value == note)
+                repository.upsert(Proto.field(1, readback.withDefaultNote("", System.currentTimeMillis()).encode()))
+                val cleared = repository.refresh()
+                assertTrue("Note removal requires reconciliation", cleared.conflicts == 0 && cleared.indeterminate == 0)
+                repository.refresh()
+                val state = repository.store.locked { it.load() }
+                val record = state.records.single { Proto.decode(it).string(2) == original.id }
+                val keys = VaultKeys.unlock(state.metadata!!)
+                try {
+                    val current = PasswordResourceCodec.read(record, keys)
+                    assertTrue("Cleared note resurrected", current.notes.isEmpty() && current.encodedNotes != null)
+                    val backup = keys.decrypt(Proto.decode(record).one(10))
+                    try { assertTrue("Encrypted backup still contains notes", Proto.decode(backup).bytes(1).isEmpty()) }
+                    finally { backup.fill(0) }
+                    // Exercise the independently versioned GetPassword RPC as an official server read,
+                    // then compare authenticated plaintext without exporting it from the phone.
+                    val remote = nativeApi(repository).get(Proto.decode(record).string(1))
+                    assertTrue("GetPassword differs from the authenticated snapshot",
+                        same(current.encode(), PasswordResourceCodec.read(remote, keys).encode()))
+                } finally { keys.destroy() }
+            } finally { SyntheticMetadataRestore.restore(context, repository, checkpoint) }
+        }
+    }
+
     @Test fun restoreInterruptedApprovedSyntheticMetadataFixture() {
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
         val selected = arguments.getString("passwordLiveAccount")
@@ -68,6 +116,33 @@ class PasswordNativeSyncAndroidTest {
             val registration = repository.store.locked { it.load().deviceRegistration } ?: error("Missing registration")
             assertTrue("Push delivery capability unavailable: messaging consent, check-in and registration are required",
                 registration.info?.let { Proto.decode(it).optionalString(7) }?.isNotEmpty() == true)
+            val pushUri = Uri.parse("content://com.google.android.gms.cyclon.push")
+            fun connected() = context.contentResolver.call(pushUri, "state", null, null)?.getBoolean("connected") == true
+            fun messages(): Long {
+                @Suppress("DEPRECATION")
+                val apps = context.contentResolver.call(pushUri, "apps", "com.google.android.gms", null)
+                    ?.getParcelableArrayList<Bundle>("apps")
+                return apps?.singleOrNull()?.getLong("message_count") ?: 0
+            }
+            val connectionDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (!connected() && System.nanoTime() < connectionDeadline) Thread.sleep(100)
+            assertTrue("Push delivery capability unavailable: read-only MCS bridge reports disconnected", connected())
+            val received = AtomicInteger(); val matching = AtomicInteger(); val relevant = AtomicInteger(); val invalid = AtomicInteger()
+            val observer = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    val sender = intent.getStringExtra("google.c.sender.id") ?: intent.getStringExtra("from")?.substringBefore('@')
+                    if (sender != PasswordInvalidation.SENDER) return
+                    received.incrementAndGet()
+                    if (intent.getStringExtra("cache_guid") == registration.cacheGuid) matching.incrementAndGet()
+                    try {
+                        val payload = intent.getStringExtra("payload") ?: throw ProtocolException()
+                        if (payload.length > 90_000) throw ProtocolException()
+                        val hint = PasswordInvalidation.decode(sender, intent.getStringExtra("cache_guid"), Base64.decode(payload, Base64.DEFAULT))
+                        if (hint.appliesTo(registration)) relevant.incrementAndGet()
+                    } catch (_: Exception) { invalid.incrementAndGet() }
+                }
+            }
+            val messageBaseline = messages()
             val checkpoint = AndroidVaultStore(context, "password-fixture-push-restore/" + repository.account.name)
             val remoteStore = AndroidVaultStore(context, "password-fixture-push-remote/" + repository.account.name)
             val restore = checkpoint.locked { session -> session.load().chromeLocalData["original"] ?: original.data.encode().also {
@@ -100,6 +175,9 @@ class PasswordNativeSyncAndroidTest {
             val work = RemoteWorkManager.getInstance(context)
             val userId = AccountManager.get(context).getUserData(repository.account, "GoogleUserId") ?: throw VaultLockedException()
             val marker = PasswordRepository.hash("google:$userId")
+            val filter = IntentFilter("com.google.android.c2dm.intent.RECEIVE")
+            if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(observer, filter, Context.RECEIVER_NOT_EXPORTED)
+            else @Suppress("DEPRECATION") context.registerReceiver(observer, filter)
             try {
                 refreshRemote()
                 work.cancelUniqueWork("password-periodic-$marker").get(30, TimeUnit.SECONDS)
@@ -122,6 +200,12 @@ class PasswordNativeSyncAndroidTest {
                     }
                     Thread.sleep(100)
                 }
+                val after = repository.store.locked { it.load().invalidations }
+                InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+                    putString("passwordPushDelivery", "connected=${connected()},gmsMessageDelta=${messages() - messageBaseline}," +
+                        "senderMatched=${received.get()},cacheMatched=${matching.get()},relevant=${relevant.get()},invalid=${invalid.get()}," +
+                        "directGenerationBefore=$before,directGenerationAfter=${after.directPasswordGeneration},handled=${after.passwordsHandled}")
+                })
                 assertTrue("Real server push refresh was not observed within the bounded delivery window", observed)
             } finally {
                 try {
@@ -135,7 +219,9 @@ class PasswordNativeSyncAndroidTest {
                         same(restore, repository.list(false).single { it.id == original.id }.data.encode()))
                     checkpoint.clear()
                     remoteStore.clear()
-                } finally { repository.setEnabled(true) }
+                } finally {
+                    try { context.unregisterReceiver(observer) } finally { repository.setEnabled(true) }
+                }
             }
         }
     }
@@ -310,6 +396,17 @@ class PasswordNativeSyncAndroidTest {
 
     private fun isFixture(data: PasswordData) = data.realm == "https://cyc651.example.invalid/" &&
         data.username == "cyc651-synthetic-user" && !data.blocked
+    private fun nativeApi(repository: PasswordRepository): PasswordApi {
+        val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
+            "oauth2:https://www.googleapis.com/auth/login_manager").apply {
+            isGmsApp = true; setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
+        }
+        val token = auth.requestAuthWithBackgroundResolution(false).auth ?: throw VaultLockedException()
+        return PasswordApi(GooglePasswordTransport({
+            assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
+            token
+        }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
+    }
     private fun same(a: ByteArray, b: ByteArray) = MessageDigest.isEqual(a, b)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val arguments get() = InstrumentationRegistry.getArguments()
