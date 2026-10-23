@@ -22,6 +22,8 @@ dependencies {
     // The Compose BOM's older Espresso reflects InputManager.getInstance, removed on API 37.
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'com.upokecenter:cbor:4.5.2'
+    testImplementation 'org.bouncycastle:bcprov-jdk15to18:1.83'
     // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.
     testImplementation 'org.json:json:20240303'
     implementation project(':people-sync')

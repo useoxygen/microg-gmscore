@@ -20,12 +20,12 @@ class HybridPrfTest {
         val prf = map("eval" to map("first" to first), "evalByCredential" to map(id to map("first" to second, "second" to first)))
         val wire = map(1 to "example.invalid", 2 to ByteArray(32), 4 to map("prf" to prf))
         val decoded = AuthenticatorGetAssertionRequest.decodeFromCbor(wire)
-        val entries = HybridPrf.parse(decoded.extensions, false)!!.prfExtension.entries
+        val entries = HybridPrf.parse(decoded.extensions, false)!!.prfExtension!!.entries
         assertEquals(4, entries.size); assertNull(entries[0]); assertArrayEquals(first, entries[1])
         assertArrayEquals(id, entries[2]); assertArrayEquals(second + first, entries[3])
     }
     @Test fun createCapabilityOnlyIsValidButGetRequiresRealEvaluationAndRejectsMalformedOrUnsupportedInputs() {
-        assertEquals(0, HybridPrf.parse(mapOf("prf" to map()), true)!!.prfExtension.entries.size)
+        assertEquals(0, HybridPrf.parse(mapOf("prf" to map()), true)!!.prfExtension!!.entries.size)
         assertThrows(IllegalArgumentException::class.java) { HybridPrf.parse(mapOf("prf" to map()), false) }
         for (bad in listOf(map("eval" to map("first" to ByteArray(31))), map("eval" to map("first" to true)),
                 map("eval" to map("second" to second)), map("evalByCredential" to map("text-id" to map("first" to first))),
@@ -55,6 +55,6 @@ class HybridPrfTest {
         val actual = AuthenticationExtensions.Builder().setFido2Extension(appId).setPrfExtension(prf).build()
         assertSame(appId, actual.fidoAppIdExtension)
         assertSame(prf, actual.prfExtension)
-        assertArrayEquals(first, actual.prfExtension.entries[1])
+        assertArrayEquals(first, actual.prfExtension!!.entries[1])
     }
 }

@@ -19,13 +19,13 @@ class HybridPrfParcelAndroidTest {
             .setOrigin(android.net.Uri.parse(HybridAccountSessions.CONTEXT)).setClientDataHash(ByteArray(32) { 5 }).build()
         val raw = options.serializeToBytes()
         val decoded = BrowserPublicKeyCredentialRequestOptions.deserializeFromBytes(raw)
-        assertArrayEquals(input, decoded.publicKeyCredentialRequestOptions.authenticationExtensions.prfExtension.entries[1])
+        assertArrayEquals(input, decoded.publicKeyCredentialRequestOptions.authenticationExtensions!!.prfExtension!!.entries[1])
         assertArrayEquals(raw, decoded.serializeToBytes())
         val output = AuthenticationExtensionsPrfOutputs(false, input)
         val credential = PublicKeyCredential.Builder().setId("AQ").setRawId(byteArrayOf(1))
             .setResponse(AuthenticatorAssertionResponse(byteArrayOf(1), byteArrayOf(2), byteArrayOf(3), byteArrayOf(4), byteArrayOf(5)))
             .setAuthenticationExtensionsClientOutputs(AuthenticationExtensionsClientOutputs(null, null, null, output, null)).build()
         val restored = PublicKeyCredential.deserializeFromBytes(credential.serializeToBytes())
-        assertArrayEquals(input, restored.clientExtensionResults.prfOutputs.results)
+        assertArrayEquals(input, restored.clientExtensionResults!!.prfOutputs!!.results)
     }
 }
