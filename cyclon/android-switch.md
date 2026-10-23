@@ -47,6 +47,16 @@ The signed debug build based on 0b0ce2c was sideloaded over a backed-up microG
 - USB still reaches UI_AWAITING_USB and requires privileged MANAGE_USB. User-app
   installation cannot validate that path. The QR screen displays a prototype
   session and explicitly starts no radio or data flow.
+- 3:44:31 PM: the separate raw-CoC probe's FC73 advertisement returned success
+  with PSM128, but local `accept(timeout)` failed before a peer connected. The
+  Mac saw no session. The Activity-bounded `accept()` adjustment is committed
+  but untested: the signer VM stopped at3:42:57 PM, before its follow-up upload.
+
+The original 252432044/cf93b15 APK was restored byte-for-byte after the batch;
+Switch was removed and the phone returned Home. Secure/system settings matched
+the baseline; only Core's live global audio-focus bookkeeping differed. The
+signing key is the dedicated imported KMS key accessed by the Linux signer; no
+local key was found under the expected Cyclon config directories.
 
 Private evidence is under `~/research/cyc700-switch/evidence/`, especially
 `batched-usb-logcat.txt`, `batched-probes-logcat.txt`, `session-qr.png`, and the
@@ -75,7 +85,10 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME="$HOME/Library/Android/sdk" 
   --no-configuration-cache
 ```
 
-The 24 focused tests cover account identity boundaries, real Binder envelope
+The 25 focused tests cover account identity boundaries, real Binder envelope
 shapes, advertisement bytes, session encoding, Aware bitmap conversion, scoped
-HTTP request rules, exact multipart bytes/stream lengths and FD byte envelopes.
+HTTP request rules and scoped socket routing, exact multipart bytes/stream lengths
+and FD byte envelopes. The real OkHttp routing test reproduces scope loss with
+a literal IPv6 URL, then preserves the scoped address using a fixed local DNS
+name while retaining the peer's actual IPv6 HTTP authority.
 Native PAKE is a device probe because the host JVM lacks Android's PAKE provider.

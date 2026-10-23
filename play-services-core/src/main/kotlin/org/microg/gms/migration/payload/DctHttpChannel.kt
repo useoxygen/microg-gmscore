@@ -4,6 +4,7 @@ package org.microg.gms.migration.payload
 
 import android.net.Network
 import okhttp3.Call
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -20,8 +21,7 @@ import javax.net.ssl.X509TrustManager
 
 /** HTTP framing belongs to OkHttp. Authentication belongs exclusively to the platform PAKE TLS socket factory. */
 internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int, tls: PlatformPakeTls) : Closeable {
-    private val base = HttpUrl.Builder().scheme("https").host(requireNotNull(address.hostAddress).substringBefore('%'))
-        .port(port).build()
+    private val route = DctPeerRoute(address, port)
     // PAKE TLS has no certificate identity. This shim is never used to construct a certificate-TLS context.
     // The constructor accepts only PlatformPakeTls (private factory, PAKE credentials, no ordinary-TLS fallback).
     private val certificateShim = object : X509TrustManager {
@@ -30,7 +30,7 @@ internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
     private val client = OkHttpClient.Builder().proxy(Proxy.NO_PROXY).socketFactory(network.socketFactory)
-        .dns { listOf(address) } // retain the resolved IPv6 scope; never consult default-network DNS
+        .dns(route.dns)
         .sslSocketFactory(tls.client.socketFactory, certificateShim).hostnameVerifier { _, _ -> true }
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(35, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
@@ -41,12 +41,25 @@ internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int
     fun request(path: String, contentType: String?, bytes: ByteArray?, headers: List<Pair<String, String>> = emptyList()): Call =
         request(path, bytes?.toRequestBody(contentType?.toMediaType()), headers)
     fun request(path: String, body: RequestBody?, headers: List<Pair<String, String>> = emptyList()): Call =
-        client.newCall(DctHttpRequests.build(base, path, body, headers))
+        client.newCall(DctHttpRequests.build(route.base, path, body, headers).newBuilder()
+            .header("Host", route.authority).build())
 
     override fun close() {
         client.dispatcher.cancelAll()
         client.connectionPool.evictAll()
         client.dispatcher.executorService.shutdown()
+    }
+}
+
+/** Literal-IP URLs bypass OkHttp's Dns and discard the Inet6Address scope. */
+internal class DctPeerRoute(address: Inet6Address, port: Int) {
+    // This reserved name is resolved exclusively by this client's fixed Dns implementation.
+    // Keep the peer's real IPv6 authority on the wire while connecting to the scoped object.
+    val base = HttpUrl.Builder().scheme("https").host("dct-peer.invalid").port(port).build()
+    val authority = "[${requireNotNull(address.hostAddress).substringBefore('%')}]:$port"
+    val dns = Dns { host ->
+        require(host == base.host)
+        listOf(address)
     }
 }
 

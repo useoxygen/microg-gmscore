@@ -40,7 +40,7 @@ The current 7a image blocks the real `ble` reservation because microG lacks
 do not attempt a remount or a runtime privilege bypass. A separate
 `--es mode raw-ble --es test_session abc234` probe advertises the same FC73 bytes
 over a raw insecure CoC solely to isolate advertisement/CoC mechanics. It is
-bounded by Activity destruction after15 seconds and is not a migration channel.
+bounded by Activity destruction after 15 seconds and is not a migration channel.
 
 Other debug-only probe modes: omit `mode` for bounded local PAKE TLS1.3 loopback;
 `--es mode session` displays the current-format QR and explicitly labels it as a
