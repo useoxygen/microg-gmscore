@@ -49,8 +49,10 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(R.string.passwords_title), style = MaterialTheme.typography.headlineSmall)
                 if (!unlocked) {
-                    Text(stringResource(R.string.passwords_unlock_description))
-                    Button(onClick = ::authenticateOwner, enabled = !busy) { Text(stringResource(R.string.passwords_unlock)) }
+                    Text(stringResource(if (hasSecureScreenLock) R.string.passwords_unlock_description else R.string.passwords_no_lock_description))
+                    Button(onClick = ::authenticateOwner, enabled = !busy) {
+                        Text(stringResource(if (hasSecureScreenLock) R.string.passwords_unlock else R.string.passwords_open))
+                    }
                 } else {
                     val accounts = AccountManager.get(this@PasswordManagerActivity).getAccountsByType("com.google").toList()
                     if (accounts.isEmpty()) Text(stringResource(R.string.contacts_sync_no_accounts))
@@ -125,7 +127,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         val account = accounts.firstOrNull { it.name == requested } ?: accounts.singleOrNull()
         if (account != null || accounts.isEmpty()) choose(account)
     }
-    override fun onOwnerAuthenticationFailed() { message = R.string.passwords_lock_required }
+    override fun onOwnerAuthenticationFailed() { message = R.string.passwords_access_failed }
     override fun onOwnerLocked() {
         unlocked = false; entries = emptyList(); editing = null; deleting = null; editorOpen = false; passphrase = ""
     }

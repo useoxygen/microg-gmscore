@@ -64,11 +64,12 @@ password pagination uses field 3. Both use separate durable mutation journals.
   DataHolder column, exact account, UID binding, and certificate-verified credential permission.
   Affiliation/UI-enrichment features are not advertised as complete.
 - Native management UI: local/device storage, account choice and opt-in sync, manual save,
-  password edit, delete and custom-passphrase unlock. Screen-lock owner verification,
+  password edit, delete and custom-passphrase unlock. Owner verification when a screen lock is set,
   foreground-only grants, secure window and disabled autofill for the manager itself.
 - Android Credential Manager get/create and legacy Autofill get/save use the same vault.
   Exact web origin or certificate-bound Android facet only; browser-delegated origins are
-  allowed only for verified Chrome packages. Password release requires owner authentication.
+  allowed only for verified Chrome packages. Password release requires a foreground access
+  grant and, when a screen lock is configured, successful device-credential verification.
   Native web fills require agreement between the signon realm and origin URL; a realm-only
   IV edit in the legacy Nigori format cannot redirect the credential. Origin-less or inconsistent
   web entries remain manageable but are not automatically offered for native fill.
@@ -112,9 +113,26 @@ origin URL, with a failing-before/passing-after legacy-IV modification regressio
 After testing, the original Services APK **0.3.17.252432-114 (cf93b15)** was restored and
 its active version read back without clearing app data. The temporary instrumentation APK
 was removed, this thread released the Pixel session, and the signing VM was stopped.
-The private development build is no longer active on the phone. A PIN, pattern or password
-is required by this implementation's owner UI before viewing/filling credentials; the native
-sync checks passed without a screen lock. Owner UI acceptance remains open.
+The private development build is no longer active on the phone. That tested build required
+a PIN, pattern or password in the owner UI; the native sync checks passed without one.
+Owner UI acceptance remains open.
+
+The subsequent optional-screen-lock change allows full UI/provider use without configuring
+a screen lock. The manager still requires an explicit Open passwords tap and explains the
+access consequence. Provider access follows an OS picker selection; no auto-selection is
+advertised. When a secure lock is configured, a successful credential challenge is required;
+cancellation, a missing prompt, launch failure or a changed lock policy never grant no-lock
+access. Access is checked against the live lock state and resumed activity, cleared on stop,
+and never persisted. Touches obscured by overlays are rejected. These are product policies,
+not claims of Google parity or authentication-bound encryption. Android's
+[KeyguardManager contract](https://developer.android.com/reference/android/app/KeyguardManager)
+distinguishes configured credentials, current user lock and visible keyguard; the implementation
+checks all three. Overlay filtering follows Android's [tapjacking guidance](https://developer.android.com/privacy-and-security/risks/tapjacking).
+
+Seven new policy regressions passed within **41 Core unit tests**, and the debug and
+instrumentation APKs compiled. This follow-up has not been installed or device-accepted.
+Real no-lock manager/provider use, secure prompt cancellation, background/resume, overlays,
+rotation and work-profile behavior still require integration acceptance.
 
 | Surface | Gap / required proof |
 | --- | --- |
