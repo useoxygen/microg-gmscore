@@ -75,13 +75,18 @@ class PasswordManagerAndroidTest {
     private fun waitForFocus(scenario: ActivityScenario<PasswordManagerActivity>) {
         val deadline = SystemClock.uptimeMillis() + 10_000
         var focused = false
+        var focusedSince = 0L
         while (SystemClock.uptimeMillis() < deadline) {
             scenario.onActivity { activity ->
                 focused = activity.window.decorView.hasWindowFocus()
                 if (activity.window.callback !is RecordingCallback)
                     activity.window.callback = RecordingCallback(activity.window.callback)
             }
-            if (focused) return
+            // Window focus arrives before task-transition input is ready on the API 37 phone.
+            // Keep the target stable before injecting through the system input dispatcher.
+            if (!focused) focusedSince = 0L
+            else if (focusedSince == 0L) focusedSince = SystemClock.uptimeMillis()
+            else if (SystemClock.uptimeMillis() - focusedSince >= 750) return
             Thread.sleep(20)
         }
         fail("Manager did not regain input focus")
