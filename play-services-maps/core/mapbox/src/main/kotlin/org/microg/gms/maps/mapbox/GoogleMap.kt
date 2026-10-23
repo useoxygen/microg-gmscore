@@ -428,6 +428,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
             getStyle(mapContext, storedMapType, mapStyle),
             update
         )
+        if (!TileKeyCheck.stadiaRejected) TileKeyCheck.check { if (map != null) applyMapStyle() }
 
         map?.let { BitmapDescriptorFactoryImpl.registerMap(it) }
 
