@@ -22,8 +22,9 @@ class PreferenceSyncTest {
         var malformedPage = false
         var version = 0L
         var requiredClientToken: ByteArray? = null
+        private fun resourceId(name: String) = "$parent/priority_preferences/" + PriorityPreference.tagFor(name).replace('/', '_').replace('+', '-')
         fun entity(name: String, value: String): ByteArray = Proto.decode(PriorityPreference.create(name, value).encode())
-            .replace(1, "$parent/priority_preferences/${PriorityPreference.tagFor(name)}".toByteArray())
+            .replace(1, resourceId(name).toByteArray())
             .replace(3, Proto.integer(1, ++version)).encode()
         override fun invoke(method: PasswordMethod, request: ByteArray): ByteArray {
             val body = Proto.decode(request)
@@ -49,7 +50,7 @@ class PreferenceSyncTest {
                             throw PasswordRpcException(10, false)
                     }
                     val result = Proto.decode(incoming.encode()).replace(1,
-                        "$parent/priority_preferences/${incoming.tag}".toByteArray()).replace(3, Proto.integer(1, ++version)).encode()
+                        resourceId(incoming.name).toByteArray()).replace(3, Proto.integer(1, ++version)).encode()
                     if (old < 0) records.add(result) else records[old] = result
                     writes++
                     if (loseResponse) throw PasswordRpcException(14, true)
@@ -60,6 +61,58 @@ class PreferenceSyncTest {
         }
     }
     private fun engine(server: Server, store: Store) = PreferenceSync(PasswordApi(server), store)
+
+    @Test fun preferenceStaleMetadataRefreshesTheParentAndRetriesTheSameOperationOnce() {
+        val server = Server(); val store = Store(); var attempts = 0; var metadataReads = 0
+        val transport = PasswordTransport { method, request ->
+            when {
+                method == PasswordMethod.GET_METADATA -> { metadataReads++; Proto.field(1, server.parent) }
+                method == PasswordMethod.CREATE_PREFERENCE && attempts++ == 0 -> throw PasswordRpcException(9, false)
+                else -> server.invoke(method, request)
+            }
+        }
+        val sync = PreferenceSync(PasswordApi(transport), store)
+        sync.synchronize(server.parent)
+        sync.enqueue("fixture", "true")
+        val receipt = sync.synchronize(server.parent)
+        assertEquals(2, attempts); assertEquals(1, metadataReads); assertEquals(1, server.writes)
+        assertEquals(1, receipt.uploaded); assertTrue(store.state().preferenceMutations.isEmpty())
+    }
+
+    @Test fun preferenceReceiptCountsCommitsFromBeforeAndAfterTheMetadataRefresh() {
+        val server = Server(); val store = Store(); var rejected = false
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.GET_METADATA) Proto.field(1, server.parent) else {
+                if (method == PasswordMethod.CREATE_PREFERENCE && PriorityPreference.decode(Proto.decode(request).one(2)).name == "second" && !rejected) {
+                    rejected = true; throw PasswordRpcException(9, false)
+                }
+                server.invoke(method, request)
+            }
+        }
+        val sync = PreferenceSync(PasswordApi(transport), store)
+        sync.synchronize(server.parent); sync.enqueue("first", "true"); sync.enqueue("second", "false")
+        val receipt = sync.synchronize(server.parent)
+        assertEquals(2, receipt.uploaded); assertEquals(2, server.writes)
+        assertTrue(store.state().preferenceMutations.isEmpty())
+    }
+
+    @Test fun preferenceStaleMetadataCannotRebaseAcrossABirthdayReset() {
+        val server = Server(); val store = Store()
+        val transport = PasswordTransport { method, request ->
+            when (method) {
+                PasswordMethod.GET_METADATA -> Proto.field(1, "users/me/birthdays/replacement")
+                PasswordMethod.CREATE_PREFERENCE -> throw PasswordRpcException(9, false)
+                else -> server.invoke(method, request)
+            }
+        }
+        val sync = PreferenceSync(PasswordApi(transport), store)
+        sync.synchronize(server.parent)
+        val operation = sync.enqueue("fixture", "true")
+        assertThrows(VaultResetException::class.java) { sync.synchronize(server.parent) }
+        assertEquals(0, server.writes); assertEquals(operation, store.state().preferenceMutations.single().id)
+        assertEquals(MutationPhase.QUEUED, store.state().preferenceMutations.single().phase)
+        assertEquals(server.parent, store.state().preferenceParent)
+    }
 
     @Test fun incompletePreferenceSnapshotCannotAcknowledgePushOrClearThePasswordObligation() {
         val server = Server(); val store = Store()

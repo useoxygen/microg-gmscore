@@ -49,7 +49,12 @@ class PreferenceSync(private val api: PasswordApi, private val store: VaultStore
         pending.id
     }
 
-    fun synchronize(parent: String): SyncReceipt = store.locked { session ->
+    fun synchronize(parent: String): SyncReceipt = retryStaleMetadata { refresh, progress ->
+        val currentParent = if (refresh) PasswordApi.checkedParent(Proto.decode(api.metadata()).string(1)) else parent
+        synchronizeOnce(currentParent, progress)
+    }
+
+    private fun synchronizeOnce(parent: String, progress: SyncProgress): SyncReceipt = store.locked { session ->
         PasswordApi.checkedParent(parent)
         var state = session.load()
         if (state.preferenceParent != null && state.preferenceParent != parent && state.preferenceMutations.isNotEmpty()) throw VaultResetException()
@@ -59,7 +64,6 @@ class PreferenceSync(private val api: PasswordApi, private val store: VaultStore
         state.invalidations = state.invalidations.acknowledgePreferences()
         session.save(state)
         val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
-        var uploaded = 0
         for (pending in state.preferenceMutations.toList()) {
             val index = state.preferenceMutations.indexOfFirst { it.id == pending.id }
             if (index < 0 || pending.phase == MutationPhase.CONFLICT) continue
@@ -91,21 +95,21 @@ class PreferenceSync(private val api: PasswordApi, private val store: VaultStore
                 state.preferences.add(response)
                 state.preferenceMutations.removeAll { it.id == pending.id }
                 session.save(state)
-                uploaded++
+                progress.uploaded++
             } catch (failure: Exception) {
                 state = session.load()
                 val position = state.preferenceMutations.indexOfFirst { it.id == pending.id }
                 if (position >= 0) {
                     state.preferenceMutations[position] = pending.phase(
                         if (failure is PasswordRpcException && !failure.outcomeUnknown) {
-                            if (failure.code in setOf(6, 9, 10)) MutationPhase.CONFLICT else MutationPhase.QUEUED
+                            if (failure.code in setOf(6, 10)) MutationPhase.CONFLICT else MutationPhase.QUEUED
                         } else MutationPhase.INDETERMINATE)
                     session.save(state)
                 }
                 throw failure
             }
         }
-        SyncReceipt(state.preferences.size, uploaded, state.preferenceMutations.count { it.phase == MutationPhase.CONFLICT },
+        SyncReceipt(state.preferences.size, progress.uploaded, state.preferenceMutations.count { it.phase == MutationPhase.CONFLICT },
             state.preferenceMutations.count { it.phase == MutationPhase.INDETERMINATE || it.phase == MutationPhase.LAUNCHED })
     }
 

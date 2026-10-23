@@ -132,7 +132,11 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
         return operation.id
     }
 
-    fun synchronize(unlock: (ByteArray) -> VaultKeys): SyncReceipt = store.locked { session ->
+    fun synchronize(unlock: (ByteArray) -> VaultKeys): SyncReceipt = retryStaleMetadata { _, progress ->
+        synchronizeOnce(unlock, progress)
+    }
+
+    private fun synchronizeOnce(unlock: (ByteArray) -> VaultKeys, progress: SyncProgress): SyncReceipt = store.locked { session ->
         var state = session.load()
         val metadata = api.metadata()
         val parent = PasswordApi.checkedParent(Proto.decode(metadata).string(1))
@@ -160,7 +164,6 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
             state.invalidations = state.invalidations.acknowledgePasswords()
             session.save(state)
             val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
-            var uploaded = 0
             for (pending in state.mutations.toList()) {
                 val index = state.mutations.indexOfFirst { it.id == pending.id }
                 if (index < 0 || pending.phase == MutationPhase.CONFLICT) continue
@@ -205,7 +208,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
                     if (response != null) state.records.add(response)
                     state.mutations.removeAll { it.id == pending.id }
                     session.save(state)
-                    uploaded++
+                    progress.uploaded++
                 } catch (failure: Exception) {
                     // Saving the launch fence succeeded; even a local failure now requires reconciliation.
                     state = session.load()
@@ -213,7 +216,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
                     if (position >= 0) {
                         state.mutations[position] = pending.phase(
                             if (failure is PasswordRpcException && !failure.outcomeUnknown) {
-                                if (failure.code in setOf(6, 9, 10)) MutationPhase.CONFLICT else MutationPhase.QUEUED
+                                if (failure.code in setOf(6, 10)) MutationPhase.CONFLICT else MutationPhase.QUEUED
                             } else MutationPhase.INDETERMINATE)
                         session.save(state)
                     }
@@ -221,7 +224,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
                 }
             }
             // Readback remains necessary for eventual deletes and server-side normalization.
-            SyncReceipt(state.records.size, uploaded, state.mutations.count { it.phase == MutationPhase.CONFLICT },
+            SyncReceipt(state.records.size, progress.uploaded, state.mutations.count { it.phase == MutationPhase.CONFLICT },
                 state.mutations.count { it.phase == MutationPhase.INDETERMINATE || it.phase == MutationPhase.LAUNCHED })
         } finally { keys.destroy() }
     }

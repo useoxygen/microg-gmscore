@@ -5,6 +5,11 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
+Current verified scope: 68 password-sync and 41 Core host tests; twenty isolated/native/UI
+cases on product 6ea691ca with fixture 6fd24225; and actual Google server push on product
+4bf07f7e. These are separate gates, not full parity. Original Services is restored after
+private testing. The remaining table below and JSON acceptance flags remain authoritative.
+
 ## Reference and comparison method
 
 The reference is Google Play services **26.11.36 (260400-892401869)**, version 261136035,
@@ -121,6 +126,20 @@ The Pixel's read-only bridge subsequently reported MCS disconnected before any r
 edit, despite an existing FCM token. Enabling password sync now requests the normal GCM
 reconnect route, which retains the existing global/per-network opt-outs and check-in policy.
 It does not use a forced reconnect or change messaging settings. Native acceptance is pending.
+On **4bf07f7e**, actual server push passed (8.878 seconds): existing messaging/network consent,
+check-in and connected MCS were confirmed; an independent native update produced one expected
+sender/cache-GUID/type message, direct password generation 0→1, acknowledgement 1 and changed
+encrypted cache readback without manual refresh or scheduling after the remote edit. Exact
+synthetic restoration completed and the private remote-client store was cleared. Original
+Services was restored and the test APK removed. This accepts the native push path and normal
+startup on sync enable; official Chrome producer, token-invalid, reboot and lifetime tests remain open.
+
+The reference `bfec` maps status 9 to stale metadata. Password and preference sync now retry
+once after a definite refusal, refreshing metadata and retaining the operation ID. An unknown
+outcome is not replayed, a reset vault cannot receive an old queued write, and remote version
+checks still run before resending. Receipts include commits made before the retry. Eight new
+regressions failed before the fix; all 68 sync tests pass afterward. This recovery extension is
+host-tested and compiled; forced server stale-metadata acceptance has not been performed.
 
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
@@ -276,7 +295,7 @@ No password or preference cloud writes ran in this review round.
 
 | Surface | Gap / required proof |
 | --- | --- |
-| Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, encrypted stable nonce/client token, heartbeat and cache-GUID invalidation routing are implemented. Host tests cover loss/reopen/token propagation and isolation. Native/server creation and heartbeat, registered-token CRUD and follow-up workers passed on 22be48a1. Real push delivery, token invalidation and reconnect acceptance remain open. |
+| Device registration and push | Native/server registration, heartbeat, token-backed CRUD and follow-up workers passed. Actual native Google push, durable hint acknowledgement and background readback passed on 4bf07f7e after normal messaging startup on enable. Token invalidation, network-reconnect, reboot/lifetime and official-producer acceptance remain open. |
 | Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native list/cache reopening passed; preference writes, official-client callbacks, management controls and provider behavior still need verification. |
 | Affiliations | Verified Digital Asset Links, branding and grouping are not implemented; no eTLD or package-name shortcut is used to authorize fills. |
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |

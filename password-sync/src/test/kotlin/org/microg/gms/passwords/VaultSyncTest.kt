@@ -90,6 +90,110 @@ class VaultSyncTest {
     }
     private fun engine(server: Server, store: Store) = VaultSync(PasswordApi(server), store) { 1234L }
 
+    @Test fun explicitStaleMetadataRefreshesOnceAndPreservesTheMutationIdentity() {
+        val server = Server(); val store = Store(); var metadataReads = 0; var attempts = 0
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.GET_METADATA) metadataReads++
+            if (method == PasswordMethod.CREATE && attempts++ == 0) throw PasswordRpcException(9, false)
+            server.invoke(method, request)
+        }
+        val sync = VaultSync(PasswordApi(transport), store)
+        sync.synchronize { VaultKeys.unlock(it) }
+        val operation = sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "value"))
+        val identities = HashSet<String>()
+        store.beforeSave = { state -> identities.addAll(state.mutations.map { it.id }) }
+        val receipt = sync.synchronize { VaultKeys.unlock(it) }
+        assertEquals(1, receipt.uploaded); assertEquals(0, receipt.conflicts)
+        assertEquals(2, attempts); assertEquals(3, metadataReads); assertEquals(1, server.writes)
+        assertEquals(setOf(operation), identities); assertTrue(store.state().mutations.isEmpty())
+    }
+
+    @Test fun staleMetadataDoesNotHideAnEarlierCommitFromTheSameSyncReceipt() {
+        val server = Server(); val store = Store(); var rejected = false
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.CREATE && Proto.decode(Proto.decode(request).one(2)).string(2) == "second" && !rejected) {
+                rejected = true; throw PasswordRpcException(9, false)
+            }
+            server.invoke(method, request)
+        }
+        val sync = VaultSync(PasswordApi(transport), store)
+        sync.synchronize { VaultKeys.unlock(it) }
+        sync.enqueue(MutationKind.CREATE, "first", server.entity("first", "one"))
+        sync.enqueue(MutationKind.CREATE, "second", server.entity("second", "two"))
+        val receipt = sync.synchronize { VaultKeys.unlock(it) }
+        assertEquals(2, receipt.uploaded); assertEquals(2, server.writes)
+        assertEquals(2, server.records.size); assertTrue(store.state().mutations.isEmpty())
+    }
+
+    @Test fun permanentlyStaleMetadataIsBoundedAndRetainsAQueuedOperation() {
+        val server = Server(); val store = Store(); var attempts = 0
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.CREATE) { attempts++; throw PasswordRpcException(9, false) }
+            server.invoke(method, request)
+        }
+        val sync = VaultSync(PasswordApi(transport), store)
+        sync.synchronize { VaultKeys.unlock(it) }
+        val operation = sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "value"))
+        assertThrows(PasswordRpcException::class.java) { sync.synchronize { VaultKeys.unlock(it) } }
+        assertEquals(2, attempts); assertEquals(0, server.writes)
+        assertEquals(operation, store.state().mutations.single().id)
+        assertEquals(MutationPhase.QUEUED, store.state().mutations.single().phase)
+    }
+
+    @Test fun staleMetadataCannotCarryAnOldOperationIntoAResetVault() {
+        val server = Server(); val store = Store(); var reset = false
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.GET_METADATA && reset) Proto.decode(server.metadata)
+                .replace(1, "users/me/birthdays/replacement".toByteArray()).encode()
+            else {
+                if (method == PasswordMethod.CREATE) { reset = true; throw PasswordRpcException(9, false) }
+                server.invoke(method, request)
+            }
+        }
+        val sync = VaultSync(PasswordApi(transport), store)
+        sync.synchronize { VaultKeys.unlock(it) }
+        val operation = sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "value"))
+        assertThrows(VaultResetException::class.java) { sync.synchronize { VaultKeys.unlock(it) } }
+        assertEquals(0, server.writes); assertEquals(operation, store.state().mutations.single().id)
+        assertEquals(MutationPhase.QUEUED, store.state().mutations.single().phase)
+        assertEquals(server.parent, Proto.decode(store.state().metadata!!).string(1))
+    }
+
+    @Test fun staleMetadataWithAnUnknownOutcomeIsReconciledWithoutAutomaticReplay() {
+        val server = Server(); val store = Store(); var attempts = 0; var metadataReads = 0
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.GET_METADATA) metadataReads++
+            val response = server.invoke(method, request)
+            if (method == PasswordMethod.CREATE) { attempts++; throw PasswordRpcException(9, true) }
+            response
+        }
+        val sync = VaultSync(PasswordApi(transport), store)
+        sync.synchronize { VaultKeys.unlock(it) }
+        sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "value"))
+        assertThrows(PasswordRpcException::class.java) { sync.synchronize { VaultKeys.unlock(it) } }
+        assertEquals(1, attempts); assertEquals(2, metadataReads)
+        assertEquals(MutationPhase.INDETERMINATE, store.state().mutations.single().phase)
+        VaultSync(PasswordApi(transport), store).synchronize { VaultKeys.unlock(it) }
+        assertTrue(store.state().mutations.isEmpty()); assertEquals(1, server.writes)
+    }
+
+    @Test fun refreshedMetadataStillChecksTheRemoteVersionBeforeReissuingAnOperation() {
+        val server = Server(); val store = Store(); var attempts = 0
+        val transport = PasswordTransport { method, request ->
+            if (method == PasswordMethod.CREATE) {
+                attempts++; server.records.add(server.entity("fixture", "other writer"))
+                throw PasswordRpcException(9, false)
+            }
+            server.invoke(method, request)
+        }
+        val sync = VaultSync(PasswordApi(transport), store)
+        sync.synchronize { VaultKeys.unlock(it) }
+        sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "local"))
+        val receipt = sync.synchronize { VaultKeys.unlock(it) }
+        assertEquals(1, attempts); assertEquals(0, server.writes)
+        assertEquals(1, receipt.conflicts); assertEquals(MutationPhase.CONFLICT, store.state().mutations.single().phase)
+    }
+
     @Test fun failedPaginationOrUnlockRetainsPushObligationUntilACompleteAuthenticatedSnapshot() {
         val server = Server(); val store = Store()
         store.locked { session -> val state = session.load()
