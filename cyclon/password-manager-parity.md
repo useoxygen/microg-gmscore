@@ -151,7 +151,11 @@ Phone-only readback confirmed that Google retained backup field 10 when a restor
 omitted it, even though the main ciphertext contained the original payload. The synthetic
 fixture therefore uses its explicitly authorized delete/re-create path for exact restoration.
 Normal note deletion sends an authoritative empty field 22 and matching empty encrypted
-backup; the explicit server no-resurrection/GetPassword check is pending. The real server-push
+backup. On product 6ea691ca the native note write, explicit clear, empty encrypted backup and
+repeat-download no-resurrection assertions passed, with exact synthetic restoration afterward.
+The combined case failed at its subsequent GetPassword call (status 5). That unused-in-product
+adapter remains unaccepted and is being investigated separately through bounded read-only probes.
+The standalone note-deletion case will be rerun. The real server-push
 test timed out (97.123 seconds); an FCM token alone is not push-delivery acceptance.
 Original Services was restored without clearing data and temporary test packages removed.
 Username/site identity changes, moving stores, import/export and password checkup remain open.

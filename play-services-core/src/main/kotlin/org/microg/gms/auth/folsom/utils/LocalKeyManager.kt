@@ -343,7 +343,7 @@ class LocalKeyManager(private val context: Context) {
         sessionId: String,
         forceRefresh: Boolean = false
     ): List<Keys> = runCatching {
-        getKeysForDomain(accountName, domainId).takeIf { !forceRefresh && it.isNotEmpty() }
+        (if (forceRefresh) null else getKeysForDomain(accountName, domainId).takeIf { it.isNotEmpty() })
             ?: loadSecurityDomainMembers(context, accountName, sessionId, domainId)
                 .members.takeIf { it.isNotEmpty() }
                 ?.let { extractKeysFromMembers(it, domainId, accountName) }

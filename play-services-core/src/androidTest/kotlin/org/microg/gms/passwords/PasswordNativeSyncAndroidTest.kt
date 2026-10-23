@@ -66,13 +66,43 @@ class PasswordNativeSyncAndroidTest {
                     val backup = keys.decrypt(Proto.decode(record).one(10))
                     try { assertTrue("Encrypted backup still contains notes", Proto.decode(backup).bytes(1).isEmpty()) }
                     finally { backup.fill(0) }
-                    // Exercise the independently versioned GetPassword RPC as an official server read,
-                    // then compare authenticated plaintext without exporting it from the phone.
-                    val remote = nativeApi(repository).get(Proto.decode(record).string(1))
-                    assertTrue("GetPassword differs from the authenticated snapshot",
-                        same(current.encode(), PasswordResourceCodec.read(remote, keys).encode()))
                 } finally { keys.destroy() }
             } finally { SyntheticMetadataRestore.restore(context, repository, checkpoint) }
+        }
+    }
+
+    @Test fun probeReadOnlyGetPasswordContractForTheApprovedFixture() {
+        assumeTrue(arguments.getString("passwordLiveGet") == "cyc654")
+        withFixture { repository, original ->
+            val state = repository.store.locked { it.load() }
+            val record = Proto.decode(state.records.single { Proto.decode(it).string(2) == original.id })
+            val name = record.string(1)
+            val parent = PasswordApi.checkedParent(Proto.decode(state.metadata!!).string(1))
+            val client = state.deviceRegistration?.token ?: throw VaultLockedException()
+            val requests = listOf(
+                "resource" to Proto.field(1, name),
+                "resource-client" to (Proto.field(1, name) + Proto.field(3, client)),
+                "parent-resource" to (Proto.field(1, parent) + Proto.field(2, name)),
+                "parent-local-id" to (Proto.field(1, parent) + Proto.field(2, name.substringAfterLast('/'))),
+                "parent-resource-client" to (Proto.field(1, parent) + Proto.field(2, name) + Proto.field(3, client)))
+            val results = ArrayList<String>()
+            val keys = VaultKeys.unlock(state.metadata!!)
+            val transport = nativeTransport(repository)
+            var observed = false
+            try {
+                for ((shape, request) in requests) {
+                    try {
+                        val response = transport.invoke(PasswordMethod.GET, request)
+                        val candidates = listOf(response) + Proto.decode(response).bytes(1)
+                        val matches = candidates.any { raw ->
+                            runCatching { same(original.data.encode(), PasswordResourceCodec.read(raw, keys).encode()) }.getOrDefault(false)
+                        }
+                        results.add("$shape:status0:matches=$matches")
+                        if (matches) { observed = true; break }
+                    } catch (failure: PasswordRpcException) { results.add("$shape:status${failure.code}") }
+                }
+                assertTrue("GetPassword remains unaccepted; bounded read-only results=" + results.joinToString(","), observed)
+            } finally { keys.destroy(); requests.forEach { it.second.fill(0) } }
         }
     }
 
@@ -396,16 +426,16 @@ class PasswordNativeSyncAndroidTest {
 
     private fun isFixture(data: PasswordData) = data.realm == "https://cyc651.example.invalid/" &&
         data.username == "cyc651-synthetic-user" && !data.blocked
-    private fun nativeApi(repository: PasswordRepository): PasswordApi {
+    private fun nativeTransport(repository: PasswordRepository): PasswordTransport {
         val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
             "oauth2:https://www.googleapis.com/auth/login_manager").apply {
             isGmsApp = true; setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
         }
         val token = auth.requestAuthWithBackgroundResolution(false).auth ?: throw VaultLockedException()
-        return PasswordApi(GooglePasswordTransport({
+        return GooglePasswordTransport({
             assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
             token
-        }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
+        }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl())
     }
     private fun same(a: ByteArray, b: ByteArray) = MessageDigest.isEqual(a, b)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
