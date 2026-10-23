@@ -153,6 +153,13 @@ the synthetic invalid bearer, then native account authentication recovered the s
 metadata. The original Services APK was restored and the temporary test package removed.
 This does not accept real account revocation or interactive account recovery.
 
+The native account path is independent of the web manager's recent-verification prompts.
+On product **c2d5b6f0**, fixture **eb471e07** explicitly bypassed the token cache, requested
+a fresh account token without foreground/background UI resolution, confirmed a future
+lifetime and successfully retrieved the same vault metadata. No Google login UI was used.
+This accepts fresh native token minting with the existing account grant; revocation,
+interactive recovery, lifetime/reboot coverage and Core agent access remain separate gates.
+
 The reference `jcpp`/`bfdu` also puts a ten-second deadline on each password/SyncEntities
 RPC. The transport now bounds the whole HTTP call, including a slowly arriving response
 body, rather than relying only on individual read/write timeouts. A throttled-response
@@ -165,6 +172,15 @@ the single authorized synthetic realm created by this implementation. Opening it
 requires Google's account reauthentication. The saved password remained hidden and no
 official-client write ran. This accepts metadata visibility only; exact credential/notes
 interoperability and the official producer round trip remain open under CYC-653.
+After owner verification, the official detail screen also displayed the expected synthetic
+username with the password masked. A phone-encrypted pre-edit checkpoint captured the
+original fixture and unrelated-record baseline. The first automated note Save did not
+produce the expected native readback; subsequent native comparison confirmed the original
+payload remained byte-exact. The test now retains one Services package for the complete
+round trip and uses the real UI process for instrumentation. The Google-produced note
+check is waiting for its explicit owner UI step. A separate helper can compare the masked
+editor's exact password value wholly on the phone, returning only booleans; it is compiled
+but has not yet run. Neither producer nor exact-secret interoperability is accepted yet.
 
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
