@@ -50,7 +50,13 @@ class EnclavePinWireTest {
         assertEquals(2, path.size()); assertArrayEquals(certs[0], path.getObjectAt(0).toASN1Primitive().encoded)
         assertArrayEquals(certs[1], path.getObjectAt(1).toASN1Primitive().encoded)
         val join = Proto.decode(prepared.join); assertNull(join.optional(5)); assertEquals("source-shaped-id", join.string(6))
-        assertArrayEquals(domainKey, SecureBox.unwrapKey(pair(3), Proto.decode(join.one(3)).one(2)))
+        val sharedKey = Proto.decode(join.one(3)).one(2)
+        // Chrome145 shared-member recovery authenticates this exact SDS header; null is a different protocol.
+        assertArrayEquals(domainKey, SecureBox.unwrapKey(pair(3), sharedKey, "V1 shared_key".toByteArray(Charsets.UTF_8)))
+        assertThrows(javax.crypto.AEADBadTagException::class.java) { SecureBox.unwrapKey(pair(3), sharedKey) }
+        assertThrows(javax.crypto.AEADBadTagException::class.java) {
+            SecureBox.unwrapKey(pair(3), sharedKey, "V1 wrong_key".toByteArray(Charsets.UTF_8))
+        }
         val pin = Proto.decode(GpmPinRenewalWire.metadata(join.one(2)))
         assertEquals(1L, pin.integer(5)); assertArrayEquals(wrappedPin, pin.one(1)); assertArrayEquals(claim, pin.one(2))
         assertTrue(prepared.commands.isEmpty()); assertTrue(prepared.pinMetadata.isEmpty())
