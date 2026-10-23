@@ -93,8 +93,19 @@ State schema v3 reads v1/v2 while fencing older writers. An internal, non-export
 receiver accepts the expected sender and bounded type payload, routes only by a matching
 server cache GUID and schedules enabled accounts. Messaging opt-out is respected; existing
 GCM account registration tokens/settings are not replaced. Follow-up sync work is appended
-instead of being dropped while a prior sync is running. Native registration/heartbeat,
-real push delivery and the new scheduler regression are pending device execution.
+instead of being dropped while a prior sync is running. On source **22be48a1**, the matching-signer Pixel 7a run passed seven isolated cases,
+five native cases (20.03 seconds) and one manager listing case. The native checks include
+server-acknowledged CreateDeviceInfo and UpdateDeviceInfo with persisted token/cache GUID,
+a freshly scheduled worker, and two follow-up workers both reaching SUCCEEDED. The identical
+scheduler fixture failed on the older **5d6c8e55** product because KEEP dropped a follow-up;
+this is failing-before/passing-after device proof.
+
+Two additional native cases (16.425 seconds) passed registered-token update/readback/exact
+restoration and delete/re-create/exact restoration of the single approved fixture, with
+unrelated records checked. The original Services APK bytes were verified after restoration;
+no app data was cleared and temporary test APKs were removed. Registration and heartbeat
+are native/server-accepted. Actual end-to-end push delivery, stale-token recovery and reboot/
+reconnect behavior remain unaccepted.
 
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
@@ -204,7 +215,7 @@ No password or preference cloud writes ran in this review round.
 
 | Surface | Gap / required proof |
 | --- | --- |
-| Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, encrypted stable nonce/client token, heartbeat and cache-GUID invalidation routing are implemented. Host tests cover loss/reopen/token propagation and isolation. Native/server, real push delivery, token invalidation and reconnect acceptance remain open. |
+| Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, encrypted stable nonce/client token, heartbeat and cache-GUID invalidation routing are implemented. Host tests cover loss/reopen/token propagation and isolation. Native/server creation and heartbeat, registered-token CRUD and follow-up workers passed on 22be48a1. Real push delivery, token invalidation and reconnect acceptance remain open. |
 | Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native list/cache reopening passed; preference writes, official-client callbacks, management controls and provider behavior still need verification. |
 | Affiliations | Verified Digital Asset Links, branding and grouping are not implemented; no eTLD or package-name shortcut is used to authorize fills. |
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |
