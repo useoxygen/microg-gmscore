@@ -36,6 +36,34 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun nativeOAuthRecoversFromAnExplicitlyRejectedSyntheticBearer() {
+        assumeTrue(arguments.getString("passwordLiveAuth") == "cyc654")
+        withFixture { repository, _ ->
+            val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
+                "oauth2:https://www.googleapis.com/auth/login_manager").apply {
+                isGmsApp = true
+                setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
+            }
+            var loads = 0
+            var rejected = 0
+            val invalid = "cyc654-invalid-synthetic-bearer-" + UUID.randomUUID()
+            val oauth = PasswordOAuthSession({
+                if (++loads == 1) invalid else auth.requestAuthWithBackgroundResolution(false).auth
+            }, { value ->
+                if (value == invalid) rejected++ else auth.invalidateAuthToken(value)
+            })
+            val transport = GooglePasswordTransport({
+                assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
+                oauth.token()
+            }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl(), rejectedToken = oauth::reject)
+            val result = PasswordApi(transport).metadata()
+            val cached = repository.store.locked { it.load().metadata } ?: throw VaultLockedException()
+            assertTrue("Native authentication did not recover", rejected == 1 && loads == 2)
+            assertTrue("Recovered metadata belongs to a different vault",
+                Proto.decode(result).string(1) == Proto.decode(cached).string(1))
+        }
+    }
+
     @Test fun restoreInterruptedApprovedSyntheticPasswordUpdate() {
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
         val selected = arguments.getString("passwordLiveAccount")

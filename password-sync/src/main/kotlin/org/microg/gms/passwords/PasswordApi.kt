@@ -33,7 +33,8 @@ fun interface PasswordTransport { fun invoke(method: PasswordMethod, request: By
 class GooglePasswordTransport(
     private val token: () -> String,
     private val endpoint: HttpUrl,
-    client: OkHttpClient = OkHttpClient()
+    client: OkHttpClient = OkHttpClient(),
+    private val rejectedToken: ((String) -> Unit)? = null
 ) : PasswordTransport {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false)
         .retryOnConnectionFailure(false).connectTimeout(15, TimeUnit.SECONDS)
@@ -49,7 +50,22 @@ class GooglePasswordTransport(
         if (endpoint.host != method.host) throw ProtocolException()
         val framed = ByteBuffer.allocate(5 + request.size).put(0).putInt(request.size).put(request).array()
         val url = endpoint.newBuilder().encodedPath("/${method.service}/${method.rpc}").build()
-        val call = Request.Builder().url(url).header("Authorization", "Bearer " + token())
+        repeat(2) { attempt ->
+            val authorization = token()
+            try { return execute(method, url, framed, authorization) }
+            catch (failure: PasswordRpcException) {
+                // A definite authentication refusal proves that the request had no effect.
+                // Transport failures and uncertain commit results are never replayed here.
+                if (failure.code != 16 || failure.outcomeUnknown || rejectedToken == null) throw failure
+                rejectedToken.invoke(authorization)
+                if (attempt != 0) throw failure
+            }
+        }
+        throw AssertionError("Unreachable authentication retry")
+    }
+
+    private fun execute(method: PasswordMethod, url: HttpUrl, framed: ByteArray, authorization: String): ByteArray {
+        val call = Request.Builder().url(url).header("Authorization", "Bearer " + authorization)
             .header("TE", "trailers").header("grpc-accept-encoding", "gzip")
             .post(framed.toRequestBody("application/grpc".toMediaType())).build()
         try {

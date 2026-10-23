@@ -5,7 +5,7 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
-Current verified scope: 68 password-sync and 41 Core host tests; twenty isolated/native/UI
+Current verified scope: 78 password-sync and 41 Core host tests; twenty isolated/native/UI
 cases on product 6ea691ca with fixture 6fd24225; and actual Google server push on product
 4bf07f7e. These are separate gates, not full parity. Original Services is restored after
 private testing. The remaining table below and JSON acceptance flags remain authoritative.
@@ -115,17 +115,17 @@ no app data was cleared and temporary test APKs were removed. Registration and h
 are native/server-accepted. Actual end-to-end push delivery, stale-token recovery and reboot/
 reconnect behavior remain unaccepted.
 
-The next push-recovery change persists a refresh obligation before scheduling, carries a
+The push-recovery implementation persists a refresh obligation before scheduling, carries a
 stable WorkManager delivery identity across retries, and acknowledges password/preference
 domains independently only after a complete authenticated snapshot. Distinct deliveries
 with identical payloads remain distinct; deduplication by payload hash would miss changes.
 State schema v4 reads v1/v2/v3 and makes older writers refuse the new obligations.
 Host tests cover interruption/reopen, retry, domain separation, incomplete pagination,
-locked keys and malformed/overflow state. This remains pending native push acceptance.
+locked keys and malformed/overflow state. Native push acceptance is recorded below.
 The Pixel's read-only bridge subsequently reported MCS disconnected before any remote test
 edit, despite an existing FCM token. Enabling password sync now requests the normal GCM
 reconnect route, which retains the existing global/per-network opt-outs and check-in policy.
-It does not use a forced reconnect or change messaging settings. Native acceptance is pending.
+It does not use a forced reconnect or change messaging settings.
 On **4bf07f7e**, actual server push passed (8.878 seconds): existing messaging/network consent,
 check-in and connected MCS were confirmed; an independent native update produced one expected
 sender/cache-GUID/type message, direct password generation 0→1, acknowledgement 1 and changed
@@ -140,6 +140,21 @@ outcome is not replayed, a reset vault cannot receive an old queued write, and r
 checks still run before resending. Receipts include commits made before the retry. Eight new
 regressions failed before the fix; all 68 sync tests pass afterward. This recovery extension is
 host-tested and compiled; forced server stale-metadata acceptance has not been performed.
+
+OAuth recovery now invalidates only the rejected account/scope token and immediately retries
+once after HTTP 401 or gRPC status 16. Device registration and password RPCs keep independent
+in-memory token sessions; a registration refusal no longer invalidates the password scope.
+Repeated refusal is bounded, consent denial does not trigger renewal, and uncertain writes
+or redirects are never replayed. Ten host cases exercise actual HTTP responses, gRPC trailers,
+unchanged mutation bytes, scope isolation, disconnects and missing native credentials. All
+78 sync and 41 Core tests pass and both Android APKs compile. Native rejected-token recovery
+has an opt-in read-only fixture and remains pending execution.
+
+The installed official Chrome 145 client opened Google's web Password Manager, which listed
+the single authorized synthetic realm created by this implementation. Opening its details
+requires Google's account reauthentication. The saved password remained hidden and no
+official-client write ran. This accepts metadata visibility only; exact credential/notes
+interoperability and the official producer round trip remain open under CYC-653.
 
 The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
@@ -178,7 +193,7 @@ backup. On product 6ea691ca the native note write, explicit clear, empty encrypt
 repeat-download no-resurrection assertions passed, with exact synthetic restoration afterward.
 The combined case failed at its subsequent GetPassword call (status 5). That unused-in-product
 adapter remains unaccepted and is being investigated separately through bounded read-only probes.
-The standalone note-deletion case will be rerun. The real server-push
+The standalone note-deletion case subsequently passed as recorded below. The initial server-push
 test timed out (97.123 seconds); an FCM token alone is not push-delivery acceptance.
 Original Services was restored without clearing data and temporary test packages removed.
 On product **6ea691ca** with fixture **6fd24225**, all nine isolated cases, standalone note
@@ -291,7 +306,7 @@ the passing lifecycle fixture APK SHA-256 is
 Each completed run restored the original Services build without clearing data and removed
 its temporary test APK. Final live readback also matched the original APK bytes, SHA-256
 `f516ddc5d66e2a8b48cfe754cdd2511f93e5594b56ba17ec35c7777f302b7f17`.
-No password or preference cloud writes ran in this review round.
+No password or preference cloud writes ran in that historical review round.
 
 | Surface | Gap / required proof |
 | --- | --- |
