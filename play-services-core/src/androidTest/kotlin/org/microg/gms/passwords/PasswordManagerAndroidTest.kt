@@ -6,10 +6,14 @@ import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
+import android.provider.Settings
 import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.appcompat.view.WindowCallbackWrapper
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,6 +33,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** Opt-in owner UI checks; never opens an editor, reveals a password or mutates a login. */
 @RunWith(AndroidJUnit4::class)
@@ -39,6 +44,14 @@ class PasswordManagerAndroidTest {
     private val arguments get() = InstrumentationRegistry.getArguments()
     private val open get() = context.getString(R.string.passwords_open)
     private val onDevice get() = context.getString(R.string.passwords_on_device)
+    private val touchFlags = CopyOnWriteArrayList<Int>()
+
+    private inner class RecordingCallback(callback: android.view.Window.Callback) : WindowCallbackWrapper(callback) {
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            touchFlags.add(event.flags)
+            return super.dispatchTouchEvent(event)
+        }
+    }
 
     private fun selectedAccount(): String {
         assumeTrue(arguments.getString("passwordOwnerUi") == "cyc654-no-lock")
@@ -56,10 +69,38 @@ class PasswordManagerAndroidTest {
     private fun launch(selected: String) = ActivityScenario.launch<PasswordManagerActivity>(
         Intent(context, PasswordManagerActivity::class.java).putExtra(EXTRA_KEY_ACCOUNT_NAME, selected))
 
-    private fun openManager() {
+    private fun waitForFocus(scenario: ActivityScenario<PasswordManagerActivity>) {
+        val deadline = SystemClock.uptimeMillis() + 10_000
+        var focused = false
+        while (SystemClock.uptimeMillis() < deadline) {
+            scenario.onActivity { activity ->
+                focused = activity.window.decorView.hasWindowFocus()
+                if (activity.window.callback !is RecordingCallback)
+                    activity.window.callback = RecordingCallback(activity.window.callback)
+            }
+            if (focused) return
+            Thread.sleep(20)
+        }
+        fail("Manager did not regain input focus")
+    }
+
+    private fun openManager(scenario: ActivityScenario<PasswordManagerActivity>) {
+        waitForFocus(scenario)
+        touchFlags.clear()
         tap(compose.onNodeWithText(open))
-        compose.waitUntil(timeoutMillis = 30_000) {
-            compose.onAllNodes(hasText(onDevice) and isEnabled()).fetchSemanticsNodes().size == 1
+        try {
+            compose.waitUntil(timeoutMillis = 30_000) {
+                compose.onAllNodes(hasText(onDevice) and isEnabled()).fetchSemanticsNodes().size == 1
+            }
+        } catch (failure: Exception) {
+            var state = "unavailable"
+            scenario.onActivity { activity ->
+                val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                val field = PasswordOwnerActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+                state = "foreground=${field.getBoolean(activity)}, focus=${activity.window.decorView.hasWindowFocus()}, " +
+                    "secure=${keyguard.isDeviceSecure}, keyguard=${keyguard.isKeyguardLocked}, touchFlags=${touchFlags.takeLast(8)}"
+            }
+            throw AssertionError("Open did not complete: $state", failure)
         }
     }
 
@@ -85,17 +126,23 @@ class PasswordManagerAndroidTest {
             }
             compose.onNodeWithText(open).assertExists()
             compose.onNodeWithText(onDevice).assertDoesNotExist()
-            openManager()
+            openManager(scenario)
             assertNoSecretInputs()
-            scenario.moveToState(Lifecycle.State.CREATED)
-            scenario.moveToState(Lifecycle.State.RESUMED)
+            // Exercise real task switching instead of relying on the harness's helper window.
+            context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            while (scenario.state != Lifecycle.State.CREATED && SystemClock.uptimeMillis() < deadline) Thread.sleep(20)
+            assertEquals("Manager did not stop behind Settings", Lifecycle.State.CREATED, scenario.state)
+            context.startActivity(Intent(context, PasswordManagerActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            waitForFocus(scenario)
             compose.onNodeWithText(open).assertExists()
             compose.onNodeWithText(onDevice).assertDoesNotExist()
-            openManager()
+            openManager(scenario)
             scenario.recreate()
             compose.onNodeWithText(open).assertExists()
             compose.onNodeWithText(onDevice).assertDoesNotExist()
-            openManager()
+            openManager(scenario)
             assertNoSecretInputs()
         }
     }
@@ -110,7 +157,7 @@ class PasswordManagerAndroidTest {
         val wasEnabled = repository.enabled
         try {
             launch(selected).use { scenario ->
-                openManager()
+                openManager(scenario)
                 compose.onNodeWithText(selected + " ✓").assertExists()
                 if (!wasEnabled) tap(compose.onNode(isToggleable()))
                 else tap(compose.onNodeWithText(context.getString(R.string.passwords_refresh)))

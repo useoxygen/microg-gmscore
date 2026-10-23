@@ -134,6 +134,23 @@ instrumentation APKs compiled. This follow-up has not been installed or device-a
 Real no-lock manager/provider use, secure prompt cancellation, background/resume, overlays,
 rotation and work-profile behavior still require integration acceptance.
 
+The subsequent secondary-process run on source **8ba21975** exposed a real scheduling
+failure: `PasswordRepository.setEnabled` called an uninitialized WorkManager in `:ui`.
+Earlier main-process probes did not cover the manager's process. Source **06e357cd** adds
+on-demand [WorkManager configuration](https://developer.android.com/topic/libraries/architecture/workmanager/advanced/custom-configuration)
+in the Application, selects the main process for scheduling and uses the remote enqueue/
+cancel API with bounded acknowledgements. The existing WorkManager version remains 2.7.0;
+the exact multiprocess artifact's license metadata and packaged notice were verified.
+Seven isolated Android cases and three opt-in read-only account cases passed in `:ui`,
+including completion of a freshly scheduled `PasswordSyncWorker`. This accepts one scheduled
+worker execution, not hourly refresh, reboot, push or long-term background behavior.
+
+The first manager harness used an Espresso input API removed on this Android 17 build.
+The test-only stack is now pinned to Espresso 3.7.0 and AndroidX Test 1.7.0/1.3.0, while
+production Compose and runtime versions stay unchanged. These instrumentation fixtures are
+for API 26+ devices. Manager actions inject motion events through Android's input dispatcher;
+they do not invoke Compose click callbacks or disable the secure window.
+
 | Surface | Gap / required proof |
 | --- | --- |
 | Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, stable nonce/client token, invalidation transport and reconnect handling are not connected. Current password writes use empty client-token fields, which the earlier PoC server accepted. |
@@ -145,7 +162,7 @@ rotation and work-profile behavior still require integration acceptance.
 | Password management | Search, note/name edits, moving between stores, import/export, blocked-site settings and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
-| Phone | Signed private installation, seven isolated Android cases and native synthetic CRUD/restoration passed. Owner-authenticated listing/fill, process death/reboot, account removal/revocation and scheduled/background acceptance remain. |
+| Phone | Signed private installation, isolated cases and native synthetic CRUD/restoration passed. Secondary-process reads and a scheduled worker completed. Manager/provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |
 | Official interoperability | Read a credential produced by official Chrome, then verify native edits/deletion and a locally produced credential with official Chrome. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks
