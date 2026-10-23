@@ -5,38 +5,40 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
-The current host batch adds protected native Core fill, integrated affiliations, owner
-management transfers/import/export, source-faithful family sharing, synced Credential
-Manager and legacy GMS FIDO passkeys, native passkey rename/delete, connected fresh breach
-assessment, opt-in Wi-Fi synchronization, legacy credential flows and hardened Folsom key
-storage/retrieval. These are implemented development paths; each feature's
-server and device acceptance remains separate.
+The expanded source-backed batch passed **604 host tests** at source `dece944d`:
+400 password-sync, 13 FIDO Core and 191 Services Core cases, with zero failures, errors
+or skips. Product and instrumentation APK builds passed in the same centralized run.
+The companion Core source `75613fc4a` passed the full Pixel helper suite: 37 passed,
+18 skipped because vendor/image inputs were absent, zero failures.
 
-All new phone work is deferred because another chat has priority on the designated Pixel
-7a. No Core, Services or controller replacement ran in this batch. Historical acceptance
-below remains tied to its original source and fixture; it does not accept this expanded
-implementation. At source `36246827`, the consolidated batch passed **294 password-sync
-and 108 Core host tests**, with zero failures, errors or skips, and compiled both product
-and instrumentation APKs. Historical counts below describe their recorded older snapshots.
-That result precedes the expanded batch now being gathered. Source-verified domain
-create/enroll/rotate/reset, caller-bound owner resolutions, reset authority cleanup,
-passkey blob creation/write, durable missing-secret PRF migration and delegated Chrome
-payment discovery/assertion are implemented and awaiting the consolidated host run.
-Genuine platform LSKF snapshot upload, existing GPM PIN renewal, and native
-PIN/password/pattern backup restore are implemented. New/change PIN enclave commands, genuine Google account reauthentication, native GPM PIN
-restore, direct SDK recovery, coupled consent and authenticated hybrid account PRF are now
-connected, including SDK consent-prompt tickets that prepare an owner-reviewed attempt
-without granting consent or starting a backup. Final integration review and the gathered
-host batch remain pending. Source-faithful PSL matching is also connected.
-No new host, provider, family or cross-device acceptance is implied by the older result.
+The implementation now connects domain create/enroll/rotate/reset, genuine platform
+LSKF backup and PIN/password/pattern restore, existing PIN renewal, attested enclave
+PIN creation/change with private Google account reauthentication, direct SDK bulk and
+generate-only recovery, coupled consent and its protected owner flow. Native blob
+creation/writes, durable missing-secret PRF migration, Chrome payment delegation,
+authenticated hybrid account passkeys/PRF and source-faithful private-PSL matching are
+also connected and host-tested. Review and regression coverage address reset ABA/stale authority, restore scope,
+SDK result mapping, authenticated Shutdown and atomic hybrid output. Android callback/parcel
+fixtures compiled; their device execution remains pending.
 
-The compiled product APK SHA-256 is
-`8800ea4542f0b25b47eb6064906186594b2a8da13e7bd4b6778208978cb08b57`;
-instrumentation APK SHA-256 is
-`44d84269ef75d9a93c7a1b223066f597cc114059c816dea4442a6b411517d081`.
-These artifacts were built on the host and were not installed. The final run includes
-18 enrollment, 22 breach, 12 owner-management, 11 PRF, 17 blob-read and 11 recovered-epoch
-regressions, plus the existing transport, sync, sharing and authority suites.
+Full parity remains open. Five Passwords inventory RPCs have no verified producer or
+request/response schema in the pinned artifacts; see [the contract audit](passwords-rpc-contract-gaps.md).
+Google runtime notification experiment values are not mirrored. Provider/official-client,
+family and cross-device interoperability remain separate acceptance checks.
+
+All new phone work is deferred because another chat has priority on the designated
+Pixel 7a. No Services/Core/controller replacement, image publication, device test or
+live account/domain/provider probe ran in this batch. The new OS recovery grant and
+package-specific system-API access require a matching product image; compiling an APK
+does not install them. Historical acceptance below remains tied to its recorded sources.
+
+Current compiled product APK SHA-256:
+`b868660933448e4193b6939bb8e11cbb1c12bd5e562e63c4cc871936ca2f7c08`.
+Current instrumentation APK SHA-256:
+`ce4bf0e7c421f7becf5ced2dff5d71c8f8379d120e02ee175c55af500fedbc19`.
+These artifacts were built on the host and were not installed. The older source
+`36246827` result (294 password-sync and 108 Core tests) is retained as historical evidence
+in the machine-readable inventory.
 
 ## Reference and comparison method
 
@@ -258,7 +260,7 @@ branding wrappers. Unknown schemes grant no fill authority.
 Host vectors and policy tests cover canonical facets, credential-sharing versus grouping,
 expired/retried cache, proof boundaries and wrappers. An earlier unauthenticated lookup
 returned403. Private-PSL matching, stepwise extensions and transitive display groups are
-implemented for the gathered host batch. Configured production admission and native/official
+implemented and passed the gathered host batch. Configured production admission and native/official
 client acceptance remain open; host checks do not establish provider acceptance.
 
 ## Password management and notes comparison
@@ -411,8 +413,8 @@ that source qualification remains under CYC-687. The five descriptor-only Passwo
 request/response schema in this pinned APK and its examined official modules. Their contracts
 remain open; see [the contract audit](passwords-rpc-contract-gaps.md). Generic Chrome Nigori
 transition cryptography does not establish those RPC envelopes. Creating an SDS domain alone
-does not convert an existing Nigori password vault. This new runtime and its fixtures await the gathered host run and genuine
-provider/device acceptance.
+does not convert an existing Nigori password vault. This runtime and its fixtures passed the gathered host run; genuine provider/device
+acceptance remains pending.
 
 The family-sharing source comparison found no separate client sharing-key enrollment RPC:
 Google reads committed cross-user keys from Nigori and creates absent password metadata with
@@ -440,7 +442,7 @@ uncompressed bytes and preserve immutable identity/device/payment/opaque record 
 original request digest and SECRET_UPDATE journal fence signing until authenticated server
 readback confirms the exact mutation. PRF migration and blob writes share one update when both
 are requested. Unknown writes retain provenance and cannot use generic retry without the
-original request. These new paths await the gathered host run.
+original request. These paths passed their host fixtures and both APK builds; native acceptance remains pending.
 
 Chrome-delegated payment discovery and assertions require its exact installed release signer,
 Binder UID/package, real synced thirdPartyPaymentsSupport flag and a nonempty allow list for
@@ -555,13 +557,13 @@ No password or preference cloud writes ran in that historical review round.
 | --- | --- |
 | Device registration and push | Native/server registration, heartbeat, token-backed CRUD and follow-up workers passed. Actual native Google push, durable hint acknowledgement and background readback passed on 4bf07f7e after normal messaging startup on enable. Token invalidation, network-reconnect, reboot/lifetime and official-producer acceptance remain open. |
 | Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native list/cache reopening passed; preference writes, official-client callbacks, management controls and provider behavior still need verification. |
-| Affiliations | Dedicated-key lookup, encrypted cache/refresh, direct reciprocal DAL, common fill matching and branding wrappers are connected. Private-PSL matching and source-correct Chrome grouped-only flags are implemented awaiting host validation. Production admission and official/native acceptance remain CYC-673. |
+| Affiliations | Dedicated-key lookup, encrypted cache/refresh, direct reciprocal DAL, common fill matching and branding wrappers are connected. Private-PSL matching and source-correct Chrome grouped-only flags are implemented and host-tested. Production admission and official/native acceptance remain CYC-673. |
 | Legacy credentials | Get/save/delete use caller-bound encrypted one-use owner flows. Legacy GMS FIDO create/get use the real account-synced vault with exact caller/signer/origin, Gaia/birthday and owner gates, including existing-secret PRF and its typed result ABI. Authenticated hybrid requests now reach the real account vault with live transcript/request leases and PRF; the local database remains separate. Legacy blobs have no proven typed ABI. Other unsupported advanced options and provider/device acceptance remain CYC-688/CYC-689. |
-| Encryption recovery | Exact-account/domain recovery, encrypted Folsom migration, caller admission, stale obligations, source-shaped member-key decoding and schema6 verified key-epoch retention are implemented. Explicit-owner existing-`chromesync` physical type1 enrollment is connected, with protected stable pair/request, durable launch and full proof readback; host validation is pending. Domain create/enroll/rotate/reset, real platform LSKF backup/restore and existing GPM PIN renewal are implemented awaiting gathered host validation. New/change PIN enclave, native GPM PIN recovery and direct SDK bulk/generate/list consumers are implemented pending validation; coupled consent/getSyncStatus and protected owner resolution are implemented under CYC-687; provider/device/cross-device acceptance remains open, including CYC-691. |
+| Encryption recovery | Exact-account/domain recovery, encrypted Folsom migration, caller admission, stale obligations, source-shaped member-key decoding and schema6 verified key-epoch retention are implemented. Explicit-owner existing-`chromesync` physical type1 enrollment is connected, with protected stable pair/request, durable launch and full proof readback; host validation passed. Domain create/enroll/rotate/reset, real platform LSKF backup/restore and existing GPM PIN renewal are implemented and host-tested. New/change PIN enclave, native GPM PIN recovery and direct SDK bulk/generate/list consumers are implemented and host-tested; coupled consent/getSyncStatus and protected owner resolution are implemented under CYC-687; provider/device/cross-device acceptance remains open, including CYC-691. |
 | Conflict recovery UI | Explicit local/remote/drop/new-ID retry and local adoption of a reset vault are connected. Unknown writes keep durable provenance and never automatically replay. Current device acceptance is CYC-689. |
 | Password management | Identity edits, durable copy/verify/delete moves, bounded Google CSV, encrypted archive import/export and SAF owner reauthentication are connected. Checkup preserves saved flags/mutes. The owner-requested two-RPC fresh breach consumer is implemented; provider grant/admission, server interoperability and device acceptance remain CYC-692/CYC-689. |
 | Family sharing | Exact family eligibility, enrolled authenticated HPKE keys, fresh-recipient checks and launch receipts are connected. Incoming background policy matches the pinned default: import new, preserve conflicts, skip invalid siblings, consume processed invitations; same-sender updates default off. Get/CreateMetadata and committed Nigori keybag behavior match the reference; no separate sharing-key registry RPC was found. Second-family-account acceptance is CYC-690. |
-| Synced passkeys | Account-bound Credential Manager, legacy GMS FIDO and authenticated caBLE hybrid create/get use the real vault with current owner/domain authority. Native rename/delete, missing-secret PRF migration, bounded blob creation/read/write and Chrome-delegated payment are connected. Hybrid leases bind transcript, original request and immutable options with immediate disconnect/shutdown revocation. Gathered validation and CYC-687/CYC-688/CYC-689/CYC-691 acceptance remain pending. |
+| Synced passkeys | Account-bound Credential Manager, legacy GMS FIDO and authenticated caBLE hybrid create/get use the real vault with current owner/domain authority. Native rename/delete, missing-secret PRF migration, bounded blob creation/read/write and Chrome-delegated payment are connected. Hybrid leases bind transcript, original request and immutable options with immediate disconnect/shutdown revocation. The gathered host batch passed; CYC-687/CYC-688/CYC-689/CYC-691 interoperability acceptance remains pending. |
 | Wi-Fi | Explicit account opt-in, encrypted cloud adapter, owned-network native consumer and durable uncertain-outcome fences are connected. READ_WIFI_CREDENTIAL/NETWORK_SETTINGS require the companion image grants; old images refuse. Native/image acceptance remains CYC-689. |
 | Core agent fill | `security.password.fill` takes empty inputs and returns only `filled`; private native delivery targets the retained field. A durable receiving-app observation/input/capture fence lasts until authoritative UID process death or reboot. Owner-assisted native fields only; browser/WebView origins are refused. Device/controller acceptance remains CYC-689. |
 | Phone | Earlier signed installations and synthetic CRUD/restoration are historical evidence. All new device work is deferred by the owner because another chat has priority; no components were replaced in this batch. CYC-689 tracks a gathered coordinated acceptance run. |
@@ -572,8 +574,7 @@ No password or preference cloud writes ran in that historical review round.
 With Android SDK configured:
 
 ```sh
-./gradlew :password-sync:test :play-services-core:testMapboxDefaultDebugUnitTest
-./gradlew :play-services-core:assembleMapboxDefaultDebug :play-services-core:assembleMapboxDefaultDebugAndroidTest
+./gradlew --console=plain --continue :password-sync:test :play-services-fido-core:testDebugUnitTest :play-services-core:testMapboxDefaultDebugUnitTest :play-services-core:assembleMapboxDefaultDebug :play-services-core:assembleMapboxDefaultDebugAndroidTest
 python3 cyclon/notices/test_generate.py
 ```
 
