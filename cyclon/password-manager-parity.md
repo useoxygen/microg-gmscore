@@ -130,9 +130,9 @@ distinguishes configured credentials, current user lock and visible keyguard; th
 checks all three. Overlay filtering follows Android's [tapjacking guidance](https://developer.android.com/privacy-and-security/risks/tapjacking).
 
 Seven new policy regressions passed within **41 Core unit tests**, and the debug and
-instrumentation APKs compiled. This follow-up has not been installed or device-accepted.
-Real no-lock manager/provider use, secure prompt cancellation, background/resume, overlays,
-rotation and work-profile behavior still require integration acceptance.
+instrumentation APKs compiled. At that stage, the follow-up had not been installed or
+device-accepted. Later acceptance is recorded below; configured-lock/provider and work-profile
+behavior remain unaccepted.
 
 The subsequent secondary-process run on source **8ba21975** exposed a real scheduling
 failure: `PasswordRepository.setEnabled` called an uninitialized WorkManager in `:ui`.
@@ -148,8 +148,18 @@ worker execution, not hourly refresh, reboot, push or long-term background behav
 The first manager harness used an Espresso input API removed on this Android 17 build.
 The test-only stack is now pinned to Espresso 3.7.0 and AndroidX Test 1.7.0/1.3.0, while
 production Compose and runtime versions stay unchanged. These instrumentation fixtures are
-for API 26+ devices. Manager actions inject motion events through Android's input dispatcher;
+for API 28+ devices. Manager actions inject motion events through Android's input dispatcher;
 they do not invoke Compose click callbacks or disable the secure window.
+
+On source **63697035**, all seven isolated checks and three read-only account/worker checks
+passed again. The manager's account case also passed through injected taps: open without
+a screen lock, enable account sync, display the approved invalid-domain fixture's realm and
+username, no secret input fields, and `FLAG_SECURE` retained. The background test confirmed
+the grant was cleared, but its next open action timed out. It remains unaccepted. A revised
+test uses ordinary Settings/task switching, explicit focus waits and metadata-only touch/state
+diagnostics. It compiles; its next signed run is pending owner Google Cloud reauthentication.
+Each completed run restored and read back the original Services build without clearing data
+and removed its temporary test APK. No password or preference writes ran in this round.
 
 | Surface | Gap / required proof |
 | --- | --- |
@@ -162,7 +172,7 @@ they do not invoke Compose click callbacks or disable the secure window.
 | Password management | Search, note/name edits, moving between stores, import/export, blocked-site settings and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
-| Phone | Signed private installation, isolated cases and native synthetic CRUD/restoration passed. Secondary-process reads and a scheduled worker completed. Manager/provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |
+| Phone | Signed private installation, isolated cases and historical native synthetic CRUD/restoration passed. Secondary-process reads, a scheduled worker and no-lock account listing through injected taps passed. Manager background/reopen/recreation, provider input, configured-lock verification, process death/reboot, real account removal/revocation and hourly/background-lifetime acceptance remain. |
 | Official interoperability | Read a credential produced by official Chrome, then verify native edits/deletion and a locally produced credential with official Chrome. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks

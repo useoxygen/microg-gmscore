@@ -37,7 +37,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /** Opt-in owner UI checks; never opens an editor, reveals a password or mutates a login. */
 @RunWith(AndroidJUnit4::class)
-@SdkSuppress(minSdkVersion = 26)
+@SdkSuppress(minSdkVersion = 28)
 class PasswordManagerAndroidTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
