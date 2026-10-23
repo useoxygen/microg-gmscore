@@ -9,6 +9,8 @@ import android.os.Handler
 import android.os.Looper
 import android.net.Network
 import android.graphics.Bitmap
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothServerSocket
 import android.util.Log
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -30,10 +32,12 @@ class MigrationLabActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var radio: DctBluetoothNetwork? = null
     private var advertising: DctAdvertiser? = null
+    private var rawServer: BluetoothServerSocket? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.TYPE == "user") { finish(); return }
         if (intent.getStringExtra("mode") == "ble") { startRadioProbe(); return }
+        if (intent.getStringExtra("mode") == "raw-ble") { startRawCocProbe(); return }
         if (intent.getStringExtra("mode") == "session") { showSession(DctSession.create()); return }
         setContentView(TextView(this).apply { text = "Checking local DCT PAKE TLS…" })
         Thread {
@@ -109,9 +113,34 @@ class MigrationLabActivity : Activity() {
         }
     }
 
+    /** Mechanics probe only: a raw CoC is NOT the migration IPv6 network. */
+    private fun startRawCocProbe() {
+        setContentView(TextView(this).apply { text = "Testing raw BLE CoC mechanics only (15 seconds)…\nThis is not a migration channel." })
+        handler.postDelayed({ finish() }, 15_000)
+        runCatching {
+            val adapter = getSystemService(BluetoothManager::class.java).adapter
+            val server = adapter.listenUsingInsecureL2capChannel()
+            rawServer = server
+            advertising = DctAdvertiser(this).also { advertiser ->
+                advertiser.start(intent.getStringExtra("test_session") ?: "abc234", server.psm) { result ->
+                    Log.i("GmsSwitchLab", "Raw-CoC FC73 advertise result=$result; PSM=${server.psm}; IPv6 not exercised")
+                }
+            }
+            Thread {
+                val result = runCatching {
+                    server.accept(10_000).use { /* open/close only; no data or authentication claimed */ }
+                    "PASS raw BLE CoC accepted and closed; IPv6 not exercised"
+                }.getOrElse { "BLOCKED raw BLE CoC peer: ${it.javaClass.simpleName}" }
+                Log.i("GmsSwitchLab", result)
+                runOnUiThread { finish() }
+            }.start()
+        }.onFailure { Log.i("GmsSwitchLab", "BLOCKED raw BLE CoC: ${it.javaClass.simpleName}"); finish() }
+    }
+
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         advertising?.close()
+        runCatching { rawServer?.close() }
         radio?.close()
         super.onDestroy()
     }
