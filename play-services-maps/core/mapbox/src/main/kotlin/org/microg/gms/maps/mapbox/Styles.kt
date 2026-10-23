@@ -39,9 +39,19 @@ const val KEY_SOURCE_URL = "url"
 const val KEY_SOURCE_TILES = "tiles"
 
 
+// A plain background without tile sources, for builds that have no tile key.
+private const val NO_TILES_STYLE = """{"version":8,"sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"#e5e3df"}}]}"""
+
 fun getStyle(
     context: MapContext, mapType: Int, styleOptions: MapStyleOptions?, styleFromFileWorkaround: Boolean = false
 ): Style.Builder {
+
+    // Without any key, the styles fall back to mapbox:// sources, and Mapbox GL native aborts the host app
+    // ("You must provide API key for tile sources"). An empty map is better than crashing the app that shows it.
+    if (BuildConfig.STADIA_KEY.isEmpty() && BuildConfig.MAPBOX_KEY.isEmpty()) {
+        Log.w(TAG, "This build has no map tile key; showing a map without tiles")
+        return Style.Builder().fromJson(NO_TILES_STYLE)
+    }
 
     val styleJson = JSONObject(
         context.assets.open(
