@@ -10,6 +10,7 @@ import android.net.NetworkRequest
 import android.net.NetworkSpecifier
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.Keep
 import java.io.Closeable
 
 /** Owns one Android 16+ Bluetooth IPv6/6LoWPAN reservation. Never binds the process default network. */
@@ -26,6 +27,7 @@ internal class DctBluetoothNetwork(context: Context, private val listener: Liste
     private val callback = object : ConnectivityManager.NetworkCallback() {
         // Compiles against SDK 35; the runtime virtual override was added in API 36.
         @Suppress("unused")
+        @Keep
         fun onReserved(capabilities: NetworkCapabilities) {
             val specifier = capabilities.networkSpecifier ?: return
             val psm = specifier.javaClass.getMethod("getPsm").invoke(specifier) as Int

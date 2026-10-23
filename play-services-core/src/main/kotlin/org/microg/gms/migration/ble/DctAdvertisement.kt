@@ -26,7 +26,7 @@ internal object DctAdvertisement {
         val output = ByteArrayOutputStream()
         output.write(VERSION)
         elements.forEach { (type, value) ->
-            require(type in 1..255 && value.size <= 127)
+            require(type in 1..7 && value.size <= 127) { "Unconfirmed DCT element encoding" }
             if (value.size <= 7 && type <= 15) output.write((value.size shl 4) or type)
             else { output.write(0x80 or value.size); output.write(type) }
             output.write(value)

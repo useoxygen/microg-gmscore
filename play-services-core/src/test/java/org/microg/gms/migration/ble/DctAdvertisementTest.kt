@@ -22,10 +22,10 @@ class DctAdvertisementTest {
     }
     @Test fun extendedElementsRoundTripWithoutLosingTheirType() {
         val value = ByteArray(100) { it.toByte() }
-        val encoded = DctAdvertisement.encode(mapOf(42 to value))
+        val encoded = DctAdvertisement.encode(mapOf(7 to value))
         assertEquals(0xe4, encoded[1].toInt() and 255)
-        assertEquals(42, encoded[2].toInt())
-        assertArrayEquals(value, DctAdvertisement.decode(encoded)[42])
+        assertEquals(7, encoded[2].toInt())
+        assertArrayEquals(value, DctAdvertisement.decode(encoded)[7])
     }
     @Test fun duplicateSessionAndWrongVersionAreRejected() {
         val valid = DctAdvertisement.target("abcdef", 129)
