@@ -42,7 +42,8 @@ class VaultState(
     var pendingMetadata: ByteArray? = null,
     val preferences: MutableList<ByteArray> = ArrayList(),
     val preferenceMutations: MutableList<Mutation> = ArrayList(),
-    var preferenceParent: String? = null
+    var preferenceParent: String? = null,
+    var deviceRegistration: DeviceRegistration? = null
 ) {
     fun encode(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -52,9 +53,9 @@ class VaultState(
             if (value.size > Proto.MAX_BYTES - out.size()) throw ProtocolException()
             out.write(value, 0, value.size)
         }
-        // v1 readers must refuse a state containing preference mutations rather than erase
-        // unknown journal fields on their next save. v2 continues reading existing v1 vaults.
-        append(Proto.integer(1, 2))
+        // Earlier writers must refuse unknown durable registration/journal fields rather
+        // than erase them on their next save. v3 continues reading existing v1/v2 vaults.
+        append(Proto.integer(1, 3))
         metadata?.let { append(Proto.field(2, it)) }
         records.forEach { append(Proto.field(3, it)) }
         mutations.forEach { append(Proto.field(4, it.encode())) }
@@ -65,12 +66,13 @@ class VaultState(
         preferences.forEach { append(Proto.field(9, it)) }
         preferenceMutations.forEach { append(Proto.field(10, it.encode())) }
         preferenceParent?.let { append(Proto.field(11, it)) }
+        deviceRegistration?.let { append(Proto.field(12, it.encode())) }
         return out.toByteArray()
     }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
-            if (proto.integer(1) !in setOf(1L, 2L)) throw ProtocolException()
+            if (proto.integer(1) !in setOf(1L, 2L, 3L)) throw ProtocolException()
             val state = VaultState(proto.optional(2), proto.bytes(3).toMutableList(),
                 proto.bytes(4).map(Mutation::decode).toMutableList(), proto.integer(5) ?: 0)
             proto.bytes(6).forEach { raw -> Proto.decode(raw).let { state.chromeLocalData[it.string(1)] = it.one(2) } }
@@ -79,6 +81,7 @@ class VaultState(
             state.preferences.addAll(proto.bytes(9))
             state.preferenceMutations.addAll(proto.bytes(10).map(Mutation::decode))
             state.preferenceParent = proto.optionalString(11)
+            state.deviceRegistration = proto.optional(12)?.let(DeviceRegistration::decode)
             if (state.mutations.map { it.id }.toSet().size != state.mutations.size) throw ProtocolException()
             if (state.preferenceMutations.map { it.id }.toSet().size != state.preferenceMutations.size) throw ProtocolException()
             state
@@ -90,7 +93,8 @@ interface VaultSession { fun load(): VaultState; fun save(state: VaultState) }
 interface VaultStore { fun <T> locked(action: (VaultSession) -> T): T }
 
 /** Network execution is serialized per account, with a durable launch fence before every mutation. */
-class VaultSync(private val api: PasswordApi, private val store: VaultStore, private val now: () -> Long = System::currentTimeMillis) {
+class VaultSync(private val api: PasswordApi, private val store: VaultStore, private val device: DeviceTokenProvider? = null,
+    private val now: () -> Long = System::currentTimeMillis) {
     fun enqueue(kind: MutationKind, tag: String, desired: ByteArray? = null): String = store.locked { session ->
         enqueue(session, kind, tag, desired)
     }
@@ -152,6 +156,7 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
             state.records.clear(); state.records.addAll(records)
             state.lastSyncMillis = now()
             session.save(state)
+            val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
             var uploaded = 0
             for (pending in state.mutations.toList()) {
                 val index = state.mutations.indexOfFirst { it.id == pending.id }
@@ -184,9 +189,9 @@ class VaultSync(private val api: PasswordApi, private val store: VaultStore, pri
                 session.save(state)
                 try {
                     val response = when (pending.kind) {
-                        MutationKind.CREATE -> api.create(parent, outgoing!!)
-                        MutationKind.UPDATE -> api.update(outgoing!!)
-                        MutationKind.DELETE -> { api.delete(pending.name!!); null }
+                        MutationKind.CREATE -> api.create(parent, outgoing!!, clientToken)
+                        MutationKind.UPDATE -> api.update(outgoing!!, clientToken)
+                        MutationKind.DELETE -> { api.delete(pending.name!!, clientToken); null }
                     }
                     if (response != null) {
                         val proto = Proto.decode(response)

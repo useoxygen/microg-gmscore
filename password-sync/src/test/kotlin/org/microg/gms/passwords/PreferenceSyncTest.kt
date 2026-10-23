@@ -21,6 +21,7 @@ class PreferenceSyncTest {
         var repeatToken = false
         var malformedPage = false
         var version = 0L
+        var requiredClientToken: ByteArray? = null
         fun entity(name: String, value: String): ByteArray = Proto.decode(PriorityPreference.create(name, value).encode())
             .replace(1, "$parent/priority_preferences/${PriorityPreference.tagFor(name)}".toByteArray())
             .replace(3, Proto.integer(1, ++version)).encode()
@@ -35,6 +36,7 @@ class PreferenceSyncTest {
                             (if (repeatToken) Proto.field(2, "page") else byteArrayOf())
                 }
                 PasswordMethod.CREATE_PREFERENCE, PasswordMethod.UPDATE_PREFERENCE -> {
+                    requiredClientToken?.let { assertArrayEquals(it, body.one(4)) }
                     val incoming = PriorityPreference.decode(body.one(2))
                     assertNull(body.optional(3)); assertNotNull(body.optional(4))
                     val old = records.indexOfFirst { PriorityPreference.decode(it).tag == incoming.tag }
@@ -58,6 +60,24 @@ class PreferenceSyncTest {
         }
     }
     private fun engine(server: Server, store: Store) = PreferenceSync(PasswordApi(server), store)
+
+    @Test fun preferenceCreateAndUpdateUseAndPreserveRegisteredClientToken() {
+        val server = Server(); val store = Store(); val token = byteArrayOf(9, 8, 7)
+        server.requiredClientToken = token
+        var registrations = 0
+        val registration = DeviceRegistrationSync(PasswordTransport { method, _ ->
+            assertEquals(PasswordMethod.CREATE_DEVICE, method); registrations++
+            Proto.field(1, token) + Proto.field(2, "fixture-guid")
+        }, { SyncDeviceInfo("Phone", "Maker", "123") })
+        val sync = PreferenceSync(PasswordApi(server), store, registration)
+        sync.synchronize(server.parent)
+        sync.enqueue("fixture", "true"); sync.synchronize(server.parent)
+        sync.enqueue("fixture", "false"); sync.synchronize(server.parent)
+        assertEquals(1, registrations)
+        assertEquals(2, server.writes)
+        assertArrayEquals(token, store.state().deviceRegistration!!.token)
+        assertTrue(store.state().preferenceMutations.isEmpty())
+    }
 
     @Test fun createUpdateAndOfflineCoalescingUseThePriorityPreferenceWireLayout() {
         val server = Server(); val store = Store(); val sync = engine(server, store)
@@ -121,11 +141,11 @@ class PreferenceSyncTest {
         val server = Server(); val store = Store(); val sync = engine(server, store)
         sync.synchronize(server.parent)
         sync.enqueue("credentials_enable_service", "true")
-        assertEquals(2L, Proto.decode(store.bytes).integer(1))
+        assertEquals(3L, Proto.decode(store.bytes).integer(1))
         val reopened = VaultState.decode(store.bytes)
         assertEquals(1, reopened.preferenceMutations.size)
         assertEquals("true", engine(server, store).value("credentials_enable_service"))
-        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 3)) }
+        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 4)) }
     }
 
     @Test fun unknownFieldsSurviveValueEditsAndAChangedVaultCannotReceiveOldQueuedSettings() {

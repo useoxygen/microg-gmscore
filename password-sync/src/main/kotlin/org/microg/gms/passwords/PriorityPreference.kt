@@ -32,7 +32,7 @@ class PriorityPreference private constructor(private val proto: Proto) {
 }
 
 /** Separate journal: preference sync never needs the password cryptographer (GMS besa/besi.a). */
-class PreferenceSync(private val api: PasswordApi, private val store: VaultStore) {
+class PreferenceSync(private val api: PasswordApi, private val store: VaultStore, private val device: DeviceTokenProvider? = null) {
     fun enqueue(name: String, value: String): String = store.locked { session ->
         val state = session.load()
         if (state.preferenceParent == null) throw VaultLockedException()
@@ -57,6 +57,7 @@ class PreferenceSync(private val api: PasswordApi, private val store: VaultStore
         state.preferences.clear(); state.preferences.addAll(snapshot)
         state.preferenceParent = parent
         session.save(state)
+        val clientToken = device?.token(session, state, parent) ?: byteArrayOf()
         var uploaded = 0
         for (pending in state.preferenceMutations.toList()) {
             val index = state.preferenceMutations.indexOfFirst { it.id == pending.id }
@@ -81,8 +82,8 @@ class PreferenceSync(private val api: PasswordApi, private val store: VaultStore
             state.preferenceMutations[index] = pending.phase(MutationPhase.LAUNCHED)
             session.save(state)
             try {
-                val response = if (pending.kind == MutationKind.CREATE) api.createPreference(parent, desired.encode())
-                    else api.updatePreference(desired.encode())
+                val response = if (pending.kind == MutationKind.CREATE) api.createPreference(parent, desired.encode(), clientToken)
+                    else api.updatePreference(desired.encode(), clientToken)
                 val result = validate(parent, response)
                 if (!sameValue(result, desired)) throw ProtocolException()
                 state.preferences.removeAll { PriorityPreference.decode(it).tag == pending.tag }

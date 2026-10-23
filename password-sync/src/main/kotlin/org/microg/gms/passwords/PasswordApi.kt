@@ -12,13 +12,17 @@ import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 
-enum class PasswordMethod(val rpc: String, val mutates: Boolean) {
+enum class PasswordMethod(val rpc: String, val mutates: Boolean,
+    val service: String = "google.internal.chrome.sync.passwords.v1.Passwords",
+    val host: String = "chromesyncpasswords-pa.googleapis.com") {
     GET_METADATA("GetMetadata", false), CREATE_METADATA("CreateMetadata", true),
     LIST("ListPasswords", false), GET("GetPassword", false),
     CREATE("CreatePassword", true), UPDATE("UpdatePassword", true),
     BATCH_UPDATE("BatchUpdatePasswords", true), DELETE("DeletePassword", true),
     LIST_PREFERENCES("ListPriorityPreferences", false), CREATE_PREFERENCE("CreatePriorityPreference", true),
-    UPDATE_PREFERENCE("UpdatePriorityPreference", true)
+    UPDATE_PREFERENCE("UpdatePriorityPreference", true),
+    CREATE_DEVICE("CreateDeviceInfo", true, "google.internal.chrome.sync.entities.v1.SyncEntities", "chromesyncentities-pa.googleapis.com"),
+    UPDATE_DEVICE("UpdateDeviceInfo", true, "google.internal.chrome.sync.entities.v1.SyncEntities", "chromesyncentities-pa.googleapis.com")
 }
 
 /** No server messages, request bodies or account identifiers are retained in an exception. */
@@ -36,13 +40,15 @@ class GooglePasswordTransport(
         .readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
 
     init {
-        require(endpoint.scheme == "https" && endpoint.host == "chromesyncpasswords-pa.googleapis.com" && endpoint.port == 443)
+        require(endpoint.scheme == "https" && endpoint.host in PasswordMethod.values().map { it.host }.toSet() && endpoint.port == 443)
     }
 
     override fun invoke(method: PasswordMethod, request: ByteArray): ByteArray {
         if (request.size > Proto.MAX_BYTES) throw ProtocolException()
+        // A method cannot redirect the account token to a different service or origin.
+        if (endpoint.host != method.host) throw ProtocolException()
         val framed = ByteBuffer.allocate(5 + request.size).put(0).putInt(request.size).put(request).array()
-        val url = endpoint.newBuilder().encodedPath("/google.internal.chrome.sync.passwords.v1.Passwords/" + method.rpc).build()
+        val url = endpoint.newBuilder().encodedPath("/${method.service}/${method.rpc}").build()
         val call = Request.Builder().url(url).header("Authorization", "Bearer " + token())
             .header("TE", "trailers").header("grpc-accept-encoding", "gzip")
             .post(framed.toRequestBody("application/grpc".toMediaType())).build()

@@ -43,6 +43,7 @@ class VaultSyncTest {
         var loseDeleteResponse = false
         var failList = false
         var repeatPageToken = false
+        var requiredClientToken: ByteArray? = null
         private var version = 0
         fun entity(tag: String, secret: String, name: String = "$parent/passwords/$tag"): ByteArray =
             Proto.field(1, name) + Proto.field(2, tag) + Proto.field(5, Proto.integer(1, (++version).toLong())) +
@@ -55,6 +56,7 @@ class VaultSyncTest {
                     if (repeatPageToken) Proto.field(2, "repeated") else byteArrayOf()
             }
             PasswordMethod.CREATE -> {
+                requiredClientToken?.let { assertArrayEquals(it, Proto.decode(request).one(4)) }
                 writes++
                 val incoming = Proto.decode(Proto.decode(request).one(2))
                 if (records.any { Proto.decode(it).string(2) == incoming.string(2) }) throw PasswordRpcException(6, false)
@@ -65,6 +67,7 @@ class VaultSyncTest {
                 created
             }
             PasswordMethod.BATCH_UPDATE -> {
+                requiredClientToken?.let { assertArrayEquals(it, Proto.decode(request).one(3)) }
                 writes++
                 val incoming = Proto.decode(Proto.decode(Proto.decode(request).one(1)).one(2))
                 val index = records.indexOfFirst { Proto.decode(it).string(1) == incoming.string(1) }
@@ -75,6 +78,7 @@ class VaultSyncTest {
                 Proto.field(1, updated)
             }
             PasswordMethod.DELETE -> {
+                requiredClientToken?.let { assertArrayEquals(it, Proto.decode(request).one(3)) }
                 writes++
                 val name = Proto.decode(request).string(1)
                 records.removeAll { Proto.decode(it).string(1) == name }
@@ -85,6 +89,28 @@ class VaultSyncTest {
         }
     }
     private fun engine(server: Server, store: Store) = VaultSync(PasswordApi(server), store) { 1234L }
+
+    @Test fun registeredClientTokenSurvivesOutboxCommitsAndGoesToEveryPasswordMutation() {
+        val server = Server(); val store = Store(); val token = byteArrayOf(9, 8, 7)
+        server.requiredClientToken = token
+        var registrations = 0
+        val registration = DeviceRegistrationSync(PasswordTransport { method, _ ->
+            assertEquals(PasswordMethod.CREATE_DEVICE, method); registrations++
+            Proto.field(1, token) + Proto.field(2, "fixture-guid")
+        }, { SyncDeviceInfo("Phone", "Maker", "123") })
+        val sync = VaultSync(PasswordApi(server), store, registration)
+        sync.synchronize { VaultKeys.unlock(it) }
+        sync.enqueue(MutationKind.CREATE, "fixture", server.entity("fixture", "first"))
+        sync.synchronize { VaultKeys.unlock(it) }
+        val base = store.state().records.single()
+        sync.enqueue(MutationKind.UPDATE, "fixture", Proto.decode(base).replace(6, server.dataKey.encrypt(Proto.field(8, "second"))).encode())
+        sync.synchronize { VaultKeys.unlock(it) }
+        sync.enqueue(MutationKind.DELETE, "fixture"); sync.synchronize { VaultKeys.unlock(it) }
+        assertEquals(1, registrations)
+        assertEquals(3, server.writes)
+        assertArrayEquals(token, store.state().deviceRegistration!!.token)
+        assertTrue(store.state().mutations.isEmpty())
+    }
 
     @Test fun normalCreateUpdateDeleteWithDurableReadback() {
         val server = Server(); val store = Store(); val engine = engine(server, store)

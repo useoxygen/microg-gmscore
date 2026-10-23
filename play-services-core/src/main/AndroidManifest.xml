@@ -673,6 +673,11 @@
                 <action android:name="com.google.android.gms.chromesync.service.firstparty.START" />
             </intent-filter>
         </service>
+        <receiver android:name="org.microg.gms.passwords.PasswordInvalidationReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+            </intent-filter>
+        </receiver>
 
         <service android:name="org.microg.gms.passwords.PasswordAutofillService" android:exported="true"
             android:label="@string/passwords_title" android:permission="android.permission.BIND_AUTOFILL_SERVICE" tools:targetApi="28">

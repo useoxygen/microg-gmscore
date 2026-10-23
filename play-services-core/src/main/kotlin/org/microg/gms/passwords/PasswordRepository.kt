@@ -42,6 +42,7 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         if (value) {
             val auth = authManager()
             auth.setPermitted(true)
+            authManager(CHROMESYNC_SCOPE).setPermitted(true)
             RemoteWorkManager.getInstance(context).enqueueUniquePeriodicWork("password-periodic-$marker", ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<PasswordSyncWorker>(1, TimeUnit.HOURS).setInputData(workDataOf("account" to account.name))
                     .setConstraints(network()).build()).get(30, TimeUnit.SECONDS)
@@ -54,7 +55,7 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
 
     fun schedule() {
         if (!enabled) return
-        RemoteWorkManager.getInstance(context).enqueueUniqueWork("password-now-$marker", ExistingWorkPolicy.KEEP,
+        RemoteWorkManager.getInstance(context).enqueueUniqueWork("password-now-$marker", ExistingWorkPolicy.APPEND_OR_REPLACE,
             OneTimeWorkRequestBuilder<PasswordSyncWorker>().setInputData(workDataOf("account" to account.name))
                 .setConstraints(network()).setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build())
             .get(30, TimeUnit.SECONDS)
@@ -65,9 +66,10 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         val auth = authManager()
         val token = auth.requestAuthWithBackgroundResolution(false).auth?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
         val savedKey = store.locked { it.load().customKey }
+        val registration = registration()
         val api = PasswordApi(GooglePasswordTransport({ checkEnabled(); token }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
         return try {
-            VaultSync(api, store).synchronize { metadata -> unlock(metadata, savedKey) }.also { checkAccount() }
+            VaultSync(api, store, device = registration).synchronize { metadata -> unlock(metadata, savedKey) }.also { checkAccount() }
         } catch (failure: PasswordRpcException) {
             if (failure.code == 16) auth.invalidateAuthToken(token)
             throw failure
@@ -182,10 +184,11 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         checkEnabled()
         val auth = authManager()
         val token = auth.requestAuthWithBackgroundResolution(false).auth?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
+        val registration = registration()
         val api = PasswordApi(GooglePasswordTransport({ checkEnabled(); token }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
         return try {
             val parent = PasswordApi.checkedParent(Proto.decode(api.metadata()).string(1))
-            PreferenceSync(api, store).synchronize(parent)
+            PreferenceSync(api, store, registration).synchronize(parent)
         } catch (failure: PasswordRpcException) {
             if (failure.code == 16) auth.invalidateAuthToken(token)
             throw failure
@@ -212,8 +215,26 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         } else emptyList()
         return try { VaultKeys.unlock(metadata, shared, customKey = customKey) } finally { shared.forEach { it.fill(0) } }
     }
-    private fun authManager() = AuthManager(context, account.name, Constants.GMS_PACKAGE_NAME,
-        "oauth2:https://www.googleapis.com/auth/login_manager").apply {
+    private fun registration(): DeviceTokenProvider {
+        val info = PasswordDeviceRegistration.info(context, store.locked { it.load().deviceRegistration })
+        val auth = authManager(CHROMESYNC_SCOPE)
+        var token: String? = null
+        val transport = GooglePasswordTransport({
+            checkEnabled()
+            token ?: auth.requestAuthWithBackgroundResolution(false).auth?.takeIf { it.isNotBlank() }
+                ?.also { token = it } ?: throw VaultLockedException()
+        }, "https://chromesyncentities-pa.googleapis.com/".toHttpUrl())
+        val registration = DeviceRegistrationSync(transport, { info })
+        return DeviceTokenProvider { session, state, parent ->
+            try { registration.token(session, state, parent) }
+            catch (failure: PasswordRpcException) {
+                if (failure.code == 16) token?.let(auth::invalidateAuthToken)
+                throw failure
+            }
+        }
+    }
+    private fun authManager(scope: String = "https://www.googleapis.com/auth/login_manager") = AuthManager(context, account.name, Constants.GMS_PACKAGE_NAME,
+        "oauth2:$scope").apply {
         isGmsApp = true
         setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
     }
@@ -225,6 +246,7 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
     private fun localPreferences() = PreferenceSync(PasswordApi(PasswordTransport { _, _ -> error("enqueue is local") }), store)
     override fun toString(): String = "PasswordRepository[redacted]"
     companion object {
+        private const val CHROMESYNC_SCOPE = "https://www.googleapis.com/auth/chromesync"
         internal fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         private fun network() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()

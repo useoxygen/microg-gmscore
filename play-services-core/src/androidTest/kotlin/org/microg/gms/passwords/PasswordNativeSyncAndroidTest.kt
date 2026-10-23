@@ -24,6 +24,26 @@ import java.util.concurrent.TimeUnit
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun nativeDeviceRegistrationAndHeartbeatPreserveCredentialData() {
+        assumeTrue(arguments.getString("passwordLiveDeviceRegistration") == "cyc654")
+        withFixture { repository, _ ->
+            val registered = repository.store.locked { it.load().deviceRegistration } ?: error("Device registration was not persisted")
+            assertTrue("Server registration is incomplete", registered.token?.isNotEmpty() == true && !registered.cacheGuid.isNullOrEmpty())
+            assertTrue("Registration nonce must survive reopen", registered.nonce.size == 16)
+            repository.store.locked { session ->
+                val state = session.load()
+                val current = state.deviceRegistration!!
+                // Expire only the local heartbeat timestamp. Never restore an obsolete server token.
+                state.deviceRegistration = DeviceRegistration(current.parent, current.nonce, current.token, current.cacheGuid, current.info, 0)
+                session.save(state)
+            }
+            repository.refreshPreferences()
+            val updated = PasswordRepository(context, repository.account).store.locked { it.load().deviceRegistration!! }
+            assertTrue("Native UpdateDeviceInfo was not acknowledged", updated.updatedMillis > 0 && updated.token?.isNotEmpty() == true)
+            assertTrue("Heartbeat changed the server device identity", updated.cacheGuid == registered.cacheGuid && same(updated.nonce, registered.nonce))
+        }
+    }
+
     @Test fun secondaryProcessSchedulesPasswordWorkerToCompletion() {
         val selected = arguments.getString("passwordLiveAccount")
         assumeTrue(!selected.isNullOrBlank())

@@ -76,6 +76,31 @@ password pagination uses field 3. Both use separate durable mutation journals.
   Mutable PendingIntent extras cannot change the encrypted one-use selection. Autofill also
   binds the credential to the original field IDs and revalidates the requesting app.
 
+## Expanded sync comparison
+
+The 29 Passwords RPCs are one service, not the complete Password Manager surface.
+The same pinned Google build also uses `google.internal.chrome.sync.entities.v1.SyncEntities`
+at `chromesyncentities-pa.googleapis.com` with the `chromesync` OAuth scope. Device
+registration is established by `bfgj`, `bfef`, `bfel`, `iaid`, `iaie`, `iaij`, `iaiq` and
+`iair`; `jcpp` pins the distinct host/scope, and `jcqd`/`cwzd` establish the seven-day
+heartbeat. `SyncIntentOperation`, `ipbb` and `ipba` establish sender, cache-GUID and type-ID
+invalidation routing. These are format/behavior observations, not copied source.
+
+The next implementation adds account-encrypted device registration, a durable 16-byte
+creation nonce reused after a lost response, acknowledged client-token/cache-GUID storage,
+heartbeat/token updates, and registered tokens on password and preference mutations.
+State schema v3 reads v1/v2 while fencing older writers. An internal, non-exported push
+receiver accepts the expected sender and bounded type payload, routes only by a matching
+server cache GUID and schedules enabled accounts. Messaging opt-out is respected; existing
+GCM account registration tokens/settings are not replaced. Follow-up sync work is appended
+instead of being dropped while a prior sync is running. Native registration/heartbeat,
+real push delivery and the new scheduler regression are pending device execution.
+
+The broader comparison remains open: SyncEntities generic entity contracts, affiliation,
+legacy credentials, leak checking, sharing and synced passkey consumers require their own
+behavior and interoperability evidence. Adding a transport method alone does not complete
+one of those flows.
+
 ## Remaining parity and acceptance
 
 On October 22, 2026 (PT), source **e0336ea5** was built, signed with the phone's existing
@@ -179,7 +204,7 @@ No password or preference cloud writes ran in this review round.
 
 | Surface | Gap / required proof |
 | --- | --- |
-| Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, stable nonce/client token, invalidation transport and reconnect handling are not connected. Current password writes use empty client-token fields, which the earlier PoC server accepted. |
+| Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, encrypted stable nonce/client token, heartbeat and cache-GUID invalidation routing are implemented. Host tests cover loss/reopen/token propagation and isolation. Native/server, real push delivery, token invalidation and reconnect acceptance remain open. |
 | Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native list/cache reopening passed; preference writes, official-client callbacks, management controls and provider behavior still need verification. |
 | Affiliations | Verified Digital Asset Links, branding and grouping are not implemented; no eTLD or package-name shortcut is used to authorize fills. |
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |
