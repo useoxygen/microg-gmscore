@@ -658,6 +658,27 @@
             </intent-filter>
         </service>
 
+        <service android:name="org.microg.gms.passwords.ChromePasswordService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.chromesync.service.firstparty.START" />
+            </intent-filter>
+        </service>
+
+        <service android:name="org.microg.gms.passwords.PasswordAutofillService" android:exported="true"
+            android:label="@string/passwords_title" android:permission="android.permission.BIND_AUTOFILL_SERVICE" tools:targetApi="28">
+            <intent-filter><action android:name="android.service.autofill.AutofillService" /></intent-filter>
+            <meta-data android:name="android.autofill" android:resource="@xml/password_autofill_service" />
+        </service>
+        <activity android:name="org.microg.gms.passwords.PasswordAutofillActivity" android:exported="false"
+            android:process=":ui" android:excludeFromRecents="true" android:theme="@style/Theme.Cyclon" tools:targetApi="28" />
+
+        <receiver android:name="org.microg.gms.passwords.PasswordAccountRemovedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.accounts.action.ACCOUNT_REMOVED" />
+                <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <service android:name="org.microg.gms.credential.CredentialManagerService">
             <intent-filter>
                 <action android:name="com.google.android.gms.credential.manager.service.firstparty.START" />
@@ -808,6 +829,14 @@
                 android:resource="@xml/credentials_provider_google_id" />
         </service>
 
+
+        <activity
+            android:name="org.microg.gms.passwords.PasswordProxyActivity"
+            android:exported="false"
+            android:process=":ui"
+            android:theme="@style/Theme.App.Translucent"
+            android:excludeFromRecents="true"
+            tools:targetApi="34" />
 
         <activity
             android:name="org.microg.gms.auth.credentials.provider.PublicKeyProxyActivity"
@@ -1266,7 +1295,7 @@
             android:exported="true"
             android:process=":ui"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.Translucent"/>
+            android:theme="@style/Theme.Cyclon"/>
 
         <service android:name="org.microg.gms.clearcut.ClearcutLoggerService">
             <intent-filter>

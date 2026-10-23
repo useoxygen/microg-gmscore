@@ -31,6 +31,14 @@ import androidx.credentials.provider.BeginCreatePublicKeyCredentialRequest
 import androidx.credentials.provider.BeginGetPublicKeyCredentialOption
 import androidx.credentials.provider.CustomCredentialEntry
 import androidx.credentials.provider.PublicKeyCredentialEntry
+import androidx.credentials.provider.BeginGetPasswordOption
+import androidx.credentials.provider.BeginCreatePasswordCredentialRequest
+import org.microg.gms.passwords.PasswordProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import com.google.android.gms.fido.fido2.api.common.PublicKeyCredentialUserEntity
 import com.squareup.wire.Instant
 import org.json.JSONObject
@@ -48,33 +56,36 @@ private const val TAG = "PasswordAndPasskey"
  */
 @RequiresApi(34)
 open class PasswordAndPasskeyService : CredentialProviderService() {
+    private val requests = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    override fun onDestroy() { requests.cancel(); super.onDestroy() }
 
     override fun onBeginGetCredentialRequest(
         request: BeginGetCredentialRequest,
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<BeginGetCredentialResponse, GetCredentialException>
     ) {
-        runCatching {
+        val job = requests.launch { runCatching {
             val credentialEntries = request.beginGetCredentialOptions
                 .flatMap { option ->
                     when (option.type) {
                         TYPE_PUBLIC_KEY_CREDENTIAL -> handlePublicKeyCredentialRequest(option as BeginGetPublicKeyCredentialOption, request)
-                        TYPE_PASSWORD_CREDENTIAL -> emptyList() // TODO: handle password credential request
+                        TYPE_PASSWORD_CREDENTIAL -> PasswordProvider.get(this@PasswordAndPasskeyService, option as BeginGetPasswordOption, request)
                         else -> emptyList<CredentialEntry>().also {
                             Log.d(TAG, "Unsupported credential type: ${option.type}")
                         }
                     }
                 }
 
+            if (cancellationSignal.isCanceled) return@runCatching
             callback.onResult(BeginGetCredentialResponse.Builder()
                 .setCredentialEntries(credentialEntries)
                 .build()
                 .also { Log.d(TAG, "Returning ${credentialEntries.size} credential entries") })
 
         }.onFailure { e ->
-            Log.e(TAG, "Error in onBeginGetCredential", e)
-            callback.onError(GetCredentialUnknownException(e.message))
-        }
+            if (!cancellationSignal.isCanceled) callback.onError(GetCredentialUnknownException())
+        } }
+        cancellationSignal.setOnCancelListener { job.cancel() }
     }
 
     private fun handlePublicKeyCredentialRequest(
@@ -136,17 +147,18 @@ open class PasswordAndPasskeyService : CredentialProviderService() {
         cancellationSignal: CancellationSignal,
         callback: OutcomeReceiver<BeginCreateCredentialResponse, CreateCredentialException>
     ) {
-        runCatching {
+        val job = requests.launch { runCatching {
+            if (cancellationSignal.isCanceled) return@runCatching
             when (request.type) {
                 TYPE_PUBLIC_KEY_CREDENTIAL -> handleCreatePublicKeyCredential(request as BeginCreatePublicKeyCredentialRequest, callback)
-                TYPE_PASSWORD_CREDENTIAL -> error("Password credential creation not supported")
+                TYPE_PASSWORD_CREDENTIAL -> callback.onResult(PasswordProvider.create(this@PasswordAndPasskeyService, request as BeginCreatePasswordCredentialRequest))
                 else -> callback.onError(CreateCredentialUnknownException())
                     .also { Log.w(TAG, "Unsupported credential type: ${request.type}") }
             }
         }.onFailure { e ->
-            Log.e(TAG, "Error in onBeginCreateCredential", e)
-            callback.onError(CreateCredentialUnknownException(e.message))
-        }
+            if (!cancellationSignal.isCanceled) callback.onError(CreateCredentialUnknownException())
+        } }
+        cancellationSignal.setOnCancelListener { job.cancel() }
     }
 
     @SuppressLint("MutableImplicitPendingIntent")

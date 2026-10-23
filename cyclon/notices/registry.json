@@ -2512,6 +2512,18 @@
       "metadataSources": [
         "http://www.apache.org/licenses/LICENSE-2.0.txt"
       ]
+    },
+    "org.bouncycastle:bcprov-jdk15to18:1.83": {
+      "licenses": [
+        "Bouncy Castle Licence"
+      ],
+      "texts": [
+        "bouncycastle-1.83.txt"
+      ],
+      "metadataSources": [
+        "https://www.bouncycastle.org/licence.html",
+        "https://github.com/bcgit/bc-java/tree/r1rv83"
+      ]
     }
   }
 }
