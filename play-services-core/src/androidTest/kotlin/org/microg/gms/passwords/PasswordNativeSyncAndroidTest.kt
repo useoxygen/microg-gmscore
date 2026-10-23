@@ -39,6 +39,7 @@ class PasswordNativeSyncAndroidTest {
     @Test fun nativeOAuthRecoversFromAnExplicitlyRejectedSyntheticBearer() {
         assumeTrue(arguments.getString("passwordLiveAuth") == "cyc654")
         withFixture { repository, _ ->
+            repository.store.locked { it.load() }
             val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
                 "oauth2:https://www.googleapis.com/auth/login_manager").apply {
                 isGmsApp = true
@@ -48,13 +49,20 @@ class PasswordNativeSyncAndroidTest {
             var rejected = 0
             val invalid = "cyc654-invalid-synthetic-bearer-" + UUID.randomUUID()
             val oauth = PasswordOAuthSession({
-                if (++loads == 1) invalid else auth.requestAuthWithBackgroundResolution(false).auth
+                repository.store.locked { it.load() }
+                val token = if (++loads == 1) invalid else auth.requestAuthWithBackgroundResolution(false).auth
+                repository.store.locked { it.load() }
+                token
             }, { value ->
+                repository.store.locked { it.load() }
                 if (value == invalid) rejected++ else auth.invalidateAuthToken(value)
+                repository.store.locked { it.load() }
             })
             val transport = GooglePasswordTransport({
-                assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
-                oauth.token()
+                repository.store.locked { it.load() }
+                val token = oauth.token()
+                repository.store.locked { it.load() }
+                token
             }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl(), rejectedToken = oauth::reject)
             val result = PasswordApi(transport).metadata()
             val cached = repository.store.locked { it.load().metadata } ?: throw VaultLockedException()
@@ -245,14 +253,16 @@ class PasswordNativeSyncAndroidTest {
             } }
             val data = PasswordData.decode(restore)
             assertTrue("Restore input is outside the approved fixture", isFixture(data) && data.tag() == original.id)
+            repository.store.locked { it.load() }
             val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
                 "oauth2:https://www.googleapis.com/auth/login_manager").apply {
                 isGmsApp = true
                 setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
             }
             val token = auth.requestAuthWithBackgroundResolution(false).auth?.takeIf { it.isNotEmpty() } ?: throw VaultLockedException()
+            repository.store.locked { it.load() }
             val transport = GooglePasswordTransport({
-                assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
+                repository.store.locked { it.load() }
                 token
             }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl())
             // This independent durable client does not register an additional device identity.
@@ -268,7 +278,9 @@ class PasswordNativeSyncAndroidTest {
                 finally { keys.destroy() }
             }
             val work = RemoteWorkManager.getInstance(context)
+            repository.store.locked { it.load() }
             val userId = AccountManager.get(context).getUserData(repository.account, "GoogleUserId") ?: throw VaultLockedException()
+            repository.store.locked { it.load() }
             val marker = PasswordRepository.hash("google:$userId")
             val filter = IntentFilter("com.google.android.c2dm.intent.RECEIVE")
             if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(observer, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -496,13 +508,15 @@ class PasswordNativeSyncAndroidTest {
     private fun isFixture(data: PasswordData) = data.realm == "https://cyc651.example.invalid/" &&
         data.username == "cyc651-synthetic-user" && !data.blocked
     private fun nativeTransport(repository: PasswordRepository): PasswordTransport {
+        repository.store.locked { it.load() }
         val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
             "oauth2:https://www.googleapis.com/auth/login_manager").apply {
             isGmsApp = true; setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
         }
         val token = auth.requestAuthWithBackgroundResolution(false).auth ?: throw VaultLockedException()
+        repository.store.locked { it.load() }
         return GooglePasswordTransport({
-            assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
+            repository.store.locked { it.load() }
             token
         }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl())
     }

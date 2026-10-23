@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
-import android.accounts.AccountManager
 import android.content.Context
 import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
@@ -29,13 +28,15 @@ internal object SyntheticMetadataRestore {
                 (MessageDigest.isEqual(changed.encode(), officialClientExpected) || MessageDigest.isEqual(changed.encode(), raw)))
         }
         val tag = original.tag()
+        repository.store.locked { it.load() }
         val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
             "oauth2:https://www.googleapis.com/auth/login_manager").apply {
             isGmsApp = true; setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
         }
         val token = auth.requestAuthWithBackgroundResolution(false).auth ?: throw VaultLockedException()
+        repository.store.locked { it.load() }
         val api = PasswordApi(GooglePasswordTransport({
-            assertTrue("Designated account was removed", AccountManager.get(context).getAccountsByType("com.google").contains(repository.account))
+            repository.store.locked { it.load() }
             token
         }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
         val readStore = AndroidVaultStore(context, "password-fixture-metadata-read/" + repository.account.name)

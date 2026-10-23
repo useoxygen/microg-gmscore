@@ -26,6 +26,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 class PasswordOfficialClientAndroidTest {
     @Test fun renewTheNativeAccountTokenWithoutOpeningGoogleLoginUi() = withAccount { repository, _ ->
         assumeTrue(arguments.getString("passwordOfficialRefresh") == "cyc653")
+        repository.store.locked { it.load() }
         val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
             "oauth2:https://www.googleapis.com/auth/login_manager").apply {
             isGmsApp = true; forceRefreshToken = true
@@ -33,10 +34,14 @@ class PasswordOfficialClientAndroidTest {
         }
         // Deliberately skip background/foreground resolution. A real challenge fails this check.
         val response = auth.requestAuth(false)
+        repository.store.locked { it.load() }
         val token = response.auth?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
         assertTrue("Native authentication unexpectedly used its token cache", response.issueAdvice != "stored")
         assertTrue("Renewed native token has no future lifetime", auth.expiry > System.currentTimeMillis() / 1000L)
-        val api = PasswordApi(GooglePasswordTransport({ token }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
+        val api = PasswordApi(GooglePasswordTransport({
+            repository.store.locked { it.load() }
+            token
+        }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
         val metadata = api.metadata()
         val current = repository.store.locked { it.load().metadata } ?: throw VaultLockedException()
         assertTrue("Renewed authentication changed vault identity", Proto.decode(metadata).string(1) == Proto.decode(current).string(1))
