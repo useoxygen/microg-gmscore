@@ -68,6 +68,9 @@ password pagination uses field 3. Both use separate durable mutation journals.
 - Android Credential Manager get/create and legacy Autofill get/save use the same vault.
   Exact web origin or certificate-bound Android facet only; browser-delegated origins are
   allowed only for verified Chrome packages. Password release requires owner authentication.
+  Native web fills require agreement between the signon realm and origin URL; a realm-only
+  IV edit in the legacy Nigori format cannot redirect the credential. Origin-less or inconsistent
+  web entries remain manageable but are not automatically offered for native fill.
   Mutable PendingIntent extras cannot change the encrypted one-use selection. Autofill also
   binds the credential to the original field IDs and revalidates the requesting app.
 

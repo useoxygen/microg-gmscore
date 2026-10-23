@@ -94,7 +94,7 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
             val vault: PasswordVault = selected.account?.let { PasswordRepository(this@PasswordAutofillActivity, it) }
                 ?: DevicePasswordVault(this@PasswordAutofillActivity)
             vault.list()
-                .singleOrNull { it.id == selected.tag && !it.data.blocked && it.data.realm == selected.realm } ?: throw VaultLockedException()
+                .singleOrNull { it.id == selected.tag && it.data.canFillRealm(selected.realm) } ?: throw VaultLockedException()
         }
         requireOwner()
         val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply { setTextViewText(android.R.id.text1, getString(R.string.passwords_fill)) }
@@ -118,7 +118,7 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
                     val password = fields.getString("password")?.takeIf { it.isNotEmpty() } ?: throw SecurityException()
                     val repo: PasswordVault = account?.let { PasswordRepository(this@PasswordAutofillActivity, it) }
                         ?: DevicePasswordVault(this@PasswordAutofillActivity)
-                    val old = repo.list().singleOrNull { it.data.realm == selected.realm && it.data.username == username }
+                    val old = repo.list().singleOrNull { it.data.matchesRealmAuthority(selected.realm) && it.data.username == username }
                     val data = old?.data?.withPassword(password, System.currentTimeMillis()) ?: PasswordData.create(
                         selected.realm, selected.realm, username, password, System.currentTimeMillis())
                     repo.upsert(Proto.field(1, data.encode()))

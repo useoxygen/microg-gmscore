@@ -41,13 +41,13 @@ class PasswordProxyActivity : PasswordOwnerActivity() {
                     if (creating != null) {
                         val request = creating.callingRequest as? CreatePasswordRequest ?: throw SecurityException()
                         // Preserve fields and identity of an existing exact facet/username record.
-                        val existing = repo.list().singleOrNull { it.data.realm == ticket.realm && it.data.username == request.id }
+                        val existing = repo.list().singleOrNull { it.data.matchesRealmAuthority(ticket.realm) && it.data.username == request.id }
                         val data = existing?.data?.withPassword(request.password, System.currentTimeMillis()) ?: PasswordData.create(
                             ticket.realm, ticket.realm, request.id, request.password, System.currentTimeMillis())
                         repo.upsert(Proto.field(1, data.encode()))
                         Intent().also { PendingIntentHandler.setCreateCredentialResponse(it, CreatePasswordResponse()) }
                     } else {
-                        val entry = repo.list().singleOrNull { it.id == ticket.tag && !it.data.blocked && it.data.realm == ticket.realm }
+                        val entry = repo.list().singleOrNull { it.id == ticket.tag && it.data.canFillRealm(ticket.realm) }
                             ?: throw VaultLockedException()
                         if (get!!.credentialOptions.filterIsInstance<GetPasswordOption>().none {
                             it.allowedUserIds.isEmpty() || entry.data.username in it.allowedUserIds

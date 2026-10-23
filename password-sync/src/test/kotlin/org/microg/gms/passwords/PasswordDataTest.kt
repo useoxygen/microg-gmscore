@@ -5,6 +5,41 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PasswordDataTest {
+    @Test fun fillRequiresBothWebAuthoritiesButStillSupportsAndroidFacets() {
+        val item = PasswordData.create("https://example.invalid/", "https://EXAMPLE.invalid:443/login", "synthetic", "synthetic", 1234L)
+        assertTrue(item.canFillRealm("https://example.invalid/"))
+        assertFalse(item.canFillRealm("http://example.invalid/"))
+        assertFalse(item.canFillRealm("https://example.invalid:8443/"))
+        for (origin in listOf("", "https://other.invalid/", "https://user@example.invalid/", "https://example.invalid:999999/")) {
+            val changed = PasswordData.decode(Proto.decode(item.encode()).replace(3, origin.toByteArray()).encode())
+            assertFalse(changed.canFillRealm(item.realm))
+        }
+        val blocked = PasswordData.decode(Proto.decode(item.encode()).replaceInteger(12, 1).encode())
+        assertFalse(blocked.canFillRealm(item.realm))
+        val facet = "android://AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA@app.example/"
+        assertTrue(PasswordData.create(facet, "", "synthetic", "synthetic", 1234L).canFillRealm(facet))
+    }
+
+    @Test fun aLegacyIvChangeCannotMoveACredentialToADifferentWebsite() {
+        val key = NigoriKey.derive("synthetic fixture key".toByteArray())
+        try {
+            val good = "https://good.invalid/"
+            val evil = "https://evil.invalid/"
+            val original = PasswordData.create(good, good, "synthetic", "synthetic password", 1234L)
+            val encrypted = Proto.decode(key.encrypt(original.encode()))
+            val blob = encrypted.one(2)
+            // Scheme field takes 2 bytes; realm tag and length take another 2. Its first
+            // hostname characters are in block 1. The legacy MAC does not cover the IV.
+            for (i in 8..11) blob[4 + i] = (blob[4 + i].toInt() xor good[i].code xor evil[i].code).toByte()
+            val plaintext = key.decrypt(encrypted.replace(2, blob).encode())
+            val changed = try { PasswordData.decode(plaintext) } finally { plaintext.fill(0) }
+            assertEquals(evil, changed.realm)
+            assertEquals(good, changed.origin)
+            assertFalse(changed.canFillRealm(evil))
+            assertTrue(original.canFillRealm(good))
+        } finally { key.destroy() }
+    }
+
     @Test fun apostrophesKeepTheSameIdentityAsChromiumAndGoogleServices() {
         // Golden derived independently from Chromium EscapePath's published character map.
         // GMS 26.11 berz/berh also preserve apostrophes in each client-tag component.

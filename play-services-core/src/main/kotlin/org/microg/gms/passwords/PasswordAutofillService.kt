@@ -26,7 +26,7 @@ class PasswordAutofillService : AutofillService() {
                         runCatching { account to PasswordRepository(this@PasswordAutofillService, account) }.getOrNull()
                     }
                 vaults.forEach { (account, repo) ->
-                    if (repo.enabled) repo.list().filter { !it.data.blocked && it.data.realm == target.realm && it.data.password.isNotEmpty() }
+                    if (repo.enabled) repo.list().filter { it.data.canFillRealm(target.realm) }
                         .take(100).forEach { entry ->
                             val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
                                 setTextViewText(android.R.id.text1, getString(R.string.passwords_fill))

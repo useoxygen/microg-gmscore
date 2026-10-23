@@ -14,6 +14,16 @@ class PasswordData private constructor(private val proto: Proto) {
     val blocked: Boolean get() = proto.integer(12) == 1L
     val createdWindowsMicros: Long get() = proto.integer(11) ?: 0
     val hasIssues: Boolean get() = proto.optional(19) != null
+    fun canFillRealm(requested: String): Boolean = !blocked && password.isNotEmpty() && matchesRealmAuthority(requested)
+    fun matchesRealmAuthority(requested: String): Boolean {
+        if (realm != requested) return false
+        return when {
+            requested.startsWith("https://") || requested.startsWith("http://") ->
+                runCatching { webRealm(origin) == requested && webRealm(realm) == requested }.getOrDefault(false)
+            requested.startsWith("android://") && requested.endsWith("/") -> true
+            else -> false
+        }
+    }
     fun encode(): ByteArray = proto.encode()
     fun withPassword(value: String, nowMillis: Long): PasswordData = if (value == password) this else PasswordData(
         proto.replace(8, value.toByteArray(Charsets.UTF_8)).replace(19, null)
@@ -39,7 +49,7 @@ class PasswordData private constructor(private val proto: Proto) {
 
         fun webRealm(url: String): String {
             val uri = try { URI(url) } catch (_: Exception) { throw ProtocolException() }
-            if (uri.scheme?.lowercase() !in setOf("https", "http") || uri.host.isNullOrEmpty() || uri.userInfo != null) throw ProtocolException()
+            if (uri.scheme?.lowercase() !in setOf("https", "http") || uri.host.isNullOrEmpty() || uri.userInfo != null || uri.port !in -1..65535) throw ProtocolException()
             val scheme = uri.scheme.lowercase()
             val port = if (uri.port == -1 || uri.port == (if (scheme == "https") 443 else 80)) "" else ":${uri.port}"
             return "$scheme://${uri.host.lowercase()}$port/"

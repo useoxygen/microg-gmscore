@@ -14,7 +14,7 @@ object PasswordProvider {
         return vaults(context).flatMap { (account, repo) ->
             runCatching {
                 if (!repo.enabled) emptyList() else repo.list().filter { entry ->
-                    !entry.data.blocked && entry.data.realm in caller.realms && entry.data.password.isNotEmpty() &&
+                    caller.realms.any(entry.data::canFillRealm) &&
                         (option.allowedUserIds.isEmpty() || entry.data.username in option.allowedUserIds)
                 }.take(100).map { entry ->
                     PasswordCredentialEntry(context = context, username = entry.data.username,
