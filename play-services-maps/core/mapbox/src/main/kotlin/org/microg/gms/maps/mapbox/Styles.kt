@@ -39,9 +39,20 @@ const val KEY_SOURCE_URL = "url"
 const val KEY_SOURCE_TILES = "tiles"
 
 
+// Keyless OpenStreetMap vector tiles (https://openfreemap.org), used when Stadia can't serve our tiles. No satellite.
+const val OPENFREEMAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
+
 fun getStyle(
     context: MapContext, mapType: Int, styleOptions: MapStyleOptions?, styleFromFileWorkaround: Boolean = false
 ): Style.Builder {
+
+    // Without a working key the styles would use mapbox:// sources, and Mapbox GL native aborts the host app
+    // ("You must provide API key for tile sources"), or Stadia serves no tiles. A keyless map beats both.
+    TileKeyCheck.check()
+    if ((BuildConfig.STADIA_KEY.isEmpty() && BuildConfig.MAPBOX_KEY.isEmpty()) || TileKeyCheck.stadiaRejected) {
+        Log.w(TAG, "No working map tile key; using OpenFreeMap")
+        return Style.Builder().fromUri(OPENFREEMAP_STYLE)
+    }
 
     val styleJson = JSONObject(
         context.assets.open(
@@ -93,7 +104,9 @@ fun getStyle(
             Style.Builder().fromUri("file:/${temporaryFile.absolutePath}")
         } catch (e: IOException) {
             e.printStackTrace()
-            Style.Builder().fromUri(getFallbackStyleOnlineUri(mapType))
+            // The online fallback styles are mapbox:// URIs, which abort the host app without a Mapbox key.
+            if (BuildConfig.MAPBOX_KEY.isEmpty()) Style.Builder().fromJson(styleJson.toString())
+            else Style.Builder().fromUri(getFallbackStyleOnlineUri(mapType))
         }
     } else {
         Style.Builder().fromJson(styleJson.toString())
