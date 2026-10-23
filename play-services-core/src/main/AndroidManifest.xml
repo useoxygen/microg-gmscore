@@ -1573,10 +1573,8 @@
                 <action android:name="com.google.android.gms.scheduler.ACTION_PROXY_SCHEDULE" />
                 <action android:name="com.google.android.gms.setup.auth.SecondDeviceAuth.START" />
                 <action android:name="com.google.android.gms.smartdevice.d2d.SourceDeviceService.START" />
-                <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
                 <action android:name="com.google.android.gms.smartdevice.directtransfer.SourceDirectTransferService.START" />
                 <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
-                <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
                 <action android:name="com.google.android.gms.smartdevice.setup.accounts.AccountsService.START" />
                 <action android:name="com.google.android.gms.smartdevice.wifi.START_WIFI_HELPER_SERVICE" />
                 <action android:name="com.google.android.gms.social.location.activity.service.START" />
@@ -1616,6 +1614,24 @@
                 <action
                     android:name="com.google.android.gms.wearable.BIND_LISTENER"
                     tools:ignore="WearableBindListener" />
+            </intent-filter>
+        </service>
+        <!-- CYC-700: optional Android Switch setup queries, authenticated in the broker. -->
+        <service android:name="org.microg.gms.migration.SwitchSupportService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
+                <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
+            </intent-filter>
+        </service>
+        <service android:name="org.microg.gms.migration.SwitchExportService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.quickstart.xos.api.SourceXosApiService.START" />
+                <action android:name="com.google.android.gms.backup.d2d.api.OsMigrationWifiExportApiService.START" />
+            </intent-filter>
+        </service>
+        <service android:name="org.microg.gms.migration.MigrateHelperService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.backup.D2D_MIGRATE_HELPER" />
             </intent-filter>
         </service>
     </application>
