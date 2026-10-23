@@ -1,0 +1,198 @@
+# Native password parity acceptance drivers
+
+Part of CYC-689, CYC-690 and CYC-691. This is a runbook and debug-only native
+instrumentation, not a claim of device or provider acceptance. The new drivers
+have not been executed. The last recorded host batch is 604 passing tests at
+`dece944d`; rebuilding these additions is a separate gathered check.
+
+The parent owns device discovery, reservation, artifact signing, installation,
+provider calls and results. The owner released the Pixel 7a for this chat. Its
+observed baseline remains Services `cf93b15`, Core `cyc677-dedupe`, and an existing
+manual controller. Preserve those exact components and the active controller
+before any transition. The connected Pixel 8a is a release/user Cyclon Services
+phone with four accounts that do not match the approved primary test account,
+and has no installed Chrome. It is not an approved second test account/device
+or an official GPM peer merely because it is connected.
+
+## Native selection, with labels only on the host
+
+The debug APK contains a private `PasswordAcceptanceAccountActivity`. Release
+products do not contain it. A host chooses a random run UUID and role label;
+actual account names and stable Google IDs stay in an encrypted no-backup store
+on the phone. The receipt requires the same installed account, stable Gaia ID,
+boot, run/role and a 30-minute monotonic lifetime. It cannot adopt a removed and
+re-added same-name account. Debug journals use a separate encrypted root so
+normal passkey cleanup cannot erase interrupted synthetic cleanup evidence.
+
+Primary selection automatically recognizes exactly one already-enabled local
+vault containing the existing approved synthetic realm
+`https://cyc651.example.invalid/` and username `cyc651-synthetic-user` with a
+nonempty password. It does not make a network request, enable sync, initialize a
+vault or choose a different account. Ambiguous selection uses the secure native
+picker. A family role automatically recognizes only another approved fixture;
+otherwise the owner explicitly selects a synthetic test account in that picker.
+An eligible family member is not automatically assumed to be a synthetic account.
+
+Use the target and instrumentation component verified for the matching signed
+artifacts. These commands are templates to run only in the reserved window:
+
+```sh
+ACCEPTANCE_RUN="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+ACCEPTANCE_TEST_COMPONENT=com.google.android.gms.test/androidx.test.runner.AndroidJUnitRunner
+ACCEPTANCE_TEST_CLASS=org.microg.gms.passwords.PasswordParityAcceptanceAndroidTest
+
+adb -s "$ACCEPTANCE_SERIAL" shell am instrument -w -r \
+  -e targetProcess com.google.android.gms:ui \
+  -e class "$ACCEPTANCE_TEST_CLASS#selectApprovedSyntheticAccountEntirelyOnPhone" \
+  -e passwordAcceptance cyc689-native-selection \
+  -e passwordAcceptanceRun "$ACCEPTANCE_RUN" \
+  -e passwordAcceptanceRole primary "$ACCEPTANCE_TEST_COMPONENT"
+```
+
+Keep the same run UUID for subsequent commands. Re-run selection if its receipt
+expires. A fallback picker accepts only a private, one-use in-process request;
+blocking vault/file reads and saves run off the UI thread, with fresh owner and
+generation checks before publication/result. There are no mutable account extras or exported selection component. All status
+fields below are booleans or counts. The tests catch native failures without
+printing account names, tokens, credential bytes or remote response bodies.
+
+## Discover actual prerequisites before mutation
+
+Run each named readiness method with the same target process and run UUID:
+
+| Method | `passwordAcceptance` | What it actually reads |
+| --- | --- | --- |
+| `readActualFamilyEligibilityAndNativeRecipientMatchingWithoutSending` | `cyc690-readiness` | Real family recipients/current sharing keys; eligible, installed and approved-fixture recipient counts; pending invitation count. Sends nothing. |
+| `readActualSyncedPasskeyAndRecoveryReadinessWithoutEnrollmentOrSigning` | `cyc691-readiness` | Fresh real passkey snapshot, current `hw_protected` availability, secure-lock state, dedicated Vault API configuration presence, RECOVER_KEYSTORE grant and reflection API visibility. Enrolls/signs nothing. |
+
+For example, substitute the desired method and acceptance flag in:
+
+```sh
+adb -s "$ACCEPTANCE_SERIAL" shell am instrument -w -r \
+  -e targetProcess com.google.android.gms:ui \
+  -e class "$ACCEPTANCE_TEST_CLASS#readActualFamilyEligibilityAndNativeRecipientMatchingWithoutSending" \
+  -e passwordAcceptance cyc690-readiness \
+  -e passwordAcceptanceRun "$ACCEPTANCE_RUN" "$ACCEPTANCE_TEST_COMPONENT"
+```
+
+Configuration presence, reflection visibility, account counts and a successful
+GET are readiness evidence. They do not prove backend admission for a mutation,
+OS recovery execution, passkey signing or restoration. Do not copy another
+service's API key. Affiliation and Vault require their dedicated configuration;
+only its presence boolean may be reported. The candidate/image must retain the
+actual required grants, including READ_WIFI_CREDENTIAL/NETWORK_SETTINGS for Wi-Fi
+and RECOVER_KEYSTORE plus package-specific hidden-API access for OS recovery.
+An APK update cannot provide those image permissions or the controller JAR.
+
+## Real two-account family round trip
+
+This requires two actual synthetic Google accounts in the same family, both
+already opted into password sync, with authenticated metadata and sharing keys.
+They may be on the same reserved phone. The native family list must identify the
+second selected account's exact Gaia ID and current eligible recipient key.
+No account or family is created by the harness. If no suitable account exists,
+Google's genuine account/family setup is a remaining resource prerequisite.
+Never select one of the Pixel 8a's unknown accounts as a substitute.
+
+Select role `family` using the selection command above. The picker stays native
+when the second account has no existing approved fixture. Then invoke:
+
+```sh
+adb -s "$ACCEPTANCE_SERIAL" shell am instrument -w -r \
+  -e targetProcess com.google.android.gms:ui \
+  -e class "$ACCEPTANCE_TEST_CLASS#realFamilySendAutomaticReceiveAndExactSyntheticCleanup" \
+  -e passwordAcceptance cyc690-family-roundtrip \
+  -e passwordAcceptanceRun "$ACCEPTANCE_RUN" "$ACCEPTANCE_TEST_COMPONENT"
+```
+
+The driver refuses preexisting pending mutation/sharing journals or initial
+receiver invitations. Use dedicated synthetic accounts and an exclusive window
+with no concurrent invitations or credential edits: the real automatic receiver
+processes its account batch. The test:
+
+1. Binds both current vault birthdays and checkpoints unrelated record digests
+   natively before effects. It clones only the approved synthetic credential into
+   a unique per-run synthetic identity, leaving the approved original untouched.
+2. Commits that source copy through the real repository, refreshes family
+   eligibility/key and invokes the actual native sharing send. The production
+   launch journal must acknowledge it.
+3. Uses the actual automatic receiver; requires its COMPLETE receipt for that
+   invitation GUID, exact five-field identity/password readback and invitation
+   acknowledgement. A server ACK alone does not satisfy native import.
+4. Compare-and-deletes only those exact two introduced rows, requires complete
+   absence/no pending changes, and verifies every preexisting credential unchanged.
+
+A failure retains the encrypted cleanup checkpoint. Re-running the start method
+refuses it; it never repeats an uncertain send. Invoke `finishApprovedIncomingAndCleanupAfterInterruptionWithoutResending` with
+`passwordAcceptance=cyc690-finish-receive-cleanup` for bounded recovery. Before
+send, it can cancel only a durably QUEUED clone creation or delete a positively
+identified committed clone; launched/uncertain creates remain fenced. If a process
+died after send acknowledgement but before saving the caller receipt, recovery
+requires exactly one COMPLETE sender journal matching the saved parent, tag,
+recipient and full source digest. Unknown/ambiguous sends remain pending and are
+never replayed. Known incoming/cleanup can then finish. Absence requires both no
+pending mutation and no authenticated committed record, even when an optimistic
+DELETE already hides a row. Do not clear journals, force a retry, or delete
+possible future delivery evidence.
+
+This is a real new-import/ack/cleanup case. It does not by itself accept duplicate,
+conflict, invalid-sibling, notification or same-sender-update matrices. Those
+retain their separate source/host proof until genuine native cases are run.
+
+## Existing executable native checks
+
+`PasswordNativeSyncAndroidTest` and `PasswordOfficialClientAndroidTest` now accept
+`passwordAcceptanceRun` instead of an account-name argument. Keep their existing
+explicit case/mutation opt-ins and select individual methods. Their legacy
+account-name arguments remain compatible; new runs should use the native handle.
+The ordinary suite does not perform these live calls without its opt-ins.
+The official-client phone-local comparison remains documented in
+[official-password-reader.md](official-password-reader.md). A local self-read is
+not the independent official-client comparison.
+
+Core's existing `android/Core/dev/passwordprobe/README.md` at companion source
+`75613fc4a` supplies the executable API34+ local-credential native fill fixture,
+boolean-only status provider and privacy/Stop/controller-restart matrix. Its
+`android/Core/dev/updates.md` protects the selected target, signer, version,
+privileged image origin and update authority. Preserve its full controller/image
+component requirements; do not replace a live controller or treat an APK-only
+update as acceptance.
+
+## Cross-device passkeys and restoration
+
+CYC-691 needs an explicitly approved second device and the same actual synthetic
+account, plus a genuine RP transaction. This source adds a native readiness GET;
+it does not create an unverified RP or call raw `vault.create`/`withSecret` and
+label that Credential Manager interoperability. Required connected paths are:
+
+- First device: actual Credential Manager or permitted Chrome/legacy/hybrid
+  registration at a real HTTPS RP, selecting the native synthetic account.
+- Second device: genuine same-account key restoration with private OS/PIN/Google
+  owner verification, followed by actual RP authentication using the recovered
+  synced credential. Compare actual server-verified login and public registration
+  identity natively; never copy keys, cookies, passwords, RAPT or app data.
+- Exercise wrong-account/domain/epoch, cancellation, rotation and replay refusal
+  separately. Do not reset an account-wide domain or mutate personal credentials.
+
+A stock official-client peer could provide stronger independent interoperability,
+but no such peer is currently designated. A second Cyclon device must have a
+safe signer/image setup and the actual approved test account; connected hardware
+alone does not meet those requirements. An owned native RP also requires actual
+caller certificate/Digital Asset Links proof. A caller-supplied website string
+or a fabricated Chrome identity never supplies that authority.
+
+## Gathered host validation
+
+The parent should gather the changed sources and run the full suites and both
+APKs once:
+
+```sh
+./gradlew :password-sync:test :play-services-fido:core:testDebugUnitTest \
+  :play-services-core:testMapboxDefaultDebugUnitTest \
+  :play-services-core:assembleMapboxDefaultDebug \
+  :play-services-core:assembleMapboxDefaultDebugAndroidTest --continue
+```
+
+Record source/fixture hashes, actual target labels, signing/image gates, which
+native methods ran and their boolean/count receipts. Keep implemented,
+host-tested, built, installed and device/provider accepted as separate states.

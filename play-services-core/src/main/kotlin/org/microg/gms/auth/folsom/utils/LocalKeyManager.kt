@@ -549,9 +549,9 @@ class LocalKeyManager(private val context: Context) {
     }
 
     internal fun consentNotificationEligible(accountName: String, accountId: String, domainId: String,
-        nowMillis: Long = System.currentTimeMillis()): Boolean = withRecoveryAuthority(accountName, accountId) {
+        nowMillis: Long = System.currentTimeMillis(), cooldownMillis: Long = FolsomConsentNotificationPolicy.DEFAULT_COOLDOWN_MILLIS): Boolean = withRecoveryAuthority(accountName, accountId) {
         val account = checkedConsentNotificationAccount(readStore().findAccount(obfuscateAccountName(accountName)), accountId, domainId)
-        FolsomConsentNotificationPolicy.eligible(account, accountId, domainId, nowMillis).also {
+        FolsomConsentNotificationPolicy.eligible(account, accountId, domainId, nowMillis, cooldownMillis).also {
             if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed")
         }
     }

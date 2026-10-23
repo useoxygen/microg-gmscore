@@ -66,10 +66,13 @@ class PasswordNativeSyncAndroidTest {
 
     @Test fun restoreInterruptedApprovedSyntheticPasswordUpdate() {
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         val checkpoint = AndroidVaultStore(context, "password-fixture-restore/" + account.name)
         assertTrue("No password update restore checkpoint", checkpoint.locked { it.load().chromeLocalData["original"] != null })
         val wasEnabled = repository.enabled
@@ -156,10 +159,13 @@ class PasswordNativeSyncAndroidTest {
 
     @Test fun restoreInterruptedApprovedSyntheticMetadataFixture() {
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         val checkpoint = AndroidVaultStore(context, "password-fixture-metadata-restore/" + account.name)
         assertTrue("No metadata restore checkpoint", checkpoint.locked { it.load().chromeLocalData["original"] != null })
         val wasEnabled = repository.enabled
@@ -171,10 +177,13 @@ class PasswordNativeSyncAndroidTest {
 
     @Test fun inspectInterruptedSyntheticFixtureJournalWithoutReportingContents() {
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         val state = repository.store.locked { it.load() }
         val checkpoint = AndroidVaultStore(context, "password-fixture-metadata-restore/" + account.name)
             .locked { it.load().chromeLocalData["original"] }
@@ -333,10 +342,13 @@ class PasswordNativeSyncAndroidTest {
     }
 
     @Test fun secondaryProcessSchedulesPasswordWorkerToCompletion() {
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         assertTrue("Refusing existing pending writes", repository.store.locked {
             val state = it.load(); state.mutations.isEmpty() && state.preferenceMutations.isEmpty()
         })
@@ -365,10 +377,13 @@ class PasswordNativeSyncAndroidTest {
     }
 
     @Test fun nativePriorityPreferenceSnapshotAndCacheReopen() {
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         assertTrue("Refusing an existing mutation journal", repository.store.locked {
             val state = it.load(); state.mutations.isEmpty() && state.preferenceMutations.isEmpty()
         })
@@ -453,10 +468,13 @@ class PasswordNativeSyncAndroidTest {
     }
 
     private fun withFixture(block: (PasswordRepository, PasswordView) -> Unit) {
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         assertTrue("Refusing an existing mutation journal", repository.store.locked { it.load().mutations.isEmpty() })
         val wasEnabled = repository.enabled
         try {

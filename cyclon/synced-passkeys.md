@@ -1,45 +1,91 @@
-# Synced passkey consumer
+# Account-synced passkeys and acceptance
 
-This slice connects Google-account passkey records to Android Credential Manager and legacy GMS FIDO create/get flows, plus native owner rename/delete. Device-only AndroidKeyStore passkeys retain their existing provider path and are never silently assigned to a Google account. At source `36246827`, the consolidated run passed 294 password-sync and 108 Core host tests with zero failures/errors/skips and built the product and instrumentation APKs. These are host results; device acceptance remains pending.
+The current account consumer connects Android Credential Manager, legacy GMS FIDO
+and authenticated caBLE hybrid create/get to the same account-isolated encrypted
+vault. Device-only AndroidKeyStore passkeys keep their separate provider path.
+The last gathered host run recorded in [the parity inventory](password-manager-parity.md)
+passed 400 password-sync, 13 FIDO and 191 Core tests (604 total), and compiled the
+product and instrumentation APKs. Those results belong to source `dece944d`.
+They do not establish provider, installed-image or cross-device acceptance.
 
-The account must already have password sync enabled and authenticated Chrome Sync metadata. Begin-get reads a complete fresh account snapshot before constructing entries, so an unrelated populated cache cannot hide a passkey created on another device. The native chooser binds one account's stable GoogleUserId, vault birthday, RP, credential sync ID, request hash and verified caller identity in a one-use encrypted ticket. The mutable PendingIntent contains only its opaque URI. The installed caller signer, account identity, foreground state, screen lock and owner confirmation are checked again before returning a WebAuthn response. The native activity is secure and excludes Autofill.
+The account must have password sync enabled and authenticated metadata. Begin-get
+reads a complete fresh snapshot, including when an unrelated RP is already cached.
+The native picker binds stable Gaia ID, vault birthday, RP, credential sync ID,
+request digest and installed caller identity in a one-use encrypted ticket. It
+requires a secure screen lock, current native owner confirmation and a foreground
+window. Caller, account, reset, current credential and pending deletion authority
+are rechecked while the account/repository/passkey locks remain held through the
+actual signing or extension operation. Account keys never enter `fido.db`.
 
-`SyncedPasskeyVault` reads `hw_protected` keys through the stable-account Folsom store. Missing keys open the existing owner-gated Google recovery flow for that exact account/domain with reset disabled. Keys are not exported to a model API, Intent, log or telemetry. Account removal erases the independent no-backup AEAD state and its AndroidKeyStore key through `purgeRemovedAccounts`.
+The vault reads real versioned `hw_protected` keys through Folsom. Missing keys open
+exact-account/domain recovery with reset disabled. Device authorization uses real
+DroidGuard bytes and the pinned `chromesync_get_device_authorization_key` flow;
+field19 device/domain epochs must be server-proven. Google reauthentication uses
+the actual packaged lookup token and an exact-origin, main-frame xreauth bridge.
+The owner confirms again before a bounded retry. A local owner grant is never
+substituted for a Google RAPT. Account removal erases the independent encrypted
+store and its AndroidKeyStore key.
 
-Google device authorization uses the existing native DroidGuard implementation and the exact `chromesync_get_device_authorization_key` flow. The provider decodes the real response bytes, rejects the implementation's error sentinel, and requests the exact device-key versions needed by field19. New registrations use the nested device/domain envelope and require positive server-returned device and domain epochs. No locally generated value substitutes for a server device key or RAPT token.
+Creation retains prior same-RP/user records and writes the source shadow list.
+A durable launch record precedes mutation; unknown outcomes are reconciled by a
+complete snapshot without automatic replay. Owner rename preserves identity and
+opaque fields. Deleting an active entry includes the reviewed same-RP/user group;
+selecting an explicitly shadowed entry deletes only that entry. Partial/unknown
+receipts survive reopening. Explicit retry uses a new attempt and archives prior
+provenance; local closure does not claim remote rollback.
 
-When Google requests reauthentication, the native provider opens Google's `embedded/xreauth/android` page with the exact server packaged lookup token and a weblogin continuation for the selected account. The `mm.setReauthResult` bridge accepts a successful RAPT only from the exact Google origin and main frame, while the account, caller, unlocked device and foreground window remain valid. The flow times out or cancels on backgrounding; it confirms the local owner again before one retry with fresh DroidGuard salt/signals. No proof is persisted or placed in an Intent. The auth form transport suppresses request/response body diagnostics even at verbose logging and applies network timeouts.
+Implemented extension consumers are:
 
-Member refresh uses Google's shared-member-key fields (epoch1, wrapped key2, membership proof3), separately from rotation proofs. SecureBox unwrap uses `V1 shared_key` authenticated data. Known epoch bytes anchor authenticated rotation chains; missing, duplicate or invalid proofs reject the complete refresh and preserve the prior stale-key obligation.
+- PRF in Credential Manager, legacy GMS FIDO and hybrid. JSON inputs receive the
+  WebAuthn domain hash once; typed/CTAP 32/64-byte inputs are already hashed.
+  Credential-specific inputs select the actual credential ID. Existing encrypted
+  field2 supplies the HMAC secret. A field9 or missing-secret credential follows
+  the pinned PKCS8/HKDF migration and commits its encrypted update before output.
+  Public credential IDs never substitute for that secret. JSON uses nested
+  `prf.results`; typed SafeParcel field2 concatenates the optional two results.
+  Hybrid uses the source CBOR unsigned outputs at make key6/get key8.
+- Credential Manager credBlob creation/read and bounded largeBlob creation,
+  read/write use the real encrypted fields3/4/5. DEFLATE is strictly bounded to
+  2 KiB. Writes preserve device/domain envelopes and opaque metadata and commit
+  through the durable secret-update journal before success. An uncertain write
+  never becomes automatically replayable. The pinned legacy parcel API has no
+  proven typed blob ABI and does not advertise one.
+- Payment enrollment preserves the source field11 opt-in. Cross-origin signing
+  requires the actual permitted Chrome signer, browser transaction client-data
+  hash, finite credential allowlist and the selected credential's stored opt-in.
+  A hybrid BrowserOptions container grants no browser/SPC authority.
 
-Creation authenticates a full remote snapshot before launch, adds the existing same-RP/user IDs to the new credential's shadow list, and retains old entities for recovery. It stores a launch record before sending the mutation. A definite refusal or pre-launch cancellation clears the attempt. A transport-uncertain result is reconciled through a complete snapshot and is never blindly replayed. The owner can explicitly close an unresolved attempt from the native create flow; the old birthday, encrypted resource and launch provenance remain archived locally, and a possible remote credential is retained.
+Hybrid authority comes from the actual authenticated Noise transcript and original
+CTAP digest, full immutable options, RP and client-data hash. A private one-use
+request lease binds the internal Hybrid Activity, account picker and native vault
+result. Socket loss and authenticated Shutdown immediately revoke the lease and
+cancel pending owner work. Final output admission, Noise nonce reservation and
+socket enqueue share one connection-generation guard. Process restart cannot
+reconstruct a lease. Unsupported options are refused or left unadvertised; an
+account selection does not silently fall back to local storage.
 
-Native owner management (CYC-693) lists the account's real passkey records, including older, hidden and shadowed identities needed to explain deletion. Rename changes only username/display name and the source `edited_by_user` flag, preserving credential identity and opaque fields. Deleting an active registration includes its same-RP/user siblings, including hidden/older records; selecting an explicitly shadowed row deletes only that row, following `ajno`/`ajnj`/`ajnk`. The confirmation shows the actual affected group. The operation pins the stable Gaia ID, birthday and complete reviewed resources, refreshes before launch, and persists per-resource launch/results. Partial and unknown outcomes survive reopening; complete snapshots reconcile them without automatic replay. Explicit retry uses a new attempt and retains the previous receipt; closing an attempt does not invent remote rollback. Delete uses resource ID1 and client token4, without placing timestamp8 into delete-options field5.
+Trusted-vault support also includes explicit physical membership, source-backed
+create/enroll/rotate/reset journals, actual OS LSKF vault upload and restoration,
+existing PIN renewal, attested enclave new/change PIN, private Google reauth,
+native GPM PIN restoration, SDK bulk/generate/list consumers and coupled consent.
+The separate five descriptor-only Passwords lifecycle RPCs still lack a verified
+producer contract; they are recorded in [the bounded contract audit](passwords-rpc-contract-gaps.md).
+Those missing contracts are distinct from acceptance of the connected consumers.
 
-The legacy GMS FIDO bridge (CYC-688) connects the existing `AuthenticatorActivity` account choice to this same vault through an encrypted one-use request ticket. It binds the caller package/current signer, exact native or permitted Chrome-delegated origin, full serialized options and request digest. The private activity verifies the actual internal calling activity and system UID/package admission, binds account selection to Gaia/birthday, confirms the secure-screen-lock owner, and repeats authority checks at signing/create completion. It uses the real `hw_protected` and server device authorization paths, with owner recovery and genuine Google reauth when required. Account secrets never enter the legacy local/hybrid database. Unsupported algorithms, attestation and extensions are refused or left unadvertised, with no silent local fallback after an account operation is selected.
+The remaining acceptance scopes are tracked explicitly:
 
-PRF is connected to native Credential Manager and the bounded legacy GMS FIDO create/get paths. It uses the authenticated existing Encrypted field2 secret; JSON inputs are normalized with the WebAuthn PRF domain-separated hash, and `evalByCredential` selects by the actual credential ID. The legacy typed SafeParcel ABI carries `enabled` at field1 and concatenated first/optional-second 32-byte results at field2, rather than inventing an additional parcel field. Native JSON emits nested `prf.results.first`/`second` base64url values and the creation `enabled` result when applicable. Field9 and missing-secret records cannot satisfy a PRF request: there is no on-demand migration or public-input substitute for the secret. Hybrid PRF remains unadvertised.
+| Issue | Required real evidence |
+| --- | --- |
+| CYC-688 / CYC-689 | Installed Credential Manager, legacy FIDO and hybrid owner/caller/cancellation behavior, genuine server/device authorization and extension responses. |
+| CYC-687 / CYC-691 | A designated second device recovers the same account's actual keys and signs a passkey created on the first device; wrong account/domain/epoch and cancellation remain refused. |
+| CYC-690 | Two actual synthetic accounts in the same Google family send/receive an authenticated invitation, preserve duplicates/conflicts and complete exact synthetic cleanup. |
+| CYC-693 | Native rename/delete group confirmation, uncertainty/reopen and signing exclusion on installed components. |
+| CYC-653 | Official-client exact-secret/producer interoperability; self-written/self-read is insufficient. |
 
-Existing credential blob reads are connected only to native Credential Manager get under the existing `withSecret` owner/caller/RP/account/birthday scope. `getCredBlob:true` returns the authenticated field3 bytes (empty if absent), encoded into signed authenticator-data CBOR before ECDSA and returned as base64url `clientExtensionResults.getCredBlob`. `largeBlob:{read:true}` reads field4 raw DEFLATE with an explicit field5 original size of at most 2 KiB, bounded compressed input and strict complete-stream/no-trailing-data decoding. Absent, malformed, truncated or over-expanding large blobs omit the blob result; no partial bytes or storage-support claim is returned. Valid data becomes `clientExtensionResults.largeBlob.blob`. The full temporary secret copy and owned output buffers are cleared after use. Blob creation, writes, capacity/support advertising and legacy GMS FIDO blobs remain unsupported and unadvertised.
-
-Sources pinned for independent interoperability work:
-
-- GMS 26.11.36 `bese`, `beri`, `ialc`: resource id1, lowercase-hex sync_id client tag2, encrypted EntitySpecifics4 or plaintext specifics7. Encrypted EntitySpecifics carries WebauthnCredentialSpecifics at895275.
-- `iake`/`iakf`: ListWebauthnCredentials request parent1/page3, response resources1/next2. `iaja`/`iala`/`iajg`: create/update/delete request layouts, including client token4.
-- `ajgx`/`ajgu`/`ajhb`: HKDF-SHA256 domain/device labels, AES-GCM12-byte nonce prefix/128-bit tag, exact envelope AAD and nested PKCS8 layouts. Legacy9 and12 remain readable; new registrations use19.
-- `beua`/`beyo`/`iajn`/`iajt`: salted DroidGuard inputs, `hw_protected` availability, genuine device authorization keys and explicit account reauth branch.
-- `janv`/`agph`/`aqhk`/`aqhn`/`aqid`: exact xreauth URL, account weblogin continuation, `plt` query parameter and `mm.setReauthResult` status/rapt result. This internal consumer does not claim the separate AANG service343 ABI.
-- `hzxq`/`hzxz`/`hzxf`, `anwc.F/aa/Z`, `anyr.a`: shared member keys, rotation proof separation, authenticated SecureBox unwrap and continuity verification.
-- Chromium145 `webauthn_credential_specifics.proto`: identity, epoch, hidden and shadow fields; newest-creation tie breaking after explicit shadowing.
-
-The deterministic host tests cover independent HKDF and AES-GCM vectors, actual native signatures from decrypted synthetic PKCS8, wrong keys/epochs/AAD, outer and nested envelopes, unknown-field preservation, exact RPC request bytes, bounded pagination, first-use candidate fetching, reset/uncertain mutation retention and shadow selection. Owner-management tests additionally cover real coordinator update/delete calls, source deletion groups, per-step receipts, partial outcomes, explicit retry and account/reset revocation; legacy policy tests cover caller/origin/request/owner constraints. Passing PRF regressions cover independent normalization/HMAC results, credential selection and missing-secret/ABI/JSON behavior. Passing blob regressions cover independent raw-DEFLATE fixtures, size/trailing/expansion bounds, native strict read-only parsing and signed CBOR/JSON delivery. These tests passed in the consolidated source `36246827` run recorded above.
-
-Remaining acceptance and scope limits:
-
-- Google's separate AANG account reauthentication service ABI is not implemented. Native Credential Manager has the connected Google web reauth consumer above; hosted-page/Google-server acceptance remains pending. Owner screen-lock confirmation is never treated as a Google RAPT token.
-- Explicit-owner physical type1 enrollment into an existing `chromesync` domain is implemented under CYC-687, with 18 enrollment and 11 recovered-epoch tests passing in source `36246827`. Schema6 retains explicit recovered epochs only after actual same-birthday Nigori verification; raw-only caches remain unlock-only. The native flow keeps a stable protected pair and exact canonical Join bytes, persists LAUNCHED before dispatch, and requires complete membership/direct-member/epoch/key/proof readback before installing the pair. Unknown outcomes never automatically replay; explicit retry uses a new attempt ID and archives the old receipt. The encrypted account journal follows existing account cleanup. This does not enroll the passkey `hw_protected` domain: new-domain membership, `hw_protected`/type3 hardware enrollment, LSKF/GPM-PIN and full enable/rotate/clear/reset remain absent. Provider/device and cross-device enrollment acceptance remains pending; an unjoined device is never labeled enrolled.
-- PRF requires an authenticated existing field2 secret; field9/missing-secret migration and hybrid PRF are not advertised. Blob reads are native-Credential-Manager-only existing-data operations; blob creation/write/capacity and legacy blobs remain unadvertised. Payment passkeys, non-ES256 creation and other unsupported advanced options remain absent. Unknown encrypted fields are preserved. `credProps` reports the discoverable key created by this path.
-- Credential Manager and the bounded legacy GMS FIDO account bridge are connected native consumers. Their provider/server and device acceptance remain pending; the existing separate local/hybrid paths do not prove account-synced interoperability.
-- Host checks do not establish Google server acceptance, installed image permission behavior, second-account acceptance, cross-device registration/signing or on-device owner/cancellation behavior. Device work is deferred by the user's current priority.
-
-Native exclusion checks compare credential IDs only within the requested RP. CYC-693 tracks owner-management acceptance, CYC-688 the bounded legacy consumer and advanced-option gaps, and CYC-691 actual cross-device behavior. No phone installations, Core/Services/controller replacements or device actions ran in this expanded batch; historical device proof in the parity inventory remains tied to its original source/fixture.
+Host vectors and built APKs do not satisfy these rows. The owner has now made the
+Pixel 7a available to this chat, while the parent coordinates actual device and
+account selection. No new device/provider result is claimed by this document.
+The companion controller is an image component; its deployment follows Core's
+`android/Core/dev/updates.md` and the native password probe guide, independently
+of the Services APK. Dedicated affiliation/Vault API configuration and installed
+image grants must be verified before their corresponding acceptance cases.

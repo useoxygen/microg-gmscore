@@ -19,13 +19,14 @@ internal object FolsomConsentNotificationPolicy {
         return value.takeIf { FolsomAccountProtection.canRead(account?.googleUserId, it.googleUserId, userId, false) }
     }
 
-    fun eligible(account: AccountData?, userId: String, domainId: String, nowMillis: Long): Boolean {
+    fun eligible(account: AccountData?, userId: String, domainId: String, nowMillis: Long,
+        cooldownMillis: Long = DEFAULT_COOLDOWN_MILLIS): Boolean {
         require(nowMillis >= 0)
         val last = domain(account, userId, domainId)?.consentNotificationTimestamp ?: 0L
         check(last >= 0) { "Invalid recovery notification time" }
-        // A backwards wall-clock jump retains the cooldown. Ordering before subtraction
-        // also avoids overflow for an otherwise valid nonnegative persisted timestamp.
-        return nowMillis > last && nowMillis - last > DEFAULT_COOLDOWN_MILLIS
+        // Nonnegative wall-clock values make this subtraction overflow-free. Keep the
+        // source's strict comparison, including an explicitly supplied signed int64 flag.
+        return nowMillis - last > cooldownMillis
     }
 
     /** Called only after NotificationManager accepted the actual post. */

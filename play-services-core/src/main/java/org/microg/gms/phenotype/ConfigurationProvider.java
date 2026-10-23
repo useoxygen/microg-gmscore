@@ -21,25 +21,32 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
-import android.util.Log;
+import android.os.Bundle;
+
+import java.util.Map;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 public class ConfigurationProvider extends ContentProvider {
-    private static final String TAG = "GmsPhenotypeCfgProvider";
+    private String namespace(Uri uri) {
+        return "com.google.android.gms.phenotype".equals(uri.getAuthority()) && uri.getPathSegments().size() == 1
+                && uri.getQuery() == null && uri.getFragment() == null ? uri.getLastPathSegment() : null;
+    }
     @Override
     public boolean onCreate() {
-        Log.d(TAG, "unimplemented Method: onCreate");
-        return false;
+        return true;
     }
 
     @Nullable
     @Override
     public Cursor query(@NonNull Uri uri, @Nullable String[] projection, @Nullable String selection, @Nullable String[] selectionArgs, @Nullable String sortOrder) {
-        selection = Uri.decode(uri.getLastPathSegment());
-        if (selection == null) return null;
-        return new MatrixCursor(new String[]{"key", "value"});
+        MatrixCursor cursor = new MatrixCursor(new String[]{"key", "value"});
+        Map<String, String> values = FolsomPhenotypeConfiguration.rows(getContext(), namespace(uri));
+        if (values != null) for (Map.Entry<String, String> entry : values.entrySet()) {
+            cursor.addRow(new String[]{entry.getKey(), entry.getValue()});
+        }
+        return cursor;
     }
 
     @Nullable
@@ -56,11 +63,19 @@ public class ConfigurationProvider extends ContentProvider {
 
     @Override
     public int delete(@NonNull Uri uri, @Nullable String s, @Nullable String[] strings) {
-        throw new UnsupportedOperationException();
+        if (s != null || strings != null && strings.length != 1) throw new IllegalArgumentException();
+        return FolsomPhenotypeConfiguration.delete(getContext(), namespace(uri), strings == null ? null : strings[0]);
     }
 
     @Override
     public int update(@NonNull Uri uri, @Nullable ContentValues contentValues, @Nullable String s, @Nullable String[] strings) {
-        throw new UnsupportedOperationException();
+        if (s != null || strings != null || contentValues == null) throw new IllegalArgumentException();
+        return FolsomPhenotypeConfiguration.update(getContext(), namespace(uri), contentValues);
+    }
+
+    @Nullable
+    @Override
+    public Bundle call(@NonNull String method, @Nullable String arg, @Nullable Bundle extras) {
+        return FolsomPhenotypeConfiguration.call(getContext(), method, arg, extras);
     }
 }

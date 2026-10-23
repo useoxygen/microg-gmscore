@@ -70,6 +70,7 @@ import org.microg.gms.passwords.RecoveryRestoreFailure
 import org.microg.gms.passwords.RecoverableVaultTransport
 import org.microg.gms.common.GmsService
 import org.microg.gms.common.PackageUtils
+import org.microg.gms.phenotype.FolsomPhenotypeConfiguration
 import org.microg.gms.utils.warnOnTransactionIssues
 import java.security.MessageDigest
 import java.util.UUID
@@ -615,9 +616,12 @@ internal class KeyRetrievalServiceImpl(
             cancellation.set(client::cancel)
             // anqw checks stored coupled consent and locally readable positive-epoch keys first.
             // No owner notification or backup setup is needed for either early-success case.
-            if (!client.needsConsentPrompt(domainId) ||
-                !LocalKeyManager.getInstance(context).consentNotificationEligible(fence.name, fence.userId, domainId)) Status.SUCCESS
-            else postConsentNotification(fence, consentResolution(fence, client.prepare(domainId, true)), authorize)
+            if (!client.needsConsentPrompt(domainId)) Status.SUCCESS else {
+                val flags = FolsomPhenotypeConfiguration.read(context)
+                if (!flags.promptEnabled || !LocalKeyManager.getInstance(context).consentNotificationEligible(
+                        fence.name, fence.userId, domainId, cooldownMillis = flags.notificationDelayMillis)) Status.SUCCESS
+                else postConsentNotification(fence, consentResolution(fence, client.prepare(domainId, true)), authorize)
+            }
         }) { status, result -> callback.onResult(if (status.isSuccess) result ?: Status.INTERNAL_ERROR else status) }
     }
 

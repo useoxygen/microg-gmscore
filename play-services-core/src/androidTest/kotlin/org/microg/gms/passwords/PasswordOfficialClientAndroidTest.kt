@@ -165,10 +165,13 @@ class PasswordOfficialClientAndroidTest {
     private fun withAccount(allowOwnRestore: Boolean = false, action: (PasswordRepository, AndroidVaultStore) -> Unit) {
         assumeTrue(arguments.getString("passwordLiveOfficial") == "cyc653")
         assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
-        val selected = arguments.getString("passwordLiveAccount")
-        assumeTrue(!selected.isNullOrBlank())
-        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
-        val repository = PasswordRepository(context, account)
+        val repository = PasswordAcceptanceAccounts.optionalRepository(context, arguments) ?: run {
+            val selected = arguments.getString("passwordLiveAccount")
+            assumeTrue(!selected.isNullOrBlank())
+            val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+            PasswordRepository(context, account)
+        }
+        val account = repository.account
         val checkpoint = AndroidVaultStore(context, "password-fixture-official-client/" + account.name)
         val original = checkpoint.locked { it.load().chromeLocalData["original"] }?.let(PasswordData::decode)
         assertTrue("Refusing a preexisting mutation journal", repository.store.locked { session ->
