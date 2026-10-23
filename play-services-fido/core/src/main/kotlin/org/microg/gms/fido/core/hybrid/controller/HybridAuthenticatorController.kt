@@ -31,6 +31,7 @@ import org.microg.gms.fido.core.hybrid.generateEcKeyPair
 import org.microg.gms.fido.core.hybrid.HybridAuthenticatedFrames
 import org.microg.gms.fido.core.hybrid.HybridAccountSessions
 import org.microg.gms.fido.core.hybrid.HybridConnectionGuard
+import org.microg.gms.fido.core.hybrid.HybridOutput
 import org.microg.gms.fido.core.hybrid.model.QrCodeData
 import org.microg.gms.fido.core.hybrid.transport.AuthenticatorTunnelTransport
 import org.microg.gms.fido.core.hybrid.transport.TunnelCallback
@@ -269,12 +270,12 @@ class HybridAuthenticatorController(context: Context, private val accountPrfAvai
         val frameType = decrypted[0].toInt() and 0xFF
         if (frameType == 0x01) {
             if (decrypted.size < 2) {
-                ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP2_ERR_INVALID_CBOR.code))
+                ws?.sendCtapResponse(generation, crypt, byteArrayOf(CtapStatus.CTAP2_ERR_INVALID_CBOR.code))
                 return
             }
             val commandCode = Ctap2CommandCode.entries.find { it.byte == decrypted[1] }
             if (commandCode == null) {
-                ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_COMMAND.code))
+                ws?.sendCtapResponse(generation, crypt, byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_COMMAND.code))
                 return
             }
             val params = if (decrypted.size > 2) {
@@ -291,7 +292,7 @@ class HybridAuthenticatorController(context: Context, private val accountPrfAvai
             val request = when (commandCode) {
                 Ctap2CommandCode.AuthenticatorMakeCredential -> {
                     if (params == null) {
-                        ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP2_ERR_MISSING_PARAMETER.code))
+                        ws?.sendCtapResponse(generation, crypt, byteArrayOf(CtapStatus.CTAP2_ERR_MISSING_PARAMETER.code))
                         return
                     }
                     AuthenticatorMakeCredentialRequest.decodeFromCbor(params)
@@ -299,7 +300,7 @@ class HybridAuthenticatorController(context: Context, private val accountPrfAvai
 
                 Ctap2CommandCode.AuthenticatorGetAssertion -> {
                     if (params == null) {
-                        ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP2_ERR_MISSING_PARAMETER.code))
+                        ws?.sendCtapResponse(generation, crypt, byteArrayOf(CtapStatus.CTAP2_ERR_MISSING_PARAMETER.code))
                         return
                     }
                     AuthenticatorGetAssertionRequest.decodeFromCbor(params)
@@ -310,12 +311,12 @@ class HybridAuthenticatorController(context: Context, private val accountPrfAvai
                 }
 
                 else -> {
-                    ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_COMMAND.code))
+                    ws?.sendCtapResponse(generation, crypt, byteArrayOf(CtapStatus.CTAP1_ERR_INVALID_COMMAND.code))
                     return
                 }
             }
             if (!operationActive.compareAndSet(false, true)) {
-                ws?.sendCtapResponse(byteArrayOf(CtapStatus.CTAP1_ERR_CHANNEL_BUSY.code))
+                ws?.sendCtapResponse(generation, crypt, byteArrayOf(CtapStatus.CTAP1_ERR_CHANNEL_BUSY.code))
                 return
             }
             activeRequestDigest = java.security.MessageDigest.getInstance("SHA-256").digest(decrypted)
@@ -325,15 +326,20 @@ class HybridAuthenticatorController(context: Context, private val accountPrfAvai
                     check(connection.live(generation) && handshakePhase == HandshakePhase.READY && crypt === crypter)
                     val responseBytes = if (response == null) byteArrayOf(CtapStatus.CTAP1_ERR_OTHER.code)
                         else byteArrayOf(0) + response.encodePayloadAsCbor().EncodeToBytes()
-                    ws?.sendCtapResponse(responseBytes)
+                    if (ws?.sendCtapResponse(generation, crypt, responseBytes) != true) {
+                        invalidate()
+                        complete(byteArrayOf(), false)
+                        return@launch
+                    }
                     if (request !is AuthenticatorGetInfoRequest) complete(responseBytes, response != null)
                 } catch (_: CancellationException) {
                     // Shutdown/socket loss revoked authority; never emit a late result or error frame.
                 } catch (_: Exception) {
                     if (connection.live(generation) && crypt === crypter) {
                         val refused = byteArrayOf(CtapStatus.CTAP1_ERR_OTHER.code)
-                        ws?.sendCtapResponse(refused)
-                        complete(refused, false)
+                        val sent = ws?.sendCtapResponse(generation, crypt, refused) == true
+                        if (!sent) invalidate()
+                        complete(if (sent) refused else byteArrayOf(), false)
                     }
                 } finally { activeRequestDigest = null; operationActive.set(false) }
             }
@@ -345,15 +351,14 @@ class HybridAuthenticatorController(context: Context, private val accountPrfAvai
         require(frameType in setOf(0x02, 0x03))
     }
 
-    private fun TunnelWebsocket.sendCtapResponse(ctapResponse: ByteArray) {
-        try {
-            val crypter = crypter ?: error("Crypter not initialized (handshake incomplete)")
-            val framedMessage = byteArrayOf(0x01) + ctapResponse
-            val encrypted = crypter.encrypt(framedMessage) ?: error("Failed to encrypt CTAP response")
-            Log.d(TAG, "Sending encrypted CTAP response: ${encrypted.size} bytes (framed)")
-            send(encrypted)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send CTAP response")
+    private fun TunnelWebsocket.sendCtapResponse(generation: Long, crypt: NoiseCrypter, ctapResponse: ByteArray): Boolean {
+        val accepted = HybridOutput(connection, { actual -> handshakePhase == HandshakePhase.READY && actual === crypter }, ::enqueue)
+            .send(generation, crypt, ctapResponse)
+        if (!accepted) {
+            invalidate()
+            // Cleanup/callbacks run after releasing the output guard, preserving the socket -> guard lock order.
+            runCatching { close() }
         }
+        return accepted
     }
 }

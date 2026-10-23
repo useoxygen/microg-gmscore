@@ -5,6 +5,12 @@ import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.microg.gms.fido.core.hybrid.utils.NoiseCrypter
+import java.util.Collections
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -59,5 +65,54 @@ class HybridControlFramesTest {
         assertEquals(0, shutdowns)
         val independent = HybridAuthenticatedFrames(NoiseCrypter(key, ByteArray(32))) { shutdowns++ }
         assertEquals(1, independent.read(record(1, key))!![0].toInt()); assertEquals(0, shutdowns)
+    }
+
+    private fun decryptRecord(bytes: ByteArray, key: ByteArray, sequence: Int): ByteArray = Cipher.getInstance("AES/GCM/NoPadding").run {
+        val nonce = ByteArray(12)
+        nonce[8] = (sequence ushr 24).toByte(); nonce[9] = (sequence ushr 16).toByte()
+        nonce[10] = (sequence ushr 8).toByte(); nonce[11] = sequence.toByte()
+        init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
+        val padded = doFinal(bytes)
+        padded.copyOfRange(0, padded.size - (padded.last().toInt() and 255) - 1)
+    }
+    @Test fun shutdownAfterPreliminaryCheckCannotReserveANonceOrEnqueueSignedOutput() {
+        val connection = HybridConnectionGuard(); connection.connected(); val generation = connection.capture()
+        val inputKey = ByteArray(32) { 5 }; val outputKey = ByteArray(32) { 6 }
+        val crypt = NoiseCrypter(inputKey, outputKey)
+        var sent = 0
+        val output = HybridOutput(connection, { it === crypt }) { sent++; true }
+        assertTrue(connection.live(generation)) // The owner's earlier check has already succeeded.
+        val reader = HybridAuthenticatedFrames(crypt) { connection.invalidate() }
+        assertNull(reader.read(record(0, inputKey)))
+        assertFalse(output.send(generation, crypt, byteArrayOf(0, 11, 12)))
+        assertEquals(0, sent)
+        // Rejected output did not consume a nonce before discovering cancellation.
+        assertArrayEquals(byteArrayOf(9), decryptRecord(crypt.encrypt(byteArrayOf(9))!!, outputKey, 0))
+    }
+    @Test fun concurrentBusyAndOwnerOutputsKeepCiphertextNonceOrderEqualToActualEnqueueOrder() {
+        val connection = HybridConnectionGuard(); connection.connected(); val generation = connection.capture()
+        val key = ByteArray(32) { 7 }; val crypt = NoiseCrypter(ByteArray(32), key)
+        val firstEntered = CountDownLatch(1); val releaseFirst = CountDownLatch(1)
+        val secondStarted = CountDownLatch(1); val secondEntered = CountDownLatch(1)
+        val calls = AtomicInteger(); val queued = Collections.synchronizedList(ArrayList<ByteArray>())
+        val output = HybridOutput(connection, { it === crypt }) { encrypted ->
+            if (calls.getAndIncrement() == 0) {
+                firstEntered.countDown(); check(releaseFirst.await(3, TimeUnit.SECONDS))
+            } else secondEntered.countDown()
+            queued.add(encrypted.copyOf()); true
+        }
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val owner = executor.submit(Callable { output.send(generation, crypt, byteArrayOf(0, 21)) })
+            assertTrue(firstEntered.await(2, TimeUnit.SECONDS))
+            val busy = executor.submit(Callable { secondStarted.countDown(); output.send(generation, crypt, byteArrayOf(6)) })
+            assertTrue(secondStarted.await(2, TimeUnit.SECONDS))
+            assertFalse(secondEntered.await(100, TimeUnit.MILLISECONDS))
+            releaseFirst.countDown()
+            assertTrue(owner.get(2, TimeUnit.SECONDS)); assertTrue(busy.get(2, TimeUnit.SECONDS))
+            assertEquals(2, queued.size)
+            assertArrayEquals(byteArrayOf(1, 0, 21), decryptRecord(queued[0], key, 0))
+            assertArrayEquals(byteArrayOf(1, 6), decryptRecord(queued[1], key, 1))
+        } finally { releaseFirst.countDown(); executor.shutdownNow() }
     }
 }

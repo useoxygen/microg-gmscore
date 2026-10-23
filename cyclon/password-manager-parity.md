@@ -404,7 +404,10 @@ atomically commits their keys and receipt. SDK recovery uses the trusted source 
 does not require enabling the separate Services password vault. Coupled account/domain
 consent uses genuine lower LSKF setup, exact source leave/update effects and selected-domain
 persistence; getSyncStatus returns the source seven integer states. Protected owner resolution
-keeps finite mutation receipts and requires explicit review before another attempt. The five descriptor-only Passwords lifecycle methods have no verified producer or
+keeps finite mutation receipts and requires explicit review before another attempt. The source default
+one-day wall-clock cooldown is persisted in protected per-domain field16 only after an
+actual notification post. Google runtime experiment/skip flag values are not mirrored;
+that source qualification remains under CYC-687. The five descriptor-only Passwords lifecycle methods have no verified producer or
 request/response schema in this pinned APK and its examined official modules. Their contracts
 remain open; see [the contract audit](passwords-rpc-contract-gaps.md). Generic Chrome Nigori
 transition cryptography does not establish those RPC envelopes. Creating an SDS domain alone

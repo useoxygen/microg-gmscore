@@ -16,7 +16,8 @@ internal object FolsomAccountProtection {
         return account.copy(googleUserId = current, domains = account.domains.map { entry ->
             val domain = entry.value_
             if (domain == null || domain.googleUserId != null) entry
-            else entry.copy(value_ = domain.copy(consent = null, keys = emptyList(), legacyKeys = domain.legacyKeys + domain.keys))
+            else entry.copy(value_ = domain.copy(consent = null, consentNotificationTimestamp = null,
+                keys = emptyList(), legacyKeys = domain.legacyKeys + domain.keys))
         })
     }
 

@@ -536,6 +536,39 @@ class LocalKeyManager(private val context: Context) {
         action: (loadBytes: () -> ByteArray, saveBytes: (ByteArray) -> Unit) -> T): T =
         withRecoveryJournal(accountName, accountId, RecoveryJournal.CONSENT, action)
 
+    private fun checkedConsentNotificationAccount(account: AccountData?, accountId: String, domainId: String): AccountData {
+        require(FolsomDomainPolicy.valid(domainId))
+        if (account?.googleUserId != null && account.googleUserId != accountId)
+            throw TinkEncryptionException("Recovery account changed")
+        for (id in FolsomConsentPolicy.coupled + domainId) account?.findDomain(id)?.let {
+            if (it.googleUserId != null && it.googleUserId != accountId)
+                throw TinkEncryptionException("Recovery account changed")
+            if (pendingReset(it, id)) throw TinkEncryptionException("Recovery reset pending")
+        }
+        return account ?: AccountData(googleUserId = accountId)
+    }
+
+    internal fun consentNotificationEligible(accountName: String, accountId: String, domainId: String,
+        nowMillis: Long = System.currentTimeMillis()): Boolean = withRecoveryAuthority(accountName, accountId) {
+        val account = checkedConsentNotificationAccount(readStore().findAccount(obfuscateAccountName(accountName)), accountId, domainId)
+        FolsomConsentNotificationPolicy.eligible(account, accountId, domainId, nowMillis).also {
+            if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed")
+        }
+    }
+
+    /** Invoke after the real notification post; authorization must not acquire recovery/repository locks. */
+    internal fun recordConsentNotificationPosted(accountName: String, accountId: String, domainId: String,
+        postedAtMillis: Long = System.currentTimeMillis(), authorize: () -> Unit) = withRecoveryAuthority(accountName, accountId) {
+        fun verify() { authorize(); if (stableAccountId(accountName) != accountId) throw TinkEncryptionException("Recovery account changed") }
+        verify(); updateStore { store ->
+            verify()
+            val obfuscatedId = obfuscateAccountName(accountName)
+            val account = checkedConsentNotificationAccount(store.findAccount(obfuscatedId), accountId, domainId)
+            val replacement = FolsomConsentNotificationPolicy.posted(account, accountId, domainId, postedAtMillis)
+            verify(); store.updateAccount(obfuscatedId, replacement)
+        }; verify()
+    }
+
     /** This snapshot contains consent values only, never the account's recovery keys or private pairs. */
     internal fun consentSnapshot(accountName: String, accountId: String): AccountData = withRecoveryAuthority(accountName, accountId) {
         consentSnapshotUnderRecoveryLock(accountName, accountId)

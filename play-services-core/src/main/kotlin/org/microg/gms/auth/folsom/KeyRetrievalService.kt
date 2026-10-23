@@ -615,13 +615,14 @@ internal class KeyRetrievalServiceImpl(
             cancellation.set(client::cancel)
             // anqw checks stored coupled consent and locally readable positive-epoch keys first.
             // No owner notification or backup setup is needed for either early-success case.
-            if (!client.needsConsentPrompt(domainId)) Status.SUCCESS
-            else postConsentNotification(fence, consentResolution(fence, client.prepare(domainId, true)))
+            if (!client.needsConsentPrompt(domainId) ||
+                !LocalKeyManager.getInstance(context).consentNotificationEligible(fence.name, fence.userId, domainId)) Status.SUCCESS
+            else postConsentNotification(fence, consentResolution(fence, client.prepare(domainId, true)), authorize)
         }) { status, result -> callback.onResult(if (status.isSuccess) result ?: Status.INTERNAL_ERROR else status) }
     }
 
-    private fun postConsentNotification(fence: FolsomAccountFence, fallback: Status): Status {
-        checkCurrent(fence)
+    private fun postConsentNotification(fence: FolsomAccountFence, fallback: Status, authorize: () -> Unit): Status {
+        authorize(); checkCurrent(fence)
         val resolution = fallback.resolution ?: throw SecurityException("Recovery approval unavailable")
         val notifications = NotificationManagerCompat.from(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -641,10 +642,11 @@ internal class KeyRetrievalServiceImpl(
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setLocalOnly(true).setTimeoutAfter(120_000).build()
         val tag = "folsom-lskf-" + MessageDigest.getInstance("SHA-256")
             .digest((fence.userId + ":" + domainId).toByteArray()).joinToString("") { "%02x".format(it.toInt() and 255) }
-        checkCurrent(fence)
+        authorize(); checkCurrent(fence)
         try { notifications.notify(tag, 1, notification) }
-        catch (_: SecurityException) { checkCurrent(fence); return fallback }
-        checkCurrent(fence)
+        catch (_: SecurityException) { authorize(); checkCurrent(fence); return fallback }
+        LocalKeyManager.getInstance(context).recordConsentNotificationPosted(fence.name, fence.userId, domainId, authorize = authorize)
+        authorize(); checkCurrent(fence)
         // SUCCESS means the owner notification was posted; the PREPARED attempt has not granted consent.
         return Status.SUCCESS
     }

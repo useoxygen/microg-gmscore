@@ -26,7 +26,7 @@ object HybridPrf {
         }
         prf["eval"]?.let { entries.add(null); entries.add(values(it)) }
         prf["evalByCredential"]?.let { by ->
-            require(!create && by.type == CBORType.Map && by.size <= 200)
+            require(!create && by.type == CBORType.Map && by.size() <= 200)
             by.keys.forEach { key ->
                 require(key.type == CBORType.ByteString)
                 val id = key.GetByteString(); require(id.size in 1..1024)

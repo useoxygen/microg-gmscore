@@ -203,7 +203,8 @@ class AffiliationsTest {
         val second = AffiliationFacet.parse("https://b.example.com")
         val third = AffiliationFacet.parse("https://x.example.org")
         val fourth = AffiliationFacet.parse("https://y.example.org")
-        val secondApp = AffiliationFacet.parse(app.id.replace("com.example", "com.other"))
+        val secondApp = AffiliationFacet.parse("android://AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8@com.Other_app")
+        assertNotEquals(app, secondApp)
         fun brandedGroup(name: String, icon: String?, vararg entries: AffiliationFacet): ByteArray =
             group(*entries) + Proto.field(2, Proto.field(1, name) + (icon?.let { Proto.field(2, it) } ?: byteArrayOf()))
         val requested = listOf(first, app, second, third, fourth, secondApp)
