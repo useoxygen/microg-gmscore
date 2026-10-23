@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: transport logs name message types and sizes only, never content (useoxygen/cyclon#842).
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -744,7 +745,7 @@ public class McsService extends Service implements Handler.Callback {
                 return true;
             case MSG_INPUT_ERROR:
             case MSG_OUTPUT_ERROR:
-                logd(this, "I/O error: " + msg.obj);
+                logd(this, "I/O error: " + McsLog.describe(msg.obj instanceof Throwable ? (Throwable) msg.obj : null));
                 if (msg.obj instanceof SocketException) {
                     SocketException e = (SocketException) msg.obj;
                     if ("Connection reset".equals(e.getMessage())) {
@@ -754,7 +755,7 @@ public class McsService extends Service implements Handler.Callback {
                 rootHandler.sendMessage(rootHandler.obtainMessage(MSG_TEARDOWN, msg.obj));
                 return true;
             case MSG_TEARDOWN:
-                logd(this, "Teardown initiated, reason: " + msg.obj);
+                logd(this, "Teardown initiated, reason: " + (msg.obj instanceof Throwable ? McsLog.describe((Throwable) msg.obj) : msg.obj));
                 handleTeardown(msg);
                 return true;
             case MSG_CONNECT:
@@ -802,7 +803,7 @@ public class McsService extends Service implements Handler.Callback {
                 handleOutputDone(msg);
                 return true;
         }
-        Log.w(TAG, "Unknown message (" + msg.what + "): " + msg);
+        Log.w(TAG, "Unknown message (" + msg.what + "): " + McsLog.describe(msg.obj));
         return false;
     }
 
@@ -834,12 +835,12 @@ public class McsService extends Service implements Handler.Callback {
                     handleLoginResponse((LoginResponse) message);
                     break;
                 default:
-                    Log.w(TAG, "Unknown message: " + message);
+                    Log.w(TAG, "Unknown message: " + McsLog.describe(message));
             }
             resetCurrentDelay();
             lastIncomingNetworkRealtime = SystemClock.elapsedRealtime();
         } catch (Exception e) {
-            Log.w(TAG, "Exception when handling input: " + message, e);
+            Log.w(TAG, "Exception when handling input: " + McsLog.describe(message) + " " + McsLog.describe(e));
             rootHandler.sendMessage(rootHandler.obtainMessage(MSG_TEARDOWN, e));
         }
     }

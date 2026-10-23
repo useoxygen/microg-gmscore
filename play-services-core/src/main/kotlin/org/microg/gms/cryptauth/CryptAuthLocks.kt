@@ -27,10 +27,18 @@ internal fun Context.cryptAuthStateFile(kind: String, accountName: String): File
  *
  * @param wait block until the lock is free; otherwise return `null` at once when it is held
  */
-internal fun <T> Context.withCryptAuthLock(kind: String, accountName: String, wait: Boolean, block: () -> T): T? {
-    val file = cryptAuthStateFile("$kind.lock", accountName)
+internal fun <T> Context.withCryptAuthLock(kind: String, accountName: String, wait: Boolean, block: () -> T): T? =
+    withProcessFileLock(cryptAuthStateFile("$kind.lock", accountName), wait, block)
+
+/**
+ * Runs [block] while holding [file]'s lock in this thread's process and, through a file lock, in every other process.
+ * Not reentrant across processes: [block] must not take the same lock again.
+ *
+ * @param wait block until the lock is free; otherwise return `null` at once when it is held
+ */
+internal fun <T> withProcessFileLock(file: File, wait: Boolean, block: () -> T): T? {
     // File locks belong to the process, so threads of one process also need a local lock.
-    val local = synchronized(localLocks) { localLocks.getOrPut(file.name) { ReentrantLock() } }
+    val local = synchronized(localLocks) { localLocks.getOrPut(file.absolutePath) { ReentrantLock() } }
     if (wait) local.lock() else if (!local.tryLock()) return null
     try {
         RandomAccessFile(file, "rw").use { access ->

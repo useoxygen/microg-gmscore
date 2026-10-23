@@ -79,7 +79,7 @@ class GcmReceiverService : ReceiverService(TAG) {
 
     override fun receiver(intent: Intent) {
         Log.d(TAG, "receiver: run thread -> ${Thread.currentThread().name}")
-        Log.d(TAG, "receiver: action: ${intent.action} data: ${intent.extras}")
+        Log.d(TAG, "receiver: action: ${intent.action}")
         val data = intent.extras ?: return run { Log.w(TAG, "receiver: intent.extras is null") }
         val accountManager = getSystemService(ACCOUNT_SERVICE) as AccountManager? ?: return run { Log.w(TAG, "receiver: accountManager is null") }
         val gcmType = data.getString(GcmConstants.EXTRA_GCM_TYPE)
