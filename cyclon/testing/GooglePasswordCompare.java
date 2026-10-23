@@ -24,6 +24,7 @@ public final class GooglePasswordCompare {
     private static final String BRIDGE = "cyc653-approved-password-compare";
     private static final String DEBUG = "chrome_devtools_remote";
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static String stage = "bridge";
 
     public static void main(String[] arguments) {
         try {
@@ -31,7 +32,7 @@ public final class GooglePasswordCompare {
             System.out.println("Phone-only official reader comparison completed");
         } catch (Throwable failure) {
             // Never emit exception messages, CDP responses, HTML, JSON or credential values.
-            System.err.println("Phone-only official reader comparison failed");
+            System.err.println("Phone-only official reader comparison failed at " + stage);
             System.exit(2);
         }
     }
@@ -48,9 +49,11 @@ public final class GooglePasswordCompare {
             finally { Arrays.fill(packet, (byte) 0); }
             if (!"https://cyc651.example.invalid/".equals(expected.getString("realm")) ||
                     !"cyc651-synthetic-user".equals(expected.getString("username"))) throw new Exception();
+            stage = "target-discovery";
             String path = targetPath();
             JSONObject result;
             try (LocalSocket debug = connect(DEBUG)) {
+                stage = "websocket-handshake";
                 handshake(debug, path);
                 String expression = "(()=>{const visible=e=>e.getClientRects().length>0;" +
                     "const dialogs=Array.from(document.querySelectorAll('[role=dialog]')).filter(visible);" +
@@ -62,6 +65,7 @@ public final class GooglePasswordCompare {
                     "return{ready:true,masked:p[0].type==='password',present:p[0].value.length>0,password:p[0].value};})()";
                 JSONObject parameters = new JSONObject().put("expression", expression).put("returnByValue", true)
                     .put("silent", true).put("generatePreview", false).put("objectGroup", "cyc653-private-compare");
+                stage = "private-evaluation";
                 send(debug.getOutputStream(), 1, new JSONObject().put("id", 1).put("method", "Runtime.evaluate")
                     .put("params", parameters).toString().getBytes(StandardCharsets.UTF_8));
                 JSONObject response = reply(debug, 1);
@@ -78,6 +82,7 @@ public final class GooglePasswordCompare {
             try { matches = MessageDigest.isEqual(wanted, actual); }
             finally { Arrays.fill(wanted, (byte) 0); Arrays.fill(actual, (byte) 0); }
             expected.remove("password"); result.remove("password");
+            stage = "boolean-result";
             DataOutputStream output = new DataOutputStream(bridge.getOutputStream());
             output.writeBoolean(result.optBoolean("ready", false));
             output.writeBoolean(result.optBoolean("masked", false));
