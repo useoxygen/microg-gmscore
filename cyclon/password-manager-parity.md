@@ -15,11 +15,21 @@ server and device acceptance remains separate.
 All new phone work is deferred because another chat has priority on the designated Pixel
 7a. No Core, Services or controller replacement ran in this batch. Historical acceptance
 below remains tied to its original source and fixture; it does not accept this expanded
-implementation. The current consolidated host/build result is pending; historical counts
-below do not describe this source snapshot. Explicit-owner existing-`chromesync` physical-member
-enrollment is implemented with host validation pending (CYC-687). New-domain/`hw_protected` membership, type3 hardware enrollment,
+implementation. At source `36246827`, the consolidated batch passed **294 password-sync
+and 108 Core host tests**, with zero failures, errors or skips, and compiled both product
+and instrumentation APKs. Historical counts below describe their recorded older snapshots.
+Explicit-owner existing-`chromesync` physical-member enrollment is implemented and host-tested
+(CYC-687). New-domain/`hw_protected` membership, type3 hardware enrollment,
 LSKF/GPM-PIN, full trusted-vault rotation/reset, advanced passkey options and the listed
 provider, family and cross-device acceptance gates remain open.
+
+The compiled product APK SHA-256 is
+`8800ea4542f0b25b47eb6064906186594b2a8da13e7bd4b6778208978cb08b57`;
+instrumentation APK SHA-256 is
+`44d84269ef75d9a93c7a1b223066f597cc114059c816dea4442a6b411517d081`.
+These artifacts were built on the host and were not installed. The final run includes
+18 enrollment, 22 breach, 12 owner-management, 11 PRF, 17 blob-read and 11 recovered-epoch
+regressions, plus the existing transport, sync, sharing and authority suites.
 
 ## Reference and comparison method
 
@@ -319,8 +329,8 @@ post-update LIST. Grant, network, partial-query, cancellation and uncertain-save
 cannot report a completed fresh assessment; ordinary durable outbox rules retain any
 already-launched write.
 
-The 22 focused pure tests are prepared for the consolidated batch; no current result count
-is claimed here. Legitimate provider grant/admission, real response interoperability and
+All 22 focused breach tests passed in the consolidated `36246827` host run.
+Legitimate provider grant/admission, real response interoperability and
 native/device acceptance remain pending. No account/network/device probe ran for this slice.
 
 ## Recovered key epochs and enrollment boundary
@@ -334,7 +344,7 @@ are refused. Raw-only caches remain usable for unlock and never acquire inferred
 the enrollment getter requires versioned recovery and revalidates the current keybag.
 Both explicit reset adoption and an observed automatic empty-outbox reset clear versioned
 authority, including when the replacement snapshot fails. Eleven focused regression tests
-and the updated migration expectations are prepared; consolidated execution is pending.
+and the updated migration expectations passed in the consolidated `36246827` host run.
 
 The CYC-687 native owner flow now uses those verified epochs to enroll a physical type1
 member into an existing `chromesync` domain. It pins stable Gaia identity, vault birthday,
@@ -347,8 +357,8 @@ Unknown outcomes retain the same pair/request and never replay automatically; ex
 retry creates a new attempt ID and archives the previous receipt. Post-Join read failures
 remain uncertain. Closure retains provenance and does not undo a possible remote member.
 The journal lives inside the existing encrypted Folsom account store and is removed by its
-existing account cleanup. The connected UI and prepared host regressions are frozen for
-the consolidated run; provider, device and cross-device acceptance remain pending.
+existing account cleanup. The connected UI compiles and all 18 enrollment regressions
+passed in the consolidated `36246827` host run; provider, device and cross-device acceptance remain pending.
 
 This consumer does not create a new domain, enroll `hw_protected`, claim type3
 hardware protection, enroll LSKF/GPM-PIN or sharing keys, or implement the full trusted-vault
@@ -370,8 +380,9 @@ CBOR before ECDSA and to the native JSON output; an absent credBlob returns empt
 of at most 2 KiB, with bounded compressed input and complete-stream/no-trailing/expansion
 checks. Invalid/absent large blobs omit the blob result, while valid data is returned as
 `largeBlob.blob`. Temporary secret/output buffers are cleared. These flows do not advertise
-blob creation, writes, capacity/support or legacy blob handling. Independent pure PRF/blob
-and native adapter/signed-CBOR tests are prepared; consolidated execution is pending.
+blob creation, writes, capacity/support or legacy blob handling. The 11 PRF and 17 blob
+regressions passed in the consolidated `36246827` host run, including independent vectors,
+native adapter/signed-CBOR delivery and valid compressed framing larger than 2 KiB.
 
 ## Remaining parity and acceptance
 
