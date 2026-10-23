@@ -24,14 +24,19 @@ object TileKeyCheck {
         private set
     private var checkedAt = 0L
     private var running = false
-    // Live maps to restyle when the key becomes rejected; weak, so a map that is never destroyed properly isn't kept.
-    private val subscribers = WeakHashMap<Any, () -> Unit>()
+    // Live maps to restyle when the key becomes rejected. Owners are weak keys and callbacks get the owner passed in
+    // (they must not capture it), so a map that is never destroyed isn't kept alive.
+    private val subscribers = WeakHashMap<Any, (Any) -> Unit>()
     private val main = Handler(Looper.getMainLooper())
 
-    /** [onRejected] runs on the main thread each time the key turns from working to rejected, until [unsubscribe]. */
-    fun subscribe(owner: Any, onRejected: () -> Unit) {
+    /**
+     * [onRejected] runs on the main thread with [owner] each time the key turns from working to rejected, until
+     * [unsubscribe]. It must not capture [owner].
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Any> subscribe(owner: T, onRejected: (T) -> Unit) {
         if (BuildConfig.STADIA_KEY.isEmpty()) return
-        synchronized(this) { subscribers[owner] = onRejected }
+        synchronized(this) { subscribers[owner] = onRejected as (Any) -> Unit }
         check()
     }
 
@@ -61,7 +66,7 @@ object TileKeyCheck {
                 Log.d(TAG, "Tile key check failed: $e")
                 null
             }
-            val notify: List<() -> Unit>
+            val notify: List<Pair<Any, (Any) -> Unit>>
             synchronized(this) {
                 running = false
                 val wasRejected = stadiaRejected
@@ -69,10 +74,10 @@ object TileKeyCheck {
                     checkedAt = SystemClock.elapsedRealtime()
                     stadiaRejected = code in REJECTED
                 }
-                notify = if (stadiaRejected && !wasRejected) subscribers.values.toList() else emptyList()
+                notify = if (stadiaRejected && !wasRejected) subscribers.entries.map { it.key to it.value } else emptyList()
             }
             if (code in REJECTED) Log.w(TAG, "Stadia rejected the tile key (HTTP $code); using OpenFreeMap")
-            notify.forEach { main.post(it) }
+            notify.forEach { (owner, callback) -> main.post { callback(owner) } }
         }, "GmsMapTileKeyCheck").start()
     }
 }

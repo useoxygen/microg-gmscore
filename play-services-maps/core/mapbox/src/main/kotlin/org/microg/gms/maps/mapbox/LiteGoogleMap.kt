@@ -72,6 +72,8 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     val map: ImageView
 
     private var created = false
+    @Volatile
+    private var destroyed = false
 
     private var cameraPosition: CameraPosition = options.camera ?: CameraPosition.fromLatLngZoom(LatLng(0.0, 0.0), 2f)
     private var cameraBounds: com.mapbox.mapboxsdk.geometry.LatLngBounds? = null
@@ -214,17 +216,18 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
             }
 
             postUpdateSnapshot()
-            TileKeyCheck.subscribe(this) { postUpdateSnapshot() }
+            TileKeyCheck.subscribe(this) { it.postUpdateSnapshot() }
 
             created = true
         }
     }
 
     internal fun postUpdateSnapshot() {
+        if (destroyed) return
         if (updatePosted.compareAndSet(false, true)) {
             Handler(Looper.getMainLooper()).post {
                 updatePosted.set(false)
-                updateSnapshot()
+                if (!destroyed) updateSnapshot()
             }
         }
     }
@@ -609,6 +612,7 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
     }
 
     override fun onDestroy() {
+        destroyed = true
         TileKeyCheck.unsubscribe(this)
         view.removeView(map)
     }

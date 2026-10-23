@@ -428,7 +428,7 @@ class GoogleMapImpl(context: Context, var options: GoogleMapOptions) : AbstractG
             getStyle(mapContext, storedMapType, mapStyle),
             update
         )
-        TileKeyCheck.subscribe(this) { if (map != null) applyMapStyle() }
+        TileKeyCheck.subscribe(this) { if (it.map != null) it.applyMapStyle() }
 
         map?.let { BitmapDescriptorFactoryImpl.registerMap(it) }
 
