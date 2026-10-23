@@ -90,7 +90,10 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
                         4 -> repository.delete(payload!!)
                         5 -> setting = repository.getPreference(settingName!!)
                         6 -> repository.setPreference(settingName!!, settingValue!!)
-                        7 -> values = repository.list(true).filter { it.data.realm == requestedFacet }.map { it.chromeBytes }
+                        7 -> {
+                            val requested = AffiliationFacet.parse(requestedFacet ?: throw ProtocolException())
+                            values = repository.list(true).mapNotNull { ChromeAffiliatedPassword.exact(it.chromeBytes, requested) }
+                        }
                         // This response has a distinct UI-info wrapper. Do not advertise affiliation enrichment yet.
                         8 -> values = repository.list(true).map { Proto.field(1, it.chromeBytes) }
                         9 -> repository.setCustomKey(encKey ?: throw ProtocolException(), macKey ?: throw ProtocolException())

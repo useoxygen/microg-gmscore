@@ -5,7 +5,7 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
-Current verified scope: 79 password-sync and 41 Core host tests; twenty isolated/native/UI
+Current verified scope: 92 password-sync and 41 Core host tests; twenty isolated/native/UI
 cases on product 6ea691ca with fixture 6fd24225; and actual Google server push on product
 4bf07f7e. These are separate gates, not full parity. Original Services is restored after
 private testing. The remaining table below and JSON acceptance flags remain authoritative.
@@ -147,8 +147,11 @@ in-memory token sessions; a registration refusal no longer invalidates the passw
 Repeated refusal is bounded, consent denial does not trigger renewal, and uncertain writes
 or redirects are never replayed. Ten host cases exercise actual HTTP responses, gRPC trailers,
 unchanged mutation bytes, scope isolation, disconnects and missing native credentials. All
-78 sync and 41 Core tests pass and both Android APKs compile. Native rejected-token recovery
-has an opt-in read-only fixture and remains pending execution.
+78 sync and 41 Core tests passed and both Android APKs compiled at that milestone. On source
+**c2d5b6f0**, the matching-signer read-only native case passed (3.845 seconds): Google rejected
+the synthetic invalid bearer, then native account authentication recovered the same vault
+metadata. The original Services APK was restored and the temporary test package removed.
+This does not accept real account revocation or interactive account recovery.
 
 The reference `jcpp`/`bfdu` also puts a ten-second deadline on each password/SyncEntities
 RPC. The transport now bounds the whole HTTP call, including a slowly arriving response
@@ -167,6 +170,35 @@ The broader comparison remains open: SyncEntities generic entity contracts, affi
 legacy credentials, leak checking, sharing and synced passkey consumers require their own
 behavior and interoperability evidence. Adding a transport method alone does not complete
 one of those flows.
+
+## Affiliation and branding comparison
+
+CYC-673 tracks this separate surface under the full-parity task. The pinned `bffq`/`bfci`,
+`bewm`/`bewu`, `bexk`/`bexo`, `ioxh`/`ioxi` and `isos`/`isob`/`isoj` establish hash-prefix
+lookup, sharing sets, display groups, branding and the two different Chrome wrappers.
+The matching public [Chrome 145 affiliation protocol](https://chromium.googlesource.com/chromium/src/+/refs/tags/145.0.7632.218/components/affiliations/core/browser/affiliation_api.proto)
+also distinguishes credential-sharing authority from UI grouping.
+
+Independent code now canonicalizes web and certificate-bearing Android facet identities,
+encodes sixteen-bit SHA-256 prefix requests and validates bounded affiliation responses.
+Unrequested hash-bucket classes are filtered, duplicate classes are deduplicated, partial
+overlaps are refused, unknown future schemes grant no authority, and missing requested
+facets get singleton results. Sharing and grouping stay separate; HTTP entries do not gain
+sharing authority. Branding and change-password links remain metadata, unsafe links are
+omitted, and bounded cache serialization refuses expired data or a rolled-back clock.
+No credential-sharing integration consumes this cache yet.
+
+The exact-match transaction-7 response previously returned the inner Chrome password
+directly. It now returns the `ioxh` wrapper with password field 1 and sharing/grouping
+flags 3/4, preserving opaque Chrome-local metadata. This fixes the implemented subset;
+the full affiliation feature remains unadvertised. Thirteen host cases cover these
+boundaries; all 92 sync and 41 Core host tests pass and both APKs compile. These additions
+have not been installed or accepted through official Chrome.
+
+A single unauthenticated public-facet lookup returned HTTP 403. Production service admission,
+account-encrypted cache integration, scheduled refresh, PSL-extension matching, branding UI
+and official-client acceptance remain open. A model/codec implementation is not completed
+affiliation functionality.
 
 ## Password management and notes comparison
 
