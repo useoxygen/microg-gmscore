@@ -176,6 +176,33 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
         schedule()
     }
 
+    /** Settings never require Nigori keys; they remain usable while password recovery is pending. */
+    fun refreshPreferences(): SyncReceipt {
+        checkEnabled()
+        val auth = authManager()
+        val token = auth.requestAuthWithBackgroundResolution(false).auth?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
+        val api = PasswordApi(GooglePasswordTransport({ checkEnabled(); token }, "https://chromesyncpasswords-pa.googleapis.com/".toHttpUrl()))
+        return try {
+            val parent = PasswordApi.checkedParent(Proto.decode(api.metadata()).string(1))
+            PreferenceSync(api, store).synchronize(parent)
+        } catch (failure: PasswordRpcException) {
+            if (failure.code == 16) auth.invalidateAuthToken(token)
+            throw failure
+        }
+    }
+
+    override fun getPreference(name: String): String? {
+        checkEnabled()
+        if (store.locked { it.load().preferenceParent == null }) refreshPreferences()
+        return localPreferences().value(name)
+    }
+    override fun setPreference(name: String, value: String) {
+        checkEnabled()
+        if (store.locked { it.load().preferenceParent == null }) refreshPreferences()
+        localPreferences().enqueue(name, value)
+        schedule()
+    }
+
     private fun unlock(metadata: ByteArray, customKey: ByteArray? = null): VaultKeys {
         val type = Proto.decode(Proto.decode(metadata).one(3)).integer(2)
         val shared = if (type == 5L) runBlocking {
@@ -194,6 +221,7 @@ class PasswordRepository(context: Context, val account: Account) : PasswordVault
     }
     private fun checkEnabled() { checkAccount(); if (!enabled) throw VaultLockedException() }
     private fun localEngine() = VaultSync(PasswordApi(PasswordTransport { _, _ -> error("enqueue is local") }), store)
+    private fun localPreferences() = PreferenceSync(PasswordApi(PasswordTransport { _, _ -> error("enqueue is local") }), store)
     override fun toString(): String = "PasswordRepository[redacted]"
     companion object {
         internal fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))

@@ -5,6 +5,7 @@ import android.accounts.AccountManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,6 +15,29 @@ import java.util.UUID
 /** Opt-in live check. The ordinary instrumentation suite never selects an account or performs RPCs. */
 @RunWith(AndroidJUnit4::class)
 class PasswordNativeSyncAndroidTest {
+    @Test fun nativePriorityPreferenceSnapshotAndCacheReopen() {
+        val selected = arguments.getString("passwordLiveAccount")
+        assumeTrue(!selected.isNullOrBlank())
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        assertTrue("Refusing an existing mutation journal", repository.store.locked {
+            val state = it.load(); state.mutations.isEmpty() && state.preferenceMutations.isEmpty()
+        })
+        val wasEnabled = repository.enabled
+        try {
+            repository.setEnabled(true)
+            val receipt = repository.refreshPreferences()
+            val saved = repository.store.locked { it.load() }
+            assertTrue("Preference snapshot was not persisted", saved.preferenceParent != null && saved.preferences.size == receipt.downloaded)
+            val reopened = PasswordRepository(context, account)
+            for (raw in saved.preferences) {
+                val preference = PriorityPreference.decode(raw)
+                assertTrue("Preference cache changed after reopen", reopened.getPreference(preference.name) == preference.value)
+            }
+            assertNull(reopened.getPreference("cyc654.synthetic.missing." + UUID.randomUUID()))
+        } finally { if (!wasEnabled) repository.setEnabled(false) }
+    }
+
     @Test fun nativeAccountRefreshAndEncryptedCacheReopen() = withFixture { repository, original ->
         val reopened = PasswordRepository(context, repository.account).list(false).single { it.id == original.id }
         assertTrue("Native cache changed the fixture", same(original.chromeBytes, reopened.chromeBytes))

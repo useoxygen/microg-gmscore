@@ -52,6 +52,17 @@ class DevicePasswordVault(context: Context) : PasswordVault {
     }
     override fun setCustomKey(encryption: ByteArray, mac: ByteArray) { throw UnsupportedOperationException() }
     override fun unlockPassphrase(password: ByteArray) { throw UnsupportedOperationException() }
+    override fun getPreference(name: String): String? = store.locked { session ->
+        session.load().preferences.map(PriorityPreference::decode).singleOrNull { it.name == name }?.value
+    }
+    override fun setPreference(name: String, value: String) = store.locked { session ->
+        val state = session.load()
+        val preference = state.preferences.map(PriorityPreference::decode).singleOrNull { it.name == name }
+            ?.withValue(value) ?: PriorityPreference.create(name, value)
+        state.preferences.removeAll { PriorityPreference.decode(it).name == name }
+        state.preferences.add(preference.encode())
+        session.save(state)
+    }
     private fun initialize(state: VaultState) {
         if (state.metadata != null) return
         val random = SecureRandom()

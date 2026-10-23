@@ -39,7 +39,10 @@ class VaultState(
     var lastSyncMillis: Long = 0,
     val chromeLocalData: MutableMap<String, ByteArray> = HashMap(),
     var customKey: ByteArray? = null,
-    var pendingMetadata: ByteArray? = null
+    var pendingMetadata: ByteArray? = null,
+    val preferences: MutableList<ByteArray> = ArrayList(),
+    val preferenceMutations: MutableList<Mutation> = ArrayList(),
+    var preferenceParent: String? = null
 ) {
     fun encode(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -49,7 +52,9 @@ class VaultState(
             if (value.size > Proto.MAX_BYTES - out.size()) throw ProtocolException()
             out.write(value, 0, value.size)
         }
-        append(Proto.integer(1, 1))
+        // v1 readers must refuse a state containing preference mutations rather than erase
+        // unknown journal fields on their next save. v2 continues reading existing v1 vaults.
+        append(Proto.integer(1, 2))
         metadata?.let { append(Proto.field(2, it)) }
         records.forEach { append(Proto.field(3, it)) }
         mutations.forEach { append(Proto.field(4, it.encode())) }
@@ -57,18 +62,25 @@ class VaultState(
         chromeLocalData.forEach { (tag, value) -> append(Proto.field(6, Proto.field(1, tag) + Proto.field(2, value))) }
         customKey?.let { append(Proto.field(7, it)) }
         pendingMetadata?.let { append(Proto.field(8, it)) }
+        preferences.forEach { append(Proto.field(9, it)) }
+        preferenceMutations.forEach { append(Proto.field(10, it.encode())) }
+        preferenceParent?.let { append(Proto.field(11, it)) }
         return out.toByteArray()
     }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
-            if (proto.integer(1) != 1L) throw ProtocolException()
+            if (proto.integer(1) !in setOf(1L, 2L)) throw ProtocolException()
             val state = VaultState(proto.optional(2), proto.bytes(3).toMutableList(),
                 proto.bytes(4).map(Mutation::decode).toMutableList(), proto.integer(5) ?: 0)
             proto.bytes(6).forEach { raw -> Proto.decode(raw).let { state.chromeLocalData[it.string(1)] = it.one(2) } }
             state.customKey = proto.optional(7)
             state.pendingMetadata = proto.optional(8)
+            state.preferences.addAll(proto.bytes(9))
+            state.preferenceMutations.addAll(proto.bytes(10).map(Mutation::decode))
+            state.preferenceParent = proto.optionalString(11)
             if (state.mutations.map { it.id }.toSet().size != state.mutations.size) throw ProtocolException()
+            if (state.preferenceMutations.map { it.id }.toSet().size != state.preferenceMutations.size) throw ProtocolException()
             state
         }
     }

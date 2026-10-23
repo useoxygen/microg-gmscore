@@ -55,25 +55,32 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
             var facet: String? = null
             var encryption: ByteArray? = null
             var mac: ByteArray? = null
+            var preferenceName: String? = null
+            var preferenceValue: String? = null
             when (code) {
                 2 -> options = ChromeListOptions.read(data)
                 3, 4 -> entity = readNullable(data, Bundle.CREATOR)?.getByteArray("entity")
                     ?.takeIf { it.size <= 512 * 1024 } ?: throw IllegalArgumentException("Invalid password entity")
-                5 -> data.readString()
-                6 -> { data.readString(); data.readString() }
+                5 -> preferenceName = data.readString()
+                6 -> { preferenceName = data.readString(); preferenceValue = data.readString() }
                 7 -> facet = readFacet(data)
                 9 -> { encryption = data.createByteArray(); mac = data.createByteArray() }
             }
             readNullable(data, ApiMetadata.CREATOR)
             if (data.dataAvail() != 0) throw IllegalArgumentException("Trailing password request data")
+            if (code in 5..6 && (preferenceName.isNullOrEmpty() || preferenceName.length > 1024 ||
+                    code == 6 && (preferenceValue == null || preferenceValue.toByteArray(Charsets.UTF_8).size > 64 * 1024))) throw ProtocolException()
             val selected = options
             val payload = entity
             val requestedFacet = facet
             val encKey = encryption
             val macKey = mac
+            val settingName = preferenceName
+            val settingValue = preferenceValue
             lifecycleScope.launch(Dispatchers.IO) {
                 var status = Status.SUCCESS
                 var values: List<ByteArray>? = null
+                var setting: String? = null
                 try {
                     val repository: PasswordVault = account?.let { PasswordRepository(this@ChromePasswordService, it) }
                         ?: DevicePasswordVault(this@ChromePasswordService)
@@ -81,11 +88,12 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
                         2 -> values = repository.list(true).filter { selected!!.accepts(it.data) }.map { it.chromeBytes }
                         3 -> repository.upsert(payload!!)
                         4 -> repository.delete(payload!!)
+                        5 -> setting = repository.getPreference(settingName!!)
+                        6 -> repository.setPreference(settingName!!, settingValue!!)
                         7 -> values = repository.list(true).filter { it.data.realm == requestedFacet }.map { it.chromeBytes }
                         // This response has a distinct UI-info wrapper. Do not advertise affiliation enrichment yet.
                         8 -> values = repository.list(true).map { Proto.field(1, it.chromeBytes) }
                         9 -> repository.setCustomKey(encKey ?: throw ProtocolException(), macKey ?: throw ProtocolException())
-                        else -> status = Status(16) // Preference sync is not yet offered by this connection.
                     }
                 } catch (_: VaultLockedException) { status = Status(4) }
                 catch (_: ConflictException) { status = Status(13) }
@@ -97,7 +105,7 @@ class ChromePasswordService : BaseService("ChromePasswordService", GmsService.CH
                         2 -> sendRows(callback, LIST_CALLBACK, status, values, listInfo = true)
                         7, 8 -> sendRows(callback, DATA_CALLBACK, status, values, listInfo = false)
                         5 -> send(callback, SETTINGS_CALLBACK) {
-                            nullable(status); writeInt(0); writeString(null); nullable(ApiMetadata.DEFAULT)
+                            nullable(status); writeInt(if (setting != null) 1 else 0); writeString(setting); nullable(ApiMetadata.DEFAULT)
                         }
                         else -> send(callback, STATUS_CALLBACK) { nullable(status) }
                     }

@@ -26,6 +26,9 @@ and `iaje` establish create/update/batch/delete positions. `bfgj`/`bfef` establi
 registration and client-token provenance. These class names are reference pointers only;
 the implementation is independently written, with cryptographic golden vectors and format
 information also taken from Chromium's public sync protocol and Nigori tests.
+`besa`, `berh`, `bfdz`, `iakx`, `iakc`, `iaiz` and `iakz` establish priority-preference
+identity, plaintext specifics and RPC positions. Preference pagination uses field 4;
+password pagination uses field 3. Both use separate durable mutation journals.
 
 ## Implemented behavior
 
@@ -34,6 +37,11 @@ information also taken from Chromium's public sync protocol and Nigori tests.
   error details excluded from exceptions/logging.
 - Password metadata, pagination, get, create, batch update and delete. Update uses each
   resource ID; Chrome local data is preserved in the same commit as the outgoing change.
+- Priority-preference list/create/update with opaque values, unknown-field preservation,
+  pagination, durable launch/reconciliation fences, offline coalescing and version conflicts.
+  Settings do not require Nigori keys. Chrome transactions 5/6 use the settings callback's
+  presence flag and nullable value. Background work attempts both independent sync domains.
+  This newer preference path has compile/host proof only until separately tested on-device.
 - Nigori PBKDF2/scrypt, default keystore wrapping, trusted-vault shared-key derivation,
   custom derived keys/passphrase unlock, and reading older entries after keybag rotation.
   Both legacy ciphertext-MAC and IV+ciphertext-MAC formats are readable. Legacy compatibility
@@ -77,10 +85,22 @@ exported to the host. They accept default-keystore reads and batch updates only.
 repository instance is covered; process death, reboot and background scheduling are not yet
 accepted. The original installed APK was preserved for restoration after private testing.
 
+Source **d42828d2** subsequently passed all seven isolated Android tests and all three
+opt-in account cases (16.752 seconds for the latter), including delete, confirmed remote
+absence, re-create and exact fixture restoration. It also corrected apostrophe client-tag
+identity to match Google's Android URI encoding and [Chromium's EscapePath character map](https://chromium.googlesource.com/chromium/src/+/refs/tags/143.0.7499.44/base/strings/escape.cc).
+Both this identity bug and an oversized-state replacement bug have failing-before/passing-after
+host regressions. State serialization is now bounded and streams rather than copying every
+prefix. The preference extension writes state schema v2, reads existing v1 state, and makes
+old v1 writers refuse the new journal instead of silently dropping unknown pending work.
+The human UI check reached the manager's screen-lock-required state; opening the activity
+does not establish owner authentication or listing/fill acceptance. Chrome's Settings entry
+opens the manager, but that is not an official Chrome producer round trip.
+
 | Surface | Gap / required proof |
 | --- | --- |
 | Device registration and push | CreateDeviceInfo/UpdateDeviceInfo, stable nonce/client token, invalidation transport and reconnect handling are not connected. Current password writes use empty client-token fields, which the earlier PoC server accepted. |
-| Settings | Priority-preference transport enum exists; cloud synchronization and Binder transactions 5/6 are not implemented. |
+| Settings | Durable priority-preference synchronization and Binder transactions 5/6 are implemented and host-tested. Native/server/official-client acceptance, management controls and provider behavior still need verification. |
 | Affiliations | Verified Digital Asset Links, branding and grouping are not implemented; no eTLD or package-name shortcut is used to authorize fills. |
 | Zeroparty/legacy APIs | Service 80, Smart Lock and older credential-saving contracts still need comparison and integration. |
 | Encryption recovery | Synthetic host cases cover keystore/trusted/custom derivation and keybag rotation. Real account recovery, stale-key refresh, registration, enable/rotate/clear RPCs and cross-device recovery are not accepted. |
@@ -88,7 +108,7 @@ accepted. The original installed APK was preserved for restoration after private
 | Password management | Search, note/name edits, moving between stores, import/export, blocked-site settings and checkup/breach service parity remain. |
 | Sharing/passkeys/Wi-Fi | Related password-service RPCs are individually missing in the JSON inventory. Existing FIDO provider behavior is not evidence of Google-synced passkey parity. |
 | Core agent fill | No secret-returning agent API is added. Core authority, private-field handling and a secret-free native fill path remain required. |
-| Phone | Signed private installation, six isolated Android cases and native synthetic read/update/restore passed. Process death/reboot, account removal/revocation and scheduled/background acceptance remain. |
+| Phone | Signed private installation, seven isolated Android cases and native synthetic CRUD/restoration passed. Owner-authenticated listing/fill, process death/reboot, account removal/revocation and scheduled/background acceptance remain. |
 | Official interoperability | Read a credential produced by official Chrome, then verify native edits/deletion and a locally produced credential with official Chrome. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks

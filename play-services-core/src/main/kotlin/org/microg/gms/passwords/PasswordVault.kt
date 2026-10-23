@@ -11,4 +11,6 @@ interface PasswordVault {
     fun delete(chromePassword: ByteArray)
     fun setCustomKey(encryption: ByteArray, mac: ByteArray)
     fun unlockPassphrase(password: ByteArray)
+    fun getPreference(name: String): String?
+    fun setPreference(name: String, value: String)
 }

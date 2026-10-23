@@ -113,6 +113,14 @@ class PasswordApi(private val transport: PasswordTransport) {
     fun delete(name: String, clientToken: ByteArray = byteArrayOf()) {
         transport.invoke(PasswordMethod.DELETE, Proto.field(1, checkedName(name)) + Proto.field(3, clientToken))
     }
+    fun listPreferences(parent: String, pageToken: ByteArray? = null): ByteArray = transport.invoke(PasswordMethod.LIST_PREFERENCES,
+        Proto.field(1, checkedParent(parent)) + (pageToken?.let { Proto.field(4, it) } ?: byteArrayOf()))
+    fun createPreference(parent: String, entity: ByteArray, clientToken: ByteArray = byteArrayOf()): ByteArray =
+        transport.invoke(PasswordMethod.CREATE_PREFERENCE,
+            Proto.field(1, checkedParent(parent)) + Proto.field(2, entity) + Proto.field(4, clientToken))
+    fun updatePreference(entity: ByteArray, clientToken: ByteArray = byteArrayOf()): ByteArray =
+        transport.invoke(PasswordMethod.UPDATE_PREFERENCE, Proto.field(1, checkedPreferenceName(Proto.decode(entity).string(1))) +
+            Proto.field(2, entity) + Proto.field(4, clientToken))
     override fun toString(): String = "PasswordApi[redacted]"
 
     companion object {
@@ -125,6 +133,13 @@ class PasswordApi(private val transport: PasswordTransport) {
             if (split < 0 || value.length > 4096 || value.any { it.isISOControl() }) throw ProtocolException()
             checkedParent(value.substring(0, split))
             if (value.substring(split + 11).isEmpty() || '/' in value.substring(split + 11)) throw ProtocolException()
+            return value
+        }
+        fun checkedPreferenceName(value: String): String {
+            if (value.length > 4096 || value.any { it.isISOControl() }) throw ProtocolException()
+            val parts = value.split('/')
+            if (parts.size != 6 || !Regex("[A-Za-z][A-Za-z0-9_]{0,63}").matches(parts[4]) || parts[5].isEmpty()) throw ProtocolException()
+            checkedParent(parts.take(4).joinToString("/"))
             return value
         }
     }
