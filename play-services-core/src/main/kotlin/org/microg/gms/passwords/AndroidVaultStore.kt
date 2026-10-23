@@ -121,7 +121,11 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
     private class Database(context: Context) : SQLiteOpenHelper(context,
         File(context.noBackupFilesDir, "password-vaults.db").absolutePath, null, 2) {
         override fun onConfigure(db: SQLiteDatabase) {
-            db.execSQL("PRAGMA secure_delete=ON")
+            // secure_delete returns the resulting value, even when assigning it. Newer Android
+            // SQLite bindings reject row-returning statements passed through execSQL.
+            db.rawQuery("PRAGMA secure_delete=ON", null).use { cursor ->
+                if (!cursor.moveToFirst() || cursor.getInt(0) != 1) throw IllegalStateException("Vault secure deletion unavailable")
+            }
             db.execSQL("PRAGMA synchronous=FULL")
         }
         override fun onCreate(db: SQLiteDatabase) {

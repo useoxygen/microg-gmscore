@@ -97,7 +97,14 @@ class PasswordVaultAndroidTest {
 
     @Test fun untrustedAppCannotDelegateAWebsiteOriginEvenWhenClaimingChromePackage() {
         assumeTrue(Build.VERSION.SDK_INT >= 34)
-        val signing = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo!!
+        // GmsCore deliberately reports Google's spoofed signature. Use the separately installed
+        // fixture package's real signing identity to model an untrusted third-party caller.
+        val fixture = InstrumentationRegistry.getInstrumentation().context
+        val signing = fixture.packageManager.getPackageInfo(fixture.packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo!!
+        val fingerprint = MessageDigest.getInstance("SHA-256").digest(signing.apkContentsSigners.single().toByteArray())
+            .joinToString("") { "%02x".format(it.toInt() and 255) }
+        assertFalse("Fixture unexpectedly has the trusted browser certificate",
+            fingerprint == "f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83")
         assertThrows(IllegalStateException::class.java) { PasswordCaller.from(CallingAppInfo(context.packageName, signing, "https://example.invalid")) }
         assertThrows(IllegalStateException::class.java) { PasswordCaller.from(CallingAppInfo("com.android.chrome", signing, "https://example.invalid")) }
         val caller = PasswordCaller.from(CallingAppInfo(context.packageName, signing))
