@@ -3,6 +3,10 @@ package org.microg.gms.passwords
 
 import android.accounts.AccountManager
 import android.os.Bundle
+import android.net.LocalServerSocket
+import android.system.Os
+import android.system.OsConstants
+import android.system.StructPollfd
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertTrue
@@ -10,10 +14,39 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.security.MessageDigest
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import org.json.JSONObject
 
 /** Explicit stages around an actual Google web-manager edit; no synthetic producer is substituted. */
 @RunWith(AndroidJUnit4::class)
 class PasswordOfficialClientAndroidTest {
+    @Test fun compareTheMaskedOfficialEditorWithTheNativePasswordEntirelyOnPhone() = withAccount { repository, _ ->
+        assumeTrue(arguments.getString("passwordOfficialReader") == "cyc653")
+        val original = repository.list(false).single { fixture(it.data) }.data
+        LocalServerSocket("cyc653-approved-password-compare").use { server ->
+            InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply { putBoolean("officialReaderReady", true) })
+            val poll = StructPollfd().apply { fd = server.fileDescriptor; events = OsConstants.POLLIN.toShort() }
+            assertTrue("Phone-only reader helper did not arrive", Os.poll(arrayOf(poll), 30_000) == 1)
+            server.accept().use { socket ->
+                assertTrue("Unexpected reader peer", socket.peerCredentials.uid in setOf(0, 2000))
+                socket.soTimeout = 10_000
+                val packet = JSONObject().put("realm", original.realm).put("username", original.username)
+                    .put("password", original.password).toString().toByteArray(Charsets.UTF_8)
+                try {
+                    DataOutputStream(socket.outputStream).apply { writeInt(packet.size); write(packet); flush() }
+                } finally { packet.fill(0) }
+                val input = DataInputStream(socket.inputStream)
+                val ready = input.readBoolean(); val masked = input.readBoolean()
+                val present = input.readBoolean(); val matched = input.readBoolean()
+                InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+                    putString("officialHiddenEditor", "fixtureReady=$ready,passwordMasked=$masked,passwordPresent=$present,passwordValueMatched=$matched")
+                })
+                assertTrue("Official editor's hidden password did not match the native vault", ready && masked && present && matched)
+            }
+        }
+    }
+
     @Test fun verifyTheUnchangedOfficialClientCheckpointBeforeRetryingTheUi() = withAccount { repository, checkpoint ->
         val saved = checkpoint.locked { it.load() }
         val original = PasswordData.decode(saved.chromeLocalData.getValue("original"))
