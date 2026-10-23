@@ -1,0 +1,100 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package org.microg.gms.passwords
+
+import android.accounts.AccountManager
+import android.os.Bundle
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.security.MessageDigest
+
+/** Explicit stages around an actual Google web-manager edit; no synthetic producer is substituted. */
+@RunWith(AndroidJUnit4::class)
+class PasswordOfficialClientAndroidTest {
+    @Test fun checkpointTheSingleApprovedLoginBeforeTheOfficialClientEdit() = withAccount { repository, checkpoint ->
+        assertTrue("An earlier official-client checkpoint needs recovery", checkpoint.locked { it.load().chromeLocalData.isEmpty() })
+        val entries = repository.list(false)
+        val original = entries.single { fixture(it.data) }
+        assertTrue("This fixture expects an initially absent default note", original.data.defaultNote == null)
+        val unrelated = entries.filter { it.id != original.id }.fold(byteArrayOf()) { out, entry ->
+            out + Proto.field(1, Proto.field(1, entry.id) + Proto.field(2, entry.data.encode()))
+        }
+        checkpoint.locked { session -> session.save(VaultState(chromeLocalData = hashMapOf(
+            "original" to original.data.encode(), "chrome" to original.chromeBytes,
+            "marker" to marker().toByteArray(Charsets.UTF_8), "unrelated" to unrelated))) }
+    }
+
+    @Test fun decryptAndVerifyTheActualOfficialClientNoteWithoutRevealingThePassword() = withAccount { repository, checkpoint ->
+        val saved = checkpoint.locked { it.load() }
+        val original = PasswordData.decode(saved.chromeLocalData.getValue("original"))
+        assertTrue("Checkpoint marker does not match this producer run", Proto.utf8(saved.chromeLocalData.getValue("marker")) == marker())
+        val entries = repository.list(false)
+        val current = entries.single { fixture(it.data) && it.id == original.tag() }
+        assertUnrelated(saved, entries, original.tag())
+        assertTrue("Official note did not decrypt to the expected value", current.data.defaultNote?.value == marker())
+        assertTrue("Official client changed credential identity or value", current.data.tag() == original.tag() &&
+            current.data.password == original.password && current.data.createdWindowsMicros == original.createdWindowsMicros &&
+            current.data.displayName == original.displayName)
+        val named = original.notes.filter { it.name.isNotEmpty() }.associate { it.name to it.encode() }
+        val after = current.data.notes.filter { it.name.isNotEmpty() }.associate { it.name to it.encode() }
+        assertTrue("Official client changed named notes", sameMap(named, after))
+        checkpoint.locked { session -> val value = session.load()
+            value.chromeLocalData["observedOfficialPayload"] = current.data.encode(); session.save(value)
+        }
+        val state = repository.store.locked { it.load() }
+        val resource = Proto.decode(state.records.single { Proto.decode(it).string(2) == original.tag() })
+        InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
+            putString("officialClientReadback", "noteMatched=true,passwordUnchanged=true,identityUnchanged=true," +
+                "creationTimeUnchanged=true,namedNotesUnchanged=true,unrelatedUnchanged=true," +
+                "notesFieldPresent=${current.data.encodedNotes != null},encryptedBackupPresent=${resource.optional(10) != null}," +
+                "encryptionType=${Proto.decode(Proto.decode(state.metadata!!).one(3)).integer(2)}")
+        })
+    }
+
+    @Test fun restoreTheOriginalPayloadAfterTheVerifiedOfficialClientEdit() = withAccount { repository, checkpoint ->
+        val saved = checkpoint.locked { it.load() }
+        val original = PasswordData.decode(saved.chromeLocalData.getValue("original"))
+        assertTrue("Restore input is outside the approved fixture", fixture(original))
+        val observed = saved.chromeLocalData["observedOfficialPayload"] ?: error("Official producer readback must be verified before restoration")
+        assertUnrelated(saved, repository.list(false), original.tag())
+        val baseline = baseline(saved)
+        SyntheticMetadataRestore.restore(context, repository, checkpoint,
+            officialClientExpected = observed, unrelatedBaseline = baseline,
+            originalChromeLocalData = Proto.decode(saved.chromeLocalData.getValue("chrome")).optional(3))
+        val entries = repository.list(false)
+        assertTrue("Exact official-client fixture restoration is unverified", same(original.encode(), entries.single { it.id == original.tag() }.data.encode()))
+        assertTrue("Unrelated data changed during restoration", sameMap(baseline, entries.filter { it.id != original.tag() }.associate { it.id to it.data.encode() }))
+    }
+
+    private fun withAccount(action: (PasswordRepository, AndroidVaultStore) -> Unit) {
+        assumeTrue(arguments.getString("passwordLiveOfficial") == "cyc653")
+        assumeTrue(arguments.getString("passwordLiveMutations") == "cyc651-synthetic-only")
+        val selected = arguments.getString("passwordLiveAccount")
+        assumeTrue(!selected.isNullOrBlank())
+        val account = AccountManager.get(context).getAccountsByType("com.google").single { it.name == selected }
+        val repository = PasswordRepository(context, account)
+        assertTrue("Refusing a preexisting mutation journal", repository.store.locked { it.load().mutations.isEmpty() && it.load().preferenceMutations.isEmpty() })
+        val checkpoint = AndroidVaultStore(context, "password-fixture-official-client/" + account.name)
+        val enabled = repository.enabled
+        try { repository.setEnabled(true); repository.refresh(); action(repository, checkpoint) }
+        finally { if (!enabled) repository.setEnabled(false) }
+    }
+    private fun baseline(state: VaultState) = Proto.decode(state.chromeLocalData.getValue("unrelated")).bytes(1).associate {
+        val pair = Proto.decode(it); pair.string(1) to pair.one(2)
+    }
+    private fun assertUnrelated(state: VaultState, entries: List<PasswordView>, tag: String) {
+        assertTrue("An unrelated credential changed", sameMap(baseline(state), entries.filter { it.id != tag }.associate { it.id to it.data.encode() }))
+    }
+    private fun marker() = arguments.getString("passwordOfficialMarker")?.takeIf {
+        Regex("cyc654-note-official-[A-Za-z0-9-]{1,80}").matches(it)
+    } ?: error("Missing synthetic producer marker")
+    private fun fixture(data: PasswordData) = data.realm == "https://cyc651.example.invalid/" &&
+        data.username == "cyc651-synthetic-user" && !data.blocked && data.password.isNotEmpty()
+    private fun same(a: ByteArray, b: ByteArray) = MessageDigest.isEqual(a, b)
+    private fun sameMap(a: Map<String, ByteArray>, b: Map<String, ByteArray>) = a.keys == b.keys && a.all { (key, value) -> same(value, b.getValue(key)) }
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val arguments get() = InstrumentationRegistry.getArguments()
+}

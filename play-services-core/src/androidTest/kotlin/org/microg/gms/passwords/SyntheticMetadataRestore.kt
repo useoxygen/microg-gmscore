@@ -14,12 +14,20 @@ import java.security.MessageDigest
 /** Synthetic-only cleanup. A cloud update may retain an omitted encrypted notes backup. */
 internal object SyntheticMetadataRestore {
     fun restore(context: Context, repository: PasswordRepository, checkpoint: AndroidVaultStore,
-        chromeWrapper: Boolean = false, passwordUpdate: Boolean = false) {
+        chromeWrapper: Boolean = false, passwordUpdate: Boolean = false,
+        officialClientExpected: ByteArray? = null, unrelatedBaseline: Map<String, ByteArray>? = null,
+        originalChromeLocalData: ByteArray? = null) {
         val saved = checkpoint.locked { it.load() }
         val savedOriginal = saved.chromeLocalData["original"] ?: error("No encrypted restore checkpoint")
         val raw = if (chromeWrapper) Proto.decode(savedOriginal).one(1) else savedOriginal
         val original = PasswordData.decode(raw)
         assertTrue("Restore input is outside the approved fixture", fixture(original))
+        fun assertEdit(changed: PasswordData) {
+            if (officialClientExpected == null) assertOwnEdit(original, changed, passwordUpdate)
+            else assertTrue("Official producer payload changed after verification; checkpoint retained", fixture(changed) &&
+                changed.tag() == original.tag() && changed.password == original.password &&
+                (MessageDigest.isEqual(changed.encode(), officialClientExpected) || MessageDigest.isEqual(changed.encode(), raw)))
+        }
         val tag = original.tag()
         val auth = AuthManager(context, repository.account.name, Constants.GMS_PACKAGE_NAME,
             "oauth2:https://www.googleapis.com/auth/login_manager").apply {
@@ -40,12 +48,16 @@ internal object SyntheticMetadataRestore {
             val data = current?.let { PasswordResourceCodec.read(it, keys) }
             val resuming = saved.chromeLocalData["recreate"] != null
             assertTrue("Unexpected remote deletion; checkpoint retained", data != null || resuming)
-            data?.let { assertOwnEdit(original, it, passwordUpdate) }
+            data?.let(::assertEdit)
+            val unrelated = remote.records.filter { Proto.decode(it).string(2) != tag }
+                .associate { Proto.decode(it).string(2) to PasswordResourceCodec.read(it, keys).encode() }
+            if (unrelatedBaseline != null) assertTrue("Unrelated data changed before restoration", unrelatedBaseline.keys == unrelated.keys &&
+                unrelatedBaseline.all { (id, bytes) -> MessageDigest.isEqual(bytes, unrelated.getValue(id)) })
             val state = repository.store.locked { it.load() }
-            val local = if (chromeWrapper) Proto.decode(savedOriginal).optional(3) else state.chromeLocalData[tag]
+            val local = originalChromeLocalData ?: if (chromeWrapper) Proto.decode(savedOriginal).optional(3) else state.chromeLocalData[tag]
             assertTrue("Unrelated journal cannot be resolved by a fixture", state.preferenceMutations.isEmpty() &&
                 state.mutations.all { it.tag == tag && (it.kind == MutationKind.UPDATE || resuming) })
-            state.mutations.mapNotNull { it.desired }.forEach { assertOwnEdit(original, PasswordResourceCodec.read(it, keys), passwordUpdate) }
+            state.mutations.mapNotNull { it.desired }.forEach { assertEdit(PasswordResourceCodec.read(it, keys)) }
             // Only structural booleans leave the phone. No plaintext, hashes of passwords or account IDs.
             InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
                 putString("passwordFixtureRestoreShape", "mainOriginal=${current?.let { entity ->
@@ -107,8 +119,6 @@ internal object SyntheticMetadataRestore {
             assertTrue("Exact synthetic restoration is unverified; checkpoint retained",
                 receipt.conflicts == 0 && receipt.indeterminate == 0 && MessageDigest.isEqual(raw, restored.data.encode()) &&
                     repository.store.locked { it.load().mutations.isEmpty() })
-            val unrelated = remote.records.filter { Proto.decode(it).string(2) != tag }
-                .associate { Proto.decode(it).string(2) to PasswordResourceCodec.read(it, keys).encode() }
             val after = repository.list(false).filter { it.id != tag }.associate { it.id to it.data.encode() }
             assertTrue("Unrelated data changed", unrelated.keys == after.keys &&
                 unrelated.all { (id, bytes) -> MessageDigest.isEqual(bytes, after.getValue(id)) })
