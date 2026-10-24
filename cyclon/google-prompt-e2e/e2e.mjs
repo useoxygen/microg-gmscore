@@ -12,7 +12,7 @@ const deny = flags.includes('--deny');
 const locked = flags.includes('--locked');
 const signin = flags.includes('--signin');
 // Gms2FA events that end the route before the notification is shown.
-const FAILURES = 'pref_off|not_registered|malformed|already_active|account_not_matched|fetch_failed|not_showable|notifications_blocked|dispatch_dropped';
+const FAILURES = 'expired|pref_off|not_registered|malformed|already_active|account_not_matched|fetch_failed|not_showable|notifications_blocked|dispatch_dropped';
 
 const t0 = Date.now();
 const report = { serial, deny, locked, signin, steps: [], ok: false };
