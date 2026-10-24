@@ -2,12 +2,17 @@
 package org.microg.gms.passwords
 
 import android.accounts.AccountManager
+import android.app.AppOpsManager
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
 import android.net.wifi.SupplicantState
 import android.os.Process
+import android.os.Build
+import android.provider.Settings
 
 class PasswordWifiUnavailableException : Exception("Privileged Wi-Fi sync unavailable")
 
@@ -15,6 +20,7 @@ class PasswordWifiUnavailableException : Exception("Privileged Wi-Fi sync unavai
 class PasswordWifiSync(context: Context, private val repository: PasswordRepository, private val expectedUserId: String? = null) {
     private val context = context.applicationContext
     fun available(): Boolean = AndroidPasswordWifiPlatform.available(context)
+    internal fun access(): PasswordWifiAccess = AndroidPasswordWifiPlatform.access(context)
     fun status(): PasswordWifiState = repository.store.locked { session -> verify(); PasswordWifiState.decode(session.load().wifiSync) }
     fun setEnabled(value: Boolean) {
         verify()
@@ -74,7 +80,19 @@ internal class AndroidPasswordWifiPlatform(context: Context, private val verifyA
     private val context = context.applicationContext
     private val wifi = this.context.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: throw PasswordWifiUnavailableException()
     override val uid: Int get() = Process.myUid()
-    private fun admit() { verifyAccount(); if (!available(context)) throw PasswordWifiUnavailableException() }
+    private fun admit() {
+        verifyAccount()
+        if (!available(context)) throw PasswordWifiUnavailableException()
+        if (!granted(context, "android.permission.NETWORK_SETTINGS")) {
+            // On pre-Baklava, the non-recording app-op check is only an early rejection.
+            // Note the actual location/scan access before and after the native boundary too.
+            val ops = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: throw PasswordWifiUnavailableException()
+            @Suppress("DEPRECATION")
+            if (ops.noteOpNoThrow(AppOpsManager.OPSTR_FINE_LOCATION, uid, context.packageName) != AppOpsManager.MODE_ALLOWED ||
+                ops.noteOpNoThrow(WIFI_SCAN_OP, uid, context.packageName) != AppOpsManager.MODE_ALLOWED) throw PasswordWifiUnavailableException()
+        }
+        verifyAccount()
+    }
     @Suppress("DEPRECATION", "UNCHECKED_CAST")
     private fun configurations(): List<WifiConfiguration> {
         admit()
@@ -175,7 +193,29 @@ internal class AndroidPasswordWifiPlatform(context: Context, private val verifyA
         catch (_: ReflectiveOperationException) { throw PasswordWifiUnavailableException() }
     }
     companion object {
-        fun available(context: Context): Boolean = context.checkSelfPermission("android.permission.READ_WIFI_CREDENTIAL") == PackageManager.PERMISSION_GRANTED &&
-            context.checkSelfPermission("android.permission.NETWORK_SETTINGS") == PackageManager.PERMISSION_GRANTED
+        // Framework OPSTR_WIFI_SCAN is hidden; this is its exact Android app-op name.
+        private const val WIFI_SCAN_OP = "android:wifi_scan"
+        fun available(context: Context): Boolean = access(context) == PasswordWifiAccess.AVAILABLE
+        internal fun access(context: Context): PasswordWifiAccess = try {
+            val ops = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+            val location = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            val settings = granted(context, "android.permission.NETWORK_SETTINGS")
+            val enabled = if (settings) true else if (Build.VERSION.SDK_INT >= 28) location?.isLocationEnabled == true
+                else Settings.Secure.getInt(context.contentResolver, Settings.Secure.LOCATION_MODE, Settings.Secure.LOCATION_MODE_OFF) != Settings.Secure.LOCATION_MODE_OFF
+            fun allowed(op: String): Boolean {
+                if (settings) return true
+                if (ops == null) return false
+                @Suppress("DEPRECATION")
+                val mode = if (Build.VERSION.SDK_INT >= 29) ops.unsafeCheckOpNoThrow(op, Process.myUid(), context.packageName)
+                    else ops.checkOpNoThrow(op, Process.myUid(), context.packageName)
+                return mode == AppOpsManager.MODE_ALLOWED
+            }
+            PasswordWifiAccessPolicy.evaluate(Build.VERSION.SDK_INT, context.applicationInfo.targetSdkVersion,
+                context.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0,
+                granted(context, "android.permission.READ_WIFI_CREDENTIAL"), granted(context, "android.permission.ACCESS_WIFI_STATE"),
+                granted(context, "android.permission.CHANGE_WIFI_STATE"), settings, granted(context, "android.permission.ACCESS_FINE_LOCATION"),
+                enabled, allowed(AppOpsManager.OPSTR_FINE_LOCATION), allowed(WIFI_SCAN_OP))
+        } catch (_: Exception) { PasswordWifiAccess.IMAGE_GRANT_REQUIRED }
+        private fun granted(context: Context, permission: String) = context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 }

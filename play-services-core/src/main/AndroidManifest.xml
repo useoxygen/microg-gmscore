@@ -149,7 +149,6 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.READ_WIFI_CREDENTIAL" />
-    <uses-permission android:name="android.permission.NETWORK_SETTINGS" />
     <!-- Real RecoveryController snapshots require the matching privileged image grant. -->
     <uses-permission android:name="android.permission.RECOVER_KEYSTORE" />
     <uses-permission android:name="android.permission.INTERNET" />
