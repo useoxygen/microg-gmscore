@@ -64,22 +64,28 @@ class PasswordDialogProtectionTest {
                 View::class.java -> view
                 ActionMode::class.java -> mode
                 KeyEvent::class.java -> KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)
+                MotionEvent::class.java -> MotionEvent.obtain(0, 0, MotionEvent.ACTION_MOVE, 3f, 4f, 0)
                 WindowManager.LayoutParams::class.java -> WindowManager.LayoutParams()
                 AccessibilityEvent::class.java -> AccessibilityEvent.obtain()
                 SearchEvent::class.java -> SearchEvent::class.java.getConstructor(InputDevice::class.java)
                     .newInstance(*arrayOfNulls<Any>(1))
                 else -> if (type.isInterface) inertInterface(type) else error("Unmapped public callback argument: $type")
             } }.toTypedArray()
-            delivered.clear()
-            val result = method.invoke(guard, *arguments)
-            assertEquals(method.toString(), 1, delivered.size)
-            assertEquals(method, delivered.single().first)
-            assertEquals(arguments.toList(), delivered.single().second)
-            when (method.returnType) {
-                Boolean::class.javaPrimitiveType -> assertEquals(true, result)
-                View::class.java -> assertSame(view, result)
-                ActionMode::class.java -> assertSame(mode, result)
-                else -> assertNull(result)
+            try {
+                delivered.clear()
+                val result = method.invoke(guard, *arguments)
+                assertEquals(method.toString(), 1, delivered.size)
+                assertEquals(method, delivered.single().first)
+                assertEquals(arguments.toList(), delivered.single().second)
+                when (method.returnType) {
+                    Boolean::class.javaPrimitiveType -> assertEquals(true, result)
+                    View::class.java -> assertSame(view, result)
+                    ActionMode::class.java -> assertSame(mode, result)
+                    else -> assertNull(result)
+                }
+            } finally {
+                arguments.filterIsInstance<MotionEvent>().forEach { it.recycle() }
+                arguments.filterIsInstance<AccessibilityEvent>().forEach { it.recycle() }
             }
         }
     }

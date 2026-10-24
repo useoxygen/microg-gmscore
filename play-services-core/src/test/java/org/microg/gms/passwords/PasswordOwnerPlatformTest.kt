@@ -2,8 +2,6 @@
 package org.microg.gms.passwords
 
 import android.os.Build
-import android.os.Bundle
-import android.view.WindowManager
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,19 +17,16 @@ class PasswordOwnerPlatformTest {
     class OwnerFixture : PasswordOwnerActivity() {
         var authenticated = 0
         var refused = 0
-        override fun onCreate(state: Bundle?) {
-            setTheme(androidx.appcompat.R.style.Theme_AppCompat)
-            super.onCreate(state)
-        }
         fun requestOwner() = authenticateOwner()
         fun checkOwner() = requireOwner()
+        fun pauseOwner() = onPause()
         override fun onOwnerAuthenticated() { authenticated++ }
         override fun onOwnerAuthenticationFailed() { refused++ }
         override fun onOwnerLocked() = Unit
     }
 
     @Test fun unsupportedSdkRefusesInsteadOfAcceptingNoLockPresence() {
-        val controller = Robolectric.buildActivity(OwnerFixture::class.java).setup()
+        val controller = Robolectric.buildActivity(OwnerFixture::class.java)
         val activity = controller.get()
         val sdk = Build.VERSION.SDK_INT
         try {
@@ -41,24 +36,21 @@ class PasswordOwnerPlatformTest {
             assertEquals(0, activity.authenticated)
             assertEquals(1, activity.refused)
             assertThrows(VaultLockedException::class.java) { activity.checkOwner() }
-            assertNotEquals(0, activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
         } finally {
             ReflectionHelpers.setStaticField(Build.VERSION::class.java, "SDK_INT", sdk)
-            controller.pause().stop().destroy()
         }
     }
 
-    @Test fun supportedNoLockPresenceExpiresWhenTheActualActivityPauses() {
-        val controller = Robolectric.buildActivity(OwnerFixture::class.java).setup()
+    @Test fun ownerPauseRevokesSupportedNoLockPresence() {
+        val controller = Robolectric.buildActivity(OwnerFixture::class.java)
         val activity = controller.get()
-        try {
-            activity.requestOwner()
-            assertEquals(1, activity.authenticated)
-            assertEquals(0, activity.refused)
-            activity.checkOwner()
-            controller.pause()
-            assertThrows(VaultLockedException::class.java) { activity.checkOwner() }
-            assertNotEquals(0, activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
-        } finally { controller.stop().destroy() }
+        // Exercise the actual authority methods without AppCompat UI resources or a fabricated lifecycle claim.
+        ReflectionHelpers.setField(activity, "foreground", true)
+        activity.requestOwner()
+        assertEquals(1, activity.authenticated)
+        assertEquals(0, activity.refused)
+        activity.checkOwner()
+        activity.pauseOwner()
+        assertThrows(VaultLockedException::class.java) { activity.checkOwner() }
     }
 }

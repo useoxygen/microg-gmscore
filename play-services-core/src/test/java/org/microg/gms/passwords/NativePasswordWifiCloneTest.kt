@@ -46,8 +46,9 @@ class NativePasswordWifiCloneTest {
         assertEquals("\"public-after-password\"", updated.preSharedKey)
         assertEquals(2, metered.getInt(updated))
         assertTrue(updated.allowedKeyManagement.get(WifiConfiguration.KeyMgmt.WPA_PSK))
-        assertTrue(updated.allowedAuthAlgorithms.get(WifiConfiguration.AuthAlgorithm.OPEN))
-        assertFalse(updated.allowedAuthAlgorithms.get(WifiConfiguration.AuthAlgorithm.SHARED))
+        // PSK uses the framework's default auth algorithm; the explicit OPEN/SHARED bits are WEP-only.
+        assertTrue(updated.allowedAuthAlgorithms.isEmpty)
+        assertTrue(original.allowedAuthAlgorithms.get(WifiConfiguration.AuthAlgorithm.SHARED))
         assertTrue(updated.wepKeys.all { it == null })
         // Values outside the synchronized credential fields must survive the full native copy.
         assertEquals(41, updated.networkId)
