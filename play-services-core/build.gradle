@@ -242,6 +242,10 @@ android {
         jniLibs {
             useLegacyPackaging true
         }
+        // minSdk 33 would store dex uncompressed (+32 MB in the APK, image and OTA); keep the earlier packing.
+        dex {
+            useLegacyPackaging true
+        }
     }
 }
 
