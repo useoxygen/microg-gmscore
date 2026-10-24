@@ -4,11 +4,16 @@ package org.microg.gms.people
 
 import android.content.Context
 
-/** Imports may merge into sync-owned rows. Hold every contact mutation until explicit owner review. */
+/** Optional developer fixture control. Normal transfers retain Google's account upload behavior. */
 class ContactMigrationPrivacy(context: Context) {
     private val prefs = context.getSharedPreferences("contacts-migration-privacy", Context.MODE_PRIVATE)
-    val held: Boolean get() = prefs.getBoolean("uploadHold", false)
-    fun beginMigration() { check(prefs.edit().putBoolean("uploadHold", true).commit()) }
-    // Only the owner confirmation in ContactsSyncActivity calls this. Never auto-release on success/cancel.
+    var developerControlsEnabled: Boolean
+        get() = prefs.getBoolean("developerControlsEnabled", false)
+        set(value) { check(prefs.edit().putBoolean("developerControlsEnabled", value).remove("uploadHold").commit()) }
+    // Ignore old round1 holds unless the developer explicitly opts in to the new control.
+    val held: Boolean get() = developerControlsEnabled && prefs.getBoolean("uploadHold", false)
+    fun beginMigration() {
+        if (developerControlsEnabled) check(prefs.edit().putBoolean("uploadHold", true).commit())
+    }
     fun ownerResume() { check(prefs.edit().putBoolean("uploadHold", false).commit()) }
 }

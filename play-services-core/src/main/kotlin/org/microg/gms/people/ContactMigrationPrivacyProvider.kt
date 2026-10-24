@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.people
 
+import android.accounts.AccountManager
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
@@ -18,7 +19,12 @@ class ContactMigrationPrivacyProvider : ContentProvider() {
             "android.permission.NETWORK_SETUP_WIZARD", "Trusted setup caller required")
         val privacy = ContactMigrationPrivacy(requireNotNull(context))
         return when (method) {
-            "beginMigration" -> { privacy.beginMigration(); Bundle().apply { putBoolean("uploads_held", true) } }
+            "beginMigration" -> {
+                AccountManager.get(requireNotNull(context)).getAccountsByType("com.google").forEach {
+                    ContactSyncPreferences(requireNotNull(context), it).ensureDefaults()
+                }
+                privacy.beginMigration(); Bundle().apply { putBoolean("uploads_held", privacy.held); putBoolean("developer_controls", privacy.developerControlsEnabled) }
+            }
             "status" -> Bundle().apply { putBoolean("uploads_held", privacy.held) }
             else -> null
         }

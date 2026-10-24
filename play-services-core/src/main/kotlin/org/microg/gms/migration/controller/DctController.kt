@@ -24,7 +24,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** One ephemeral import cluster, shared only with authenticated setup/Switch clients. */
-internal class DctController(private val context: Context, val session: DctSession, private val serviceId: String = "quickStart", private val remote: Pair<String, Int>? = null) : Closeable {
+internal class DctController(private val context: Context, val session: DctSession, private val serviceId: String = "quickStart", private val remote: Pair<String, Int>? = null, private val supportedServices: Int = 2) : Closeable {
     interface Listener {
         fun advertising(status: Int) {}
         fun connected(peer: DeviceInfoResponse) {}
@@ -41,6 +41,8 @@ internal class DctController(private val context: Context, val session: DctSessi
     private var applicationListener: Listener? = null
     private var draining = false
     internal fun oneWay(type: String, bytes: ByteArray) {
+        if (isClosed) return
+        if (org.microg.gms.esim.EsimDctRouter.oneWay(this, type, bytes)) return
         var overflow = false
         synchronized(incomingLock) {
             if (stopped.get()) return
@@ -109,7 +111,7 @@ internal class DctController(private val context: Context, val session: DctSessi
                 override fun onReserved(psm: Int) {
                     android.util.Log.i("GmsDct", "Bluetooth IPv6 reservation ready")
                     if (stopped.get()) return
-                    try { advertiser = DctAdvertiser(context).also { it.start(session.sessionId, psm) { status ->
+                    try { advertiser = DctAdvertiser(context).also { it.start(session.sessionId, psm, supportedServices) { status ->
                         if (status != 0) fail(8000) else if (!stopped.get()) {
                             advertised = true; listeners.forEach { it.advertising(0) }
                         }
@@ -214,7 +216,8 @@ internal class DctController(private val context: Context, val session: DctSessi
             if (stopped.get()) { ready.completeExceptionally(DctFailure(8005)); return@post }
             try {
                 val serverControl = DctServerControl(Build.MODEL, Build.MANUFACTURER,
-                    { incoming -> applicationOwner.get(20, java.util.concurrent.TimeUnit.SECONDS).request(incoming) ?: throw DctFailure(8009) }, ::fail)
+                    { incoming -> org.microg.gms.esim.EsimDctRouter.incoming(this, incoming)
+                        ?: applicationOwner.get(20, java.util.concurrent.TimeUnit.SECONDS).request(incoming) ?: throw DctFailure(8009) }, ::fail)
                 val peerAddress = java.util.concurrent.atomic.AtomicReference<Inet6Address>()
                 val serverNetwork = java.util.concurrent.atomic.AtomicReference<Network>()
                 val next = DctHttpServer.pake(tls,
@@ -243,6 +246,7 @@ internal class DctController(private val context: Context, val session: DctSessi
     fun stopAdvertising() { main.post { advertiser?.close(); advertiser = null } }
     fun fail(status: Int) {
         if (!stopped.compareAndSet(false, true)) return
+        org.microg.gms.esim.EsimDctRouter.closed(this)
         android.util.Log.i("GmsDct", "Session closed status=$status")
         applicationOwner.completeExceptionally(DctFailure(status))
         synchronized(incomingLock) { buffered.clear(); bufferedBytes = 0; applicationListener = null; draining = false }

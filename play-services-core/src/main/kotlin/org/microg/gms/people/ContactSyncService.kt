@@ -28,6 +28,7 @@ class ContactSyncService : Service() {
             override fun onPerformSync(account: Account, extras: Bundle, authority: String,
                 provider: ContentProviderClient, result: SyncResult) {
                 val prefs = ContactSyncPreferences(this@ContactSyncService, account)
+                prefs.ensureDefaults()
                 if (prefs.mode == SyncMode.OFF) return
                 var usedToken: String? = null
                 try {

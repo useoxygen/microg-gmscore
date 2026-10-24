@@ -15,20 +15,28 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [35])
 class ImportedContactConsentTest {
-    @Test fun defaultIsLocalAndOwnerChoiceSurvivesFreshPreferences() {
+    @Test fun defaultMatchesGoogleAndIgnoresOldPrototypeGates() {
         val context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("contacts-sync", 0).edit().clear().commit()
         val account = Account("synthetic@example.invalid", "com.google")
         val prefs = ContactSyncPreferences(context, account)
-        assertFalse(prefs.uploadNewContacts)
+        assertTrue(prefs.uploadNewContacts)
         prefs.uploadNewContacts = true
         assertTrue(ContactSyncPreferences(context, account).uploadNewContacts)
         prefs.uploadNewContacts = false
-        assertFalse(ContactSyncPreferences(context, account).uploadNewContacts)
+        assertTrue(ContactSyncPreferences(context, account).uploadNewContacts)
+        assertEquals(org.microg.gms.people.sync.SyncMode.TWO_WAY, prefs.mode)
+        context.getSharedPreferences("contacts-migration-privacy", 0).edit().putBoolean("uploadHold", true).commit()
+        assertFalse(ContactMigrationPrivacy(context).held)
+        assertEquals(0L, prefs.adoptionFloor)
+        prefs.configure(org.microg.gms.people.sync.SyncMode.OFF, 0)
+        prefs.ensureDefaults()
+        assertEquals(org.microg.gms.people.sync.SyncMode.OFF, ContactSyncPreferences(context, account).mode)
     }
     @Test fun transferHoldSurvivesRestartAndCannotBeReleasedByTheProvider() {
         val context = RuntimeEnvironment.getApplication()
         val privacy = ContactMigrationPrivacy(context)
+        privacy.developerControlsEnabled = true
         privacy.beginMigration()
         assertTrue(ContactMigrationPrivacy(context).held)
         val provider = org.robolectric.Robolectric.buildContentProvider(ContactMigrationPrivacyProvider::class.java).create().get()
@@ -41,6 +49,9 @@ class ImportedContactConsentTest {
             api.update(org.microg.gms.people.sync.Person("people/synthetic", JSONObject()), setOf("names"), JSONObject())
         }
         privacy.ownerResume(); assertFalse(ContactMigrationPrivacy(context).held)
+        val prefs = ContactSyncPreferences(context, Account("synthetic@example.invalid", "com.google"))
+        prefs.uploadNewContacts = false; assertFalse(prefs.uploadNewContacts)
+        privacy.developerControlsEnabled = false; assertTrue(prefs.uploadNewContacts)
     }
     @Test fun providerCallRejectsUnprivilegedRemoteUid() {
         val provider = org.robolectric.Robolectric.buildContentProvider(ContactMigrationPrivacyProvider::class.java).create().get()
