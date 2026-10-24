@@ -162,6 +162,7 @@ class ContactsSyncActivity : ComponentActivity() {
                                     "authorization" -> R.string.contacts_sync_authorization
                                     "network" -> R.string.contacts_sync_network
                                     "local" -> R.string.contacts_sync_local
+                                    "needs_review" -> R.string.contacts_sync_needs_review
                                     "needs_update" -> R.string.contacts_sync_needs_update
                                     "two_way_unavailable" -> R.string.contacts_sync_two_way_unavailable
                                     else -> R.string.contacts_sync_ready

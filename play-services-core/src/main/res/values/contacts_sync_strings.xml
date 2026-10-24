@@ -39,6 +39,7 @@
     <string name="contacts_sync_refresh">Sync now</string>
     <string name="contacts_sync_reconnect">Reconnect</string>
     <string name="contacts_sync_check_private">Check private service access</string>
+    <string name="contacts_sync_needs_review">Existing Google contacts on this phone have changes that need review. Import is paused to preserve those edits.</string>
     <string name="contacts_sync_needs_update">Contacts sync needs a Cyclon Services update. Google rejected the Contacts client request. Automatic requests are paused; update Cyclon Services or use Refresh to try again.</string>
     <string name="contacts_sync_two_way_unavailable">Two-way contacts sync is coming soon. Choose Download only to import Google contacts without uploading changes.</string>
 </resources>

@@ -155,6 +155,16 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
             "birthday", "event" -> listOf("type", "calendarDay", "value")
             else -> emptyList()
         }
+        // These are derived readback annotations, not writable contact data.
+        // Keep this per field: email.displayName and address.formatted are editable.
+        private fun generatedKeys(kind: String): Set<String> = setOf("formattedType", "canonicalForm") + when (kind) {
+            "name" -> setOf("displayNameLastFirst", "formattedName", "shortDisplayName", "displayNameSource")
+            "phone" -> setOf("canonicalizedForm", "uri")
+            "organization" -> setOf("formattedStringType")
+            "relation" -> setOf("canonicalValue")
+            "im" -> setOf("formattedProtocol")
+            else -> emptySet()
+        }
         private fun field(value: JSONObject, kind: String): JSONObject {
             val output = JSONObject()
             val aliases = when (kind) {
@@ -221,7 +231,7 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                                 val mapped = field(value, kind)
                                 // Unknown writable attributes cannot be discarded by a
                                 // whole-array replacement. Hold that field for review.
-                                val known = mappedKeys(kind) + setOf("metadata", "formattedType", "canonicalForm")
+                                val known = mappedKeys(kind) + generatedKeys(kind) + "metadata"
                                 if (value.keys().asSequence().any { it !in known }) unsupported.put(target)
                                 if (kind == "photo") {
                                     val revision = ContactPhotos.hash(canonical(mapped).toByteArray(Charsets.UTF_8))
@@ -289,7 +299,10 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
             }.getOrDefault(false)
             val fingerprintMismatch = reply.status in setOf(400, 409, 412) && reply.body.contains("FingerprintMismatch")
             if (fingerprintMismatch) throw ApiException(412, reason = "FINGERPRINT_MISMATCH", code = "FAILED_PRECONDITION")
-            if (!expired && (reply.status == 426 || reply.status == 400 && status == "INVALID_ARGUMENT")) throw PeopleClientUpdateRequired()
+            // A read's INVALID_ARGUMENT can reject the fixed client context.
+            // Mutation validation is an ordinary definite rejection: let the
+            // engine clear its journal and preserve the edit as a conflict.
+            if (!expired && (reply.status == 426 || read && reply.status == 400 && status == "INVALID_ARGUMENT")) throw PeopleClientUpdateRequired()
             throw ApiException(reply.status, expired, reply.retryAfterSeconds, reason, status)
         }
         val result = try { JSONObject(reply.body) } catch (error: Exception) { throw IOException("Invalid private contacts response") }
@@ -387,7 +400,7 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                         else -> emptyMap()
                     }
                     for (key in value.keys().asSequence().toList()) {
-                        if (key == "metadata" || key in setOf("displayNameLastFirst", "formattedType", "canonicalForm") || kind == "name" && key == "displayName") continue
+                        if (key == "metadata" || key in generatedKeys(kind) || kind == "name" && key == "displayName") continue
                         if (key == "date") mapped.put("calendarDay", JSONObject(value.getJSONObject(key).toString()))
                         else mapped.put(aliases[key] ?: key, value.get(key))
                     }

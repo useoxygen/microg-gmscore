@@ -53,6 +53,7 @@ class PrivatePeopleMutationTest {
     private inner class Server : HttpTransport {
         var raw: JSONObject? = fixture(); var writes = 0; var drop = false; var conflict = false; var marker = true
         var beforeWrite: (() -> Unit)? = null
+        var rejection: HttpReply? = null
         override fun request(method: String, url: String, body: String?): HttpReply {
             val path = URI(url).path; val params = query(url)
             if (method == "GET" && path.endsWith("/sync")) return HttpReply(200,
@@ -66,6 +67,7 @@ class PrivatePeopleMutationTest {
             }
             beforeWrite?.invoke(); writes++
             assertFalse(params.keys.any { it.startsWith("context.") } && method in setOf("POST", "PUT"))
+            rejection?.let { return it }
             if (conflict) return HttpReply(200, """{"personResponse":{"responseStatus":{"code":9,"message":"FingerprintMismatch secret"}}}""")
             when (method) {
                 "PUT" -> {
@@ -206,4 +208,51 @@ class PrivatePeopleMutationTest {
             assertFalse(error.toString().contains("secret"))
         }
     }
+    @Test fun generatedReadbackFieldsDoNotBlockEditsOrEnterMutationBodies() {
+        val generated = mapOf(
+            "name" to setOf("displayNameLastFirst", "shortDisplayName", "formattedName", "displayNameSource"),
+            "phone" to setOf("canonicalizedForm", "uri", "formattedType"),
+            "email" to setOf("formattedType"), "address" to setOf("formattedType"),
+            "organization" to setOf("formattedStringType"), "relation" to setOf("canonicalValue", "formattedType"),
+            "im" to setOf("formattedProtocol", "formattedType"), "website" to setOf("formattedType"),
+            "event" to setOf("formattedType"), "sipAddress" to setOf("formattedType"))
+        val targets = mapOf("name" to "names", "phone" to "phoneNumbers", "email" to "emailAddresses", "address" to "addresses",
+            "organization" to "organizations", "relation" to "relations", "im" to "imClients", "website" to "urls", "event" to "events", "sipAddress" to "sipAddresses")
+        val raw = fixture()
+        for ((kind, keys) in generated) for (key in keys) raw.getJSONArray(kind).getJSONObject(0).put(key,
+            if (key == "displayNameSource") JSONObject().put("synthetic", true) else "Synthetic generated")
+        val person = PrivatePeopleApi.normalize(raw).single()
+        val payload = JSONObject().apply { for (target in targets.values) put(target, person.json.getJSONArray(target)) }
+        // Display names on email and free-form postal addresses remain writable.
+        payload.getJSONArray("emailAddresses").getJSONObject(0).put("displayName", "Edited mail label")
+        payload.getJSONArray("addresses").getJSONObject(0).put("formattedValue", "Edited postal address")
+        var writes = 0
+        val api = PrivatePeopleApi(HttpTransport { _, _, body ->
+            writes++; val input = JSONObject(body!!)
+            for ((kind, keys) in generated) for (key in keys) assertFalse("$kind.$key", input.getJSONArray(kind).getJSONObject(0).has(key))
+            assertEquals("Edited mail label", input.getJSONArray("email").getJSONObject(0).getString("displayName"))
+            assertEquals("Edited postal address", input.getJSONArray("address").getJSONObject(0).getString("formatted"))
+            HttpReply(200, receipt(raw))
+        }, context, { true })
+        api.update(person, targets.values.toSet(), api.prepareUpdate(person, targets.values.toSet(), payload))
+        assertEquals(1, writes)
+        raw.getJSONArray("phone").getJSONObject(0).put("unknownWritableAttribute", "must not be lost")
+        assertThrows(UnsupportedContactEdit::class.java) {
+            api.prepareUpdate(PrivatePeopleApi.normalize(raw).single(), setOf("phoneNumbers"), payload)
+        }
+    }
+    @Test fun mutationValidationRejectionClearsJournalAndCorrectedContactCanSync() {
+        val server = Server(); val store = Store()
+        ContactsSync(server.api(), store) { SyncMode.DOWNLOAD }.sync(); store.token = "old"
+        store.edit("names", names("Rejected value").getJSONArray("names"))
+        server.rejection = HttpReply(400, """{"error":{"status":"INVALID_ARGUMENT","message":"Invalid contact field"}}""")
+        val report = ContactsSync(server.api(), store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, report.conflicts); assertEquals(0, report.uncertain)
+        assertNull(store.row!!.pending); assertTrue(store.row!!.dirty); assertEquals("old", store.token)
+        server.rejection = null
+        store.edit("names", names("Corrected value").getJSONArray("names"))
+        assertEquals(1, ContactsSync(server.api(), store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(2, server.writes); assertNull(store.row!!.pending); assertFalse(store.row!!.dirty); assertEquals("next", store.token)
+    }
+
 }

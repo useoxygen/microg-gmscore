@@ -29,6 +29,43 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     private val privateBackend get() = backendOwner == PrivatePeopleApi.OWNER
     private var stagedCheckpoint: String? = null
     fun commitCheckpoint() { stagedCheckpoint?.let { saveCheckpoint(it) }; stagedCheckpoint = null }
+    /** One-time replacement of hypothetical public-v1 imports, never native edits. */
+    fun preparePrivateSync(): Boolean {
+        check(privateBackend && prefs.mode != SyncMode.OFF)
+        if (prefs.privateLegacyCleanupComplete) return true
+        val tables = listOf(RawContacts.CONTENT_URI, ContactsContract.Groups.CONTENT_URI)
+        val legacy = "$scope AND ${RawContacts.SYNC4}=?"
+        val legacyArgs = args + OWNER
+        val ids = tables.map { uri ->
+            provider.query(uri, arrayOf("_id", "dirty", "sync3"), legacy, legacyArgs, null)!!.use { cursor ->
+                val rows = mutableListOf<Long>()
+                while (cursor.moveToNext()) {
+                    if (cursor.getLong(1) != 0L || !cursor.isNull(2)) return false
+                    rows.add(cursor.getLong(0))
+                }
+                rows
+            }
+        }
+        val operations = arrayListOf<ContentProviderOperation>()
+        // Recheck all legacy rows inside the same transaction as deletion. A
+        // concurrent edit/journal or changed row count rolls the entire cleanup back.
+        for (uri in tables) operations.add(ContentProviderOperation.newAssertQuery(syncUri(uri))
+            .withSelection("$legacy AND (dirty!=0 OR sync3 IS NOT NULL)", legacyArgs).withExpectedCount(0).build())
+        operations.add(ContentProviderOperation.newDelete(syncUri(tables[0]))
+            .withSelection(legacy, legacyArgs).withExpectedCount(ids[0].size).build())
+        if (ids[1].isNotEmpty()) operations.add(ContentProviderOperation.newAssertQuery(Data.CONTENT_URI)
+            .withSelection("${Data.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID} IN (${ids[1].joinToString(",")})",
+                arrayOf(GroupMembership.CONTENT_ITEM_TYPE)).withExpectedCount(0).build())
+        operations.add(ContentProviderOperation.newDelete(syncUri(tables[1]))
+            .withSelection(legacy, legacyArgs).withExpectedCount(ids[1].size).build())
+        // Reset even an existing private cursor: replacement must begin with a
+        // full snapshot. The reset and row removal must survive a crash together.
+        operations.add(ContactsContract.SyncState.newSetOperation(account, "{}".toByteArray(Charsets.UTF_8)))
+        try { provider.applyBatch(operations) }
+        catch (error: android.content.OperationApplicationException) { return false }
+        prefs.completePrivateLegacyCleanup()
+        return true
+    }
     fun configureMode() {
         check(prefs.mode != SyncMode.OFF)
         val readOnly = if (prefs.mode == SyncMode.TWO_WAY) 0 else 1

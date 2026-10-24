@@ -187,8 +187,11 @@ never blind create replay. Fingerprint conflicts are durably held. Contact/group
 creation markers are schema-backed/unit-tested but not live-qualified; a missing
 marker stays uncertain. A transformed photo after a lost reply also stays uncertain.
 
-Private ownership and adoption floors preserve public/unowned/device/app rows.
-Partial reads hold removals/cursors; provider writes are version-checked.
+Private ownership and adoption floors preserve unowned/device/app rows. The first
+private sync removes only clean hypothetical public-v1 imports before a full read;
+dirty/pending legacy rows pause import for review. Cleanup is atomic and protects
+concurrent edits and group members outside its scope. Partial reads hold removals/
+cursors; provider writes are version-checked.
 Production stages both independent cursors until group/contact/photo work succeeds.
 Merged-source updates and unknown attributes in edited arrays are held to avoid
 loss. See [the protocol and safety details](../people-sync/README.md).
@@ -202,6 +205,14 @@ editing/multiple accounts, lifecycle, reboot/renewal or legacy migration. CYC-72
 photo writes or contact/photo deletion after a fresh read.
 
 ## Validation receipt
+
+Review round 2: 178 engine tests and 11 focused Android host tests passed. Three
+engine regressions fail before and pass after the generated-field and mutation-
+validation fixes; four host tests cover clean legacy replacement and dirty/pending/
+concurrent-edit/group-member refusal. The tests inspect only synthetic rows. No
+new live API calls, phones or native provider execution were used. Combined CI
+Debug app/provider fixture assembly and both Debug lint targets passed; receipt:
+`/tmp/cyc721-r2-final.log`.
 
 Private two-way continuation (`1c610d4fe`, `8d4185b49`): 175 engine tests and
 7 focused ContactsPrivateProbeTest Android host tests passed, zero failures/errors/
