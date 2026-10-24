@@ -16,7 +16,9 @@ android {
     defaultConfig {
         versionName vendingAppVersionName
         versionCode vendingAppVersionCode
-        minSdkVersion androidMinSdk
+        // Cyclon ships these APKs only on its own Android 17 images (Android Switch itself needs 12+); the shared
+        // library modules keep upstream's androidMinSdk.
+        minSdkVersion 33
         targetSdkVersion androidTargetSdk
 
         multiDexEnabled true
@@ -88,6 +90,7 @@ android {
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.16.1'
     implementation project(':fake-signature')
     implementation project(':play-services-auth')
     implementation project(':play-services-base-core')

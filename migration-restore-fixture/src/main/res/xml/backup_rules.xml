@@ -1,0 +1,1 @@
+<full-backup-content><include domain="file" path="fixture.bin" /><include domain="sharedpref" path="fixture.xml" /></full-backup-content>

@@ -16,6 +16,11 @@ configurations {
 }
 
 dependencies {
+    implementation project(":migration-ukey2")
+    compileOnly project(":migration-framework-stubs")
+    // Stubs resolve hidden APIs only at compile time; never package them.
+    testCompileOnly project(":migration-framework-stubs")
+    implementation 'com.google.zxing:core:3.5.2'
     androidTestImplementation 'androidx.test:runner:1.7.0'
     androidTestImplementation 'androidx.test.ext:junit:1.3.0'
     androidTestImplementation 'androidx.test:core:1.7.0'
@@ -152,7 +157,9 @@ android {
         versionName version
         versionCode appVersionCode
 
-        minSdkVersion androidMinSdk
+        // Cyclon ships these APKs only on its own Android 17 images (Android Switch itself needs 12+); the shared
+        // library modules keep upstream's androidMinSdk.
+        minSdkVersion 33
         targetSdkVersion androidTargetSdk
 
         multiDexEnabled true

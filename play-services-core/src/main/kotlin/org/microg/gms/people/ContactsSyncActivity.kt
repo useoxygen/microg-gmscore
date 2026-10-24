@@ -77,12 +77,25 @@ class ContactsSyncActivity : ComponentActivity() {
         }
         setContent {
             CyclonMaterialTheme {
+                var resumeUploads by remember { mutableStateOf(false) }
                 var confirmation by remember { mutableStateOf<Account?>(null) }
+                var newContactsConfirmation by remember { mutableStateOf<Account?>(null) }
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineSmall)
                         Text(stringResource(R.string.contacts_sync_description))
+                        if (com.google.android.gms.BuildConfig.DEBUG) Row {
+                            val privacy = ContactMigrationPrivacy(this@ContactsSyncActivity)
+                            Checkbox(checked = privacy.developerControlsEnabled, onCheckedChange = {
+                                privacy.developerControlsEnabled = it; revision++
+                            })
+                            Text(stringResource(R.string.contacts_sync_developer_controls), modifier = Modifier.padding(top = 12.dp))
+                        }
+                        if (ContactMigrationPrivacy(this@ContactsSyncActivity).held) {
+                            Text(stringResource(R.string.contacts_sync_migration_held))
+                            CyclonOutlinedButton(onClick = { resumeUploads = true }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) }
+                        }
                         failure?.let { reason ->
                             Text(stringResource(when (reason) {
                                 ActivationFailure.PERMISSION -> R.string.contacts_sync_enable_permission
@@ -127,6 +140,15 @@ class ContactsSyncActivity : ComponentActivity() {
                                     }), modifier = Modifier.padding(top = 12.dp))
                                 }
                             }
+                            if (prefs.mode == SyncMode.TWO_WAY && ContactMigrationPrivacy(this@ContactsSyncActivity).developerControlsEnabled) {
+                                Row {
+                                    Checkbox(checked = prefs.uploadNewContacts, enabled = !busy, onCheckedChange = { enabled ->
+                                        if (enabled) newContactsConfirmation = account
+                                        else { prefs.uploadNewContacts = false; revision++ }
+                                    })
+                                    Text(stringResource(R.string.contacts_sync_upload_new), modifier = Modifier.padding(top = 12.dp))
+                                }
+                            }
                             if (prefs.mode != SyncMode.OFF) {
                                 Text(stringResource(when (prefs.status) {
                                     "success" -> R.string.contacts_sync_success
@@ -147,6 +169,32 @@ class ContactsSyncActivity : ComponentActivity() {
                             HorizontalDivider()
                         }
                     }
+                }
+                if (resumeUploads) AlertDialog(onDismissRequest = { resumeUploads = false },
+                    title = { Text(stringResource(R.string.contacts_sync_resume_uploads)) },
+                    text = { Text(stringResource(R.string.contacts_sync_resume_uploads_consent)) },
+                    confirmButton = { CyclonTextButton(onClick = {
+                        ContactMigrationPrivacy(this@ContactsSyncActivity).ownerResume()
+                        AccountManager.get(this@ContactsSyncActivity).getAccountsByType("com.google").forEach {
+                            ContactSyncPreferences(this@ContactsSyncActivity, it).refresh()
+                        }
+                        resumeUploads = false; revision++
+                    }) { Text(stringResource(R.string.contacts_sync_enable)) } },
+                    dismissButton = { CyclonTextButton(onClick = { resumeUploads = false }) { Text(stringResource(android.R.string.cancel)) } })
+                newContactsConfirmation?.let { account ->
+                    AlertDialog(onDismissRequest = { newContactsConfirmation = null },
+                        title = { Text(stringResource(R.string.contacts_sync_upload_new)) },
+                        text = { Text(stringResource(R.string.contacts_sync_upload_new_consent)) },
+                        confirmButton = { CyclonTextButton(onClick = {
+                            ContactSyncPreferences(this@ContactsSyncActivity, account).apply {
+                                uploadNewContacts = true
+                                refresh()
+                            }
+                            newContactsConfirmation = null; revision++
+                        }) { Text(stringResource(R.string.contacts_sync_enable)) } },
+                        dismissButton = { CyclonTextButton(onClick = { newContactsConfirmation = null }) {
+                            Text(stringResource(android.R.string.cancel))
+                        } })
                 }
                 confirmation?.let { account ->
                     AlertDialog(onDismissRequest = { confirmation = null },

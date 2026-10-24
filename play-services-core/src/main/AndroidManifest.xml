@@ -152,6 +152,8 @@
     <!-- Real RecoveryController snapshots require the matching privileged image grant. -->
     <uses-permission android:name="android.permission.RECOVER_KEYSTORE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
@@ -171,6 +173,7 @@
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
 
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
@@ -212,6 +215,21 @@
         androidx.compose.ui.tooling.data, androidx.compose.ui.tooling.preview, androidx.compose.ui.tooling,androidx.compose.material" />
 
     <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
+    <uses-permission android:name="android.permission.BACKUP" tools:ignore="ProtectedPermissions" />
+
+    <!-- Classic Nearby migration: public radio APIs; LOCAL_MAC_ADDRESS is needed
+         only for regular BLE advertisements to carry the real RFCOMM endpoint.
+         The image must allowlist this privileged permission; never use 02:00... . -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.LOCAL_MAC_ADDRESS" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
     <application
         android:name="org.microg.gms.common.ServicesApplication"
         android:allowBackup="true"
@@ -225,6 +243,10 @@
         android:multiArch="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.App">
+        <activity android:name="org.microg.gms.migration.android.AndroidD2dBootstrapActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD"
+            android:excludeFromRecents="true" />
+
 
         <library android:name="com.google.android.gms" />
 
@@ -468,6 +490,22 @@
         <!-- People -->
 
         <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <receiver android:name="org.microg.gms.people.ContactSyncAccountsReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <service android:name="org.microg.gms.esim.EsimTransferService" android:exported="true">
+            <intent-filter><action android:name="com.google.android.gms.esim.service.START" /><action android:name="com.google.android.gms.esim.provisioning.service.START" /></intent-filter>
+        </service>
+        <provider android:name="org.microg.gms.people.ContactMigrationPrivacyProvider"
+            android:authorities="org.microg.gms.migration.contacts" android:exported="true"
+            android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <activity-alias android:name="org.microg.gms.people.ContactsSyncSettings"
+            android:targetActivity="org.microg.gms.people.ContactsSyncActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
@@ -1636,7 +1674,6 @@
                 <action android:name="com.google.android.gms.mdm.services.DeviceManagerApiService.START" />
                 <action android:name="com.google.android.gms.mdns.service.START" />
                 <action android:name="com.google.android.gms.nearby.bootstrap.service.NearbyBootstrapService.START" />
-                <action android:name="com.google.android.gms.nearby.connection.service.START" />
                 <action android:name="com.google.android.gms.nearby.fastpair.START" />
                 <action android:name="com.google.android.gms.nearby.messages.service.NearbyMessagesService.START" />
                 <action android:name="com.google.android.gms.nearby.sharing.service.NearbySharingService.START" />
@@ -1661,10 +1698,7 @@
                 <action android:name="com.google.android.gms.scheduler.ACTION_PROXY_SCHEDULE" />
                 <action android:name="com.google.android.gms.setup.auth.SecondDeviceAuth.START" />
                 <action android:name="com.google.android.gms.smartdevice.d2d.SourceDeviceService.START" />
-                <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
                 <action android:name="com.google.android.gms.smartdevice.directtransfer.SourceDirectTransferService.START" />
-                <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
-                <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
                 <action android:name="com.google.android.gms.smartdevice.setup.accounts.AccountsService.START" />
                 <action android:name="com.google.android.gms.smartdevice.wifi.START_WIFI_HELPER_SERVICE" />
                 <action android:name="com.google.android.gms.social.location.activity.service.START" />
@@ -1706,6 +1740,51 @@
                     tools:ignore="WearableBindListener" />
             </intent-filter>
         </service>
+        <service android:name="org.microg.gms.migration.TargetQuickStartService" android:exported="false" />
+        <service android:name="org.microg.gms.migration.nearby.NearbyDctService" android:exported="true">
+            <intent-filter><action android:name="com.google.android.gms.nearby.connection.service.START" /></intent-filter>
+        </service>
+        <!-- CYC-700: optional Android Switch setup queries, authenticated in the broker. -->
+        <service android:name="org.microg.gms.migration.SwitchSupportService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
+                <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
+                <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
+            </intent-filter>
+        </service>
+        <service android:name="org.microg.gms.migration.SwitchExportService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.quickstart.xos.api.SourceXosApiService.START" />
+                <action android:name="com.google.android.gms.backup.d2d.api.OsMigrationWifiExportApiService.START" />
+            </intent-filter>
+        </service>
+        <!-- Local migration restore only. The system also requires its explicit transport allowlist. -->
+        <service android:name="com.google.android.gms.backup.BackupTransportService"
+            android:permission="android.permission.CONFIRM_FULL_BACKUP" android:exported="false">
+            <intent-filter><action android:name="android.backup.TRANSPORT_HOST" /></intent-filter>
+        </service>
+        <service android:name="org.microg.gms.migration.MigrateHelperService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.backup.D2D_MIGRATE_HELPER" />
+            </intent-filter>
+        </service>
+        <!-- Cyclon-owned setup UI; Google internal quickstart Binder remains non-exported. -->
+        <activity android:name="org.microg.gms.migration.MigrationWirelessActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD"
+            android:excludeFromRecents="true" />
+        <activity-alias android:name="org.microg.gms.migration.MigrationWirelessSetup"
+            android:targetActivity="org.microg.gms.migration.MigrationWirelessActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <receiver android:name="org.microg.gms.migration.MigrationCancelledReceiver"
+            android:exported="true" android:permission="android.permission.BACKUP">
+            <intent-filter><action android:name="com.google.android.gms.smartdevice.OS_MIGRATION_CANCELLED" /></intent-filter>
+        </receiver>
+
+        <provider android:name="org.microg.gms.migration.android.ClassicFileProvider"
+            android:authorities="${applicationId}.migration.classic.files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/classic_nearby_paths" />
+        </provider>
     </application>
 
 </manifest>

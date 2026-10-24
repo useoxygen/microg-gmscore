@@ -1,0 +1,10 @@
+Copyright 2020 Google LLC
+
+UKEY2 / SecureMessage Java implementation and protocol schemas:
+https://github.com/google/ukey2/tree/10fc737aa901e873a3367e7e26b88eb01cd55d69
+
+Nearby OfflineWireFormats protocol schema:
+https://github.com/google/nearby/blob/c80c38efe4b8a5fa72586b58d381bb546702f062/connections/implementation/proto/offline_wire_formats.proto
+
+Licensed under the Apache License, Version 2.0. Original source notices are
+retained in migration-ukey2. The complete Apache license follows in this entry.

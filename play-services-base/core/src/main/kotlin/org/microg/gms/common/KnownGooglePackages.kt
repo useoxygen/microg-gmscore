@@ -57,6 +57,17 @@ private const val SHA256 = "SHA-256"
 data class PackageAndCertHash(val packageName: String, val algorithm: String, val certHash: String)
 
 private val KNOWN_GOOGLE_PACKAGES = mapOf(
+    // Android Switch: discover accounts for the transfer UI. No token or owner access.
+    Pair(
+        PackageAndCertHash("com.google.android.apps.restore", SHA256, "e4c43ce273303895c4ebd281cc8f64af74c088b7de703cd327afd984f49d9478"),
+        setOf(ACCOUNT)
+    ),
+    // Pre-Android 13 signer in its verified rotation lineage. GET_SIGNATURES exposes this
+    // certificate even on newer Android versions; ExtendedPackageInfo uses that API.
+    Pair(
+        PackageAndCertHash("com.google.android.apps.restore", SHA256, "56be132b780656fe2444cd34326eb5d7aac91d2096abf0fe673a99270622ec87"),
+        setOf(ACCOUNT)
+    ),
     // Legacy set
     // These include all previously KNOWN_GOOGLE_PACKAGES and grant them all google package permissions
     // Those should be replaced by new entries that
