@@ -19,7 +19,6 @@ class PasswordOwnerPlatformTest {
         var refused = 0
         fun requestOwner() = authenticateOwner()
         fun checkOwner() = requireOwner()
-        fun pauseOwner() = onPause()
         override fun onOwnerAuthenticated() { authenticated++ }
         override fun onOwnerAuthenticationFailed() { refused++ }
         override fun onOwnerLocked() = Unit
@@ -41,7 +40,7 @@ class PasswordOwnerPlatformTest {
         }
     }
 
-    @Test fun ownerPauseRevokesSupportedNoLockPresence() {
+    @Test fun foregroundLossRevokesSupportedNoLockPresence() {
         val controller = Robolectric.buildActivity(OwnerFixture::class.java)
         val activity = controller.get()
         // Exercise the actual authority methods without AppCompat UI resources or a fabricated lifecycle claim.
@@ -50,7 +49,7 @@ class PasswordOwnerPlatformTest {
         assertEquals(1, activity.authenticated)
         assertEquals(0, activity.refused)
         activity.checkOwner()
-        activity.pauseOwner()
+        ReflectionHelpers.setField(activity, "foreground", false)
         assertThrows(VaultLockedException::class.java) { activity.checkOwner() }
     }
 }
