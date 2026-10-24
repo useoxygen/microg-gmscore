@@ -34,4 +34,7 @@
     <string name="contacts_sync_reconnect">Reconnect</string>
     <string name="contacts_sync_upload_new">Upload new and imported contacts</string>
     <string name="contacts_sync_upload_new_consent">Allow contacts added to this Google account on this phone, including contacts imported from an iPhone or Android phone, to be uploaded to Google. Device-only contacts remain on this phone. This choice also applies to future imports. Leave this off to keep new and imported contacts local. Contacts already uploaded are not removed from Google when you turn this off.</string>
+    <string name="contacts_sync_migration_held">Contact uploads are paused after a phone transfer. This includes changes merged into contacts already synced with Google. Downloads can continue. Review your contacts and account choices before resuming uploads.</string>
+    <string name="contacts_sync_resume_uploads">Resume contact uploads</string>
+    <string name="contacts_sync_resume_uploads_consent">Resume uploads using the account choices below. Changes to contacts already synced with Google, including changes made by the transfer, can be uploaded. New and imported contacts still require the separate account upload choice. Leave uploads paused to keep imported changes on this phone. Already uploaded contacts are not removed from Google.</string>
 </resources>

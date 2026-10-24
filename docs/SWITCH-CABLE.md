@@ -82,6 +82,20 @@ create boundary checks this preference again. Turning it off affects future
 creates and does not remove already uploaded Google contacts. A lost create
 response remains subject to the existing durable reconciliation rules.
 
+Before any normal Cyclon companion transfer starts, a protected provider call
+`content://org.microg.gms.migration.contacts`, method `beginMigration`, sets a
+**persistent hold on every Google contact mutation**, including changes merged into
+already sync-owned rows. The companion refuses to launch if it cannot confirm
+`uploads_held=true`. Downloads may continue. The hold survives completion,
+cancellation, process death and reboot; it is never silently released. The owner
+reviews Contacts sync and confirms **Resume contact uploads**. Resuming follows
+existing account modes; creating new contacts still needs the separate opt-in.
+The API checks the hold at each mutation and again at the HTTP boundary. Existing
+requests issued before the hold may finish; no transferred data has been read at
+that point. Direct/manual Switch or wireless entry points outside the companion
+must establish this same hold before transfer; this is a required integration
+boundary, not a claim that arbitrary external launchers are intercepted.
+
 This deliberately covers both new manual and imported account rows: the framework
 does not reliably label a new raw contact as “manual” versus “migration”. Device
 contacts remain local. Existing unowned rows older than the account's adoption
@@ -97,7 +111,7 @@ scenario; it is not claimed run until device/emulator execution is recorded.
 
 The existing signature-bound helper broker retains protocol v1. tx3 registers a bounded pipe and acknowledges immediately, then copies a single-name artifact
 asynchronously into private `.pending` staging under GMS's private no-backup
-`migration-staging` directory. Traversal and oversized artifacts fail. It closes
+`migration-staging` directory. Traversal fails; each stream is bounded by available device storage with 256 MiB reserved for OS/metadata. Large MMS archives do not hit an arbitrary 512 MiB ceiling. Concurrent disk exhaustion remains an honest IO failure. It closes
 received file descriptors. tx4 requires both EOF and remote success before atomically
 publishing the final name. tx5 aborts, closes and discards the private write and
 reports failure. Unique temporary identities keep a late failed writer away from
@@ -113,8 +127,12 @@ BackupDataOutput, then asks the **installed** MediaProvider to scan
 reflection/IO/provider errors return failure, never invented success. This creates the package-manager envelope and, only if a real converted
 telephony archive was published, its actual installed telephony version and
 SHA-256 signer metadata. It does not fabricate telephony payloads or generate
-destination-signature metadata for arbitrary Android app archives. tx6/11 and
-credential-recovery9/10 still return failure until the real operation/orchestration exists (CYC-715). Agent A supplies the
+destination-signature metadata for arbitrary Android app archives. Tx6 now opens an explicit local-cache
+BackupManager restore session, obtains the actual restore set and calls restoreAll;
+only the real RestoreObserver completion can report success. A 180-second timeout,
+missing set/session, denied hidden API or transport failure reports failure. It
+never selects this transport for normal backup or changes backup enablement.
+Helper11 and credential-recovery9/10 remain honest failure (CYC-715). Agent A supplies the
 target restore-only `.backup.BackupTransportService`; the image experiment
 allowlists that component while preserving Seedvault/AOSP local transports and
 does not select it for normal backup.
@@ -135,7 +153,21 @@ those are not made successful merely by exposing GMS services. Notes use Google
 Keep export/backup machinery, so visible notes depend on the transport/sink work.
 Wi-Fi export is an Android source-side API, distinct from iPhone cable settings
 import; current empty export is not proof of Wi-Fi parity. Contacts third-party
-restore, onboarding consent, credential import and optional partner/provider APIs
-remain separate gaps. Logging-only services may be no-ops, but no consent API
+restore, its dynamic consent activity, credential import and optional Google
+cloud APIs remain separate gaps. The stacked image change supplies the narrow
+local SUW providers/router/keepalive/portal and a durable onboarding-task client;
+actual task-graph inputs and live Switch acceptance remain separate qualification. Logging-only services may be no-ops, but no consent API
 may default to permission to upload. Password/passkey destination, Cyclon layout,
 eSIM carrier path and distribution are tracked in CYC-716 through CYC-719.
+
+
+## Validation scope
+
+Focused host suites cover four Play queue/catalog cases and eighteen core
+cases (helper Binder/parcels, staging publication, metadata, observer behavior,
+contact preferences and the persistent upload hold). GmsCore and FakeStore debug
+APKs build. Real-pipe acknowledgement-before-EOF and ContactsProvider tests are
+instrumentation: source compiles, but execution has not been claimed. Robolectric
+uses a regular-file pipe shadow, so host publication tests use a completed-file
+descriptor and do not pretend to prove kernel pipe streaming. Image/Android
+framework sink acceptance and the combined A/B/C image remain open.

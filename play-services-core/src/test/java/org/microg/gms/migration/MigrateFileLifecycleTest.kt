@@ -12,6 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -34,34 +35,38 @@ class MigrateFileLifecycleTest {
             assertTrue(binder.transact(code, data, reply, 0)); reply.readException()
         } finally { data.recycle(); reply.recycle() }
     }
-    @Test fun pipeRegistrationCompletesBeforeEofAndPublicationRequiresRemoteSuccess() {
+    // Robolectric models a pipe as a regular file and requires sender-close before descriptor handoff.
+    // Real streaming / acknowledgement-before-EOF is tested in androidTest, not claimed by this fixture.
+    private fun source(bytes: ByteArray): ParcelFileDescriptor {
+        val file = File.createTempFile("migration", ".fixture", RuntimeEnvironment.getApplication().cacheDir)
+        file.writeBytes(bytes)
+        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+    @Test fun registrationDoesNotPublishUntilRemoteSuccess() {
         val context = RuntimeEnvironment.getApplication()
         val store = MigrationArtifactStore(context)
         val helper = EmptyMigrateHelper(Binder.getCallingUid(), context)
-        val pipe = ParcelFileDescriptor.createPipe()
+        val input = source(byteArrayOf(1, 2, 3))
         val started = Callback()
-        call(helper, 3, started) { writeString("org.example.fixture"); writeInt(1); pipe[0].writeToParcel(this, 0) }
-        assertTrue("sender must not deadlock waiting for EOF before it may write", started.done.await(1, TimeUnit.SECONDS))
+        call(helper, 3, started) { writeString("org.example.fixture"); writeInt(1); input.writeToParcel(this, android.os.Parcelable.PARCELABLE_WRITE_RETURN_VALUE) }
+        assertTrue(started.done.await(1, TimeUnit.SECONDS))
         assertEquals(1, started.result); assertFalse(store.contains("org.example.fixture"))
-        ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(byteArrayOf(1, 2, 3)) }
         val completed = Callback()
         call(helper, 4, completed) { writeString("org.example.fixture") }
         assertTrue(completed.done.await(6, TimeUnit.SECONDS)); assertEquals(1, completed.result)
         assertArrayEquals(byteArrayOf(1, 2, 3), store.file("org.example.fixture").readBytes())
-        pipe[0].close()
     }
     @Test fun remoteFailureNeverPublishesLocallyCopiedBytes() {
         val context = RuntimeEnvironment.getApplication()
         val store = MigrationArtifactStore(context)
         val helper = EmptyMigrateHelper(Binder.getCallingUid(), context)
-        val pipe = ParcelFileDescriptor.createPipe()
+        val input = source(byteArrayOf(1))
         val started = Callback()
-        call(helper, 3, started) { writeString("org.example.failed"); writeInt(1); pipe[0].writeToParcel(this, 0) }
+        call(helper, 3, started) { writeString("org.example.failed"); writeInt(1); input.writeToParcel(this, android.os.Parcelable.PARCELABLE_WRITE_RETURN_VALUE) }
         assertEquals(1, started.result)
-        ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(byteArrayOf(1)) }
         val failed = Callback()
         call(helper, 5, failed) { writeString("org.example.failed") }
         assertTrue(failed.done.await(6, TimeUnit.SECONDS)); assertEquals(2, failed.result)
-        assertFalse(store.contains("org.example.failed")); pipe[0].close()
+        assertFalse(store.contains("org.example.failed"))
     }
 }

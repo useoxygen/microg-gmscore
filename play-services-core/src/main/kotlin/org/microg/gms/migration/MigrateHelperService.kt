@@ -44,7 +44,7 @@ class MigrateHelperService : Service() {
                 writeStrongBinder(helper)
             }
             reply?.writeNoException()
-            Log.d("GmsSwitchSupport", "Migrate-helper v1 connected; no Google restore staging")
+            Log.d("GmsSwitchSupport", "Migrate-helper v1 connected; private local staging")
             return true
         }
     }

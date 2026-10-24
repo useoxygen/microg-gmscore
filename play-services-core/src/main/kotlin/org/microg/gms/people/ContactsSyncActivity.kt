@@ -77,6 +77,7 @@ class ContactsSyncActivity : ComponentActivity() {
         }
         setContent {
             CyclonMaterialTheme {
+                var resumeUploads by remember { mutableStateOf(false) }
                 var confirmation by remember { mutableStateOf<Account?>(null) }
                 var newContactsConfirmation by remember { mutableStateOf<Account?>(null) }
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
@@ -84,6 +85,10 @@ class ContactsSyncActivity : ComponentActivity() {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineSmall)
                         Text(stringResource(R.string.contacts_sync_description))
+                        if (ContactMigrationPrivacy(this@ContactsSyncActivity).held) {
+                            Text(stringResource(R.string.contacts_sync_migration_held))
+                            CyclonOutlinedButton(onClick = { resumeUploads = true }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) }
+                        }
                         failure?.let { reason ->
                             Text(stringResource(when (reason) {
                                 ActivationFailure.PERMISSION -> R.string.contacts_sync_enable_permission
@@ -158,6 +163,17 @@ class ContactsSyncActivity : ComponentActivity() {
                         }
                     }
                 }
+                if (resumeUploads) AlertDialog(onDismissRequest = { resumeUploads = false },
+                    title = { Text(stringResource(R.string.contacts_sync_resume_uploads)) },
+                    text = { Text(stringResource(R.string.contacts_sync_resume_uploads_consent)) },
+                    confirmButton = { CyclonTextButton(onClick = {
+                        ContactMigrationPrivacy(this@ContactsSyncActivity).ownerResume()
+                        AccountManager.get(this@ContactsSyncActivity).getAccountsByType("com.google").forEach {
+                            ContactSyncPreferences(this@ContactsSyncActivity, it).refresh()
+                        }
+                        resumeUploads = false; revision++
+                    }) { Text(stringResource(R.string.contacts_sync_enable)) } },
+                    dismissButton = { CyclonTextButton(onClick = { resumeUploads = false }) { Text(stringResource(android.R.string.cancel)) } })
                 newContactsConfirmation?.let { account ->
                     AlertDialog(onDismissRequest = { newContactsConfirmation = null },
                         title = { Text(stringResource(R.string.contacts_sync_upload_new)) },

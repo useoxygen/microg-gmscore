@@ -468,6 +468,9 @@
         <!-- People -->
 
         <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <provider android:name="org.microg.gms.people.ContactMigrationPrivacyProvider"
+            android:authorities="org.microg.gms.migration.contacts" android:exported="true"
+            android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity-alias android:name="org.microg.gms.people.ContactsSyncSettings"
             android:targetActivity="org.microg.gms.people.ContactsSyncActivity"
             android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
