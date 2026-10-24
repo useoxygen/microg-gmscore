@@ -164,42 +164,59 @@ The actual grant and backend remedy remain unproven until that check is run.
 
 ## Implementation status of this draft
 
-The earlier sections compare the original public v1 design with GMS. Subsequent
-owner-approved Prometheus research establishes public GET SERVICE_DISABLED despite
-successful token grants, and a working private REST read path when client context
-is present (`prometheus-test.md`, then the superseding private-probe-iteration.md).
-The original historical refusal still has no retained incident receipt; the current
-public API blocker is now reproduced. No private writes are enabled here.
+Updated October 24, 2026 (PT). The earlier comparison describes the original
+public v1 design. Subsequent owner-approved probes established the current public
+SERVICE_DISABLED blocker and working private REST CRUD/photo/group/membership
+shapes; Round 2 resolves the earlier update/star failures. Use the corrected
+membership wire field104, not the old field44 alias. The historical October 16
+refusal still has no retained incident receipt.
 
-Download only now uses private People v2 with peopleapi.readonly. Full/incremental
-paging, source-specific identities/etags/tombstones, extended/phonetic fields,
-encoded contact photos, group/label metadata and memberships/My Contacts/starred
-are implemented. The single shared GMS FSA2 context derives its version from the
-version microG advertises; context rejection pauses automatic calls as needs
-update. Probes share that context and still return before provider/configuration
-or scheduling changes. Two-way is disabled and guarded before auth/provider work,
-including old Two-way preferences. The adapter advertises supportsUploading=false.
-It is not routed to public v1.
+Both Download only and Two-way now use private People v2. Authorization uses
+peopleapi.readonly/readwrite respectively, and the shared GMS FSA2 context derives
+its version from microG's advertised version. Create/update use only nested
+getPeopleRequest.context; other methods use their own root context. Canonical
+group IDs are used without GDATA compatibility so starred/My Contacts are not
+misidentified as legacy labels. Two-way and provider-triggered upload scheduling
+are enabled, with immediate opt-in checks before every mutation.
 
-Private rows and cursors are separate from legacy public rows/cursors. Partial
-reads, embedded errors, malformed IDs/fields, ambiguous merged contact ownership
-and unrepresentable dates preserve stored copies and hold cursors/deletions.
-Absence requires checked direct reads. Photo bytes and provider batches are
-bounded and version-checked. Group deletion waits for member contact metadata to
-settle instead of cascading through their baselines. Existing public journals are
-not replayed or discarded. See people-sync/README.md for current protocol/state.
+Private contact updates carry fresh source etags and person-prefixed masks.
+Membership/star edits use UpdatePerson; photos and group lifecycle use their
+dedicated tested REST methods. Group deletes explicitly preserve contacts.
+Every mutation journals before dispatch; unknown replies use checked readback,
+never blind create replay. Fingerprint conflicts are durably held. Contact/group
+creation markers are schema-backed/unit-tested but not live-qualified; a missing
+marker stays uncertain. A transformed photo after a lost reply also stays uncertain.
 
-The public client, write journals and tests are retained as dormant code for a
-possible separately registered OAuth client. They are not private write coverage.
-Private updates and membership/star writes remain unresolved; two-way, file-as/
-linking (CYC-727), authenticated push (CYC-728) and device/provider/editor acceptance
-(CYC-729) remain open. API research proved 251-contact paging, photos and group
-reads with a test account, not acceptance of this implementation. In particular,
-the advertised microG version-derived context, readonly group/photo grants,
-private group get/incrementals/expiry, read-only provider flags, legacy migration,
-all extended fields and lifecycle behavior still need device qualification.
+Private ownership and adoption floors preserve public/unowned/device/app rows.
+Partial reads hold removals/cursors; provider writes are version-checked.
+Production stages both independent cursors until group/contact/photo work succeeds.
+Merged-source updates and unknown attributes in edited arrays are held to avoid
+loss. See [the protocol and safety details](../people-sync/README.md).
+
+This implementation is host-tested, not installed/device-accepted. The separate
+probes proved request shapes and 251-contact paging; they do not qualify this
+producer, readonly photo/group grants, microG-version-derived context, provider
+editing/multiple accounts, lifecycle, reboot/renewal or legacy migration. CYC-721,
+725/726 and CYC-729 remain open. File-as/linking (CYC-727) and authenticated push
+(CYC-728) remain separate work. No atomic server precondition was established for
+photo writes or contact/photo deletion after a fresh read.
 
 ## Validation receipt
+
+Private two-way continuation (`1c610d4fe`, `8d4185b49`): 175 engine tests and
+7 focused ContactsPrivateProbeTest Android host tests passed, zero failures/errors/
+skips. CI MapboxDefaultDebug app and 25 standalone provider fixtures compiled;
+provider fixtures were not executed. New actual-client synthetic tests cover
+nested-context/mask/source-identity writes, whole-array memberships/starred,
+embedded errors, group/photo protocols, journal-before-send, lost create/update/
+delete/photo/group replies, missing markers, transformed photo uncertainty and
+durable fingerprint conflicts across new engine/client instances. Android host
+checks cover readonly/readwrite scopes, private adoption floors, non-enabling
+checks and context-rejection backoff. No authenticated Google calls or device
+access were performed. Final combined app/provider assemblies and provider/app Debug lint passed
+(`cyc721-final-validation.log`); the PR records the complete command and counts.
+
+Historical checks below apply to their named earlier revisions.
 
 Private Download-only backend follow-up: all 151 engine tests and six focused
 Android host tests passed; the app Debug APK and all 23 provider fixtures built;
