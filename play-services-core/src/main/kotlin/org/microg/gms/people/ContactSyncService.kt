@@ -30,6 +30,12 @@ class ContactSyncService : Service() {
                 provider: ContentProviderClient, result: SyncResult) {
                 val prefs = ContactSyncPreferences(this@ContactSyncService, account)
                 if (prefs.mode == SyncMode.OFF) return
+                // Turning sync off removes synced contacts under the same lock; never write after that.
+                val lock = ContactSyncLock.of(account)
+                lock.lock()
+                try { if (prefs.mode != SyncMode.OFF) performLocked(account, provider, result, prefs) } finally { lock.unlock() }
+            }
+            private fun performLocked(account: Account, provider: ContentProviderClient, result: SyncResult, prefs: ContactSyncPreferences) {
                 if (prefs.blockedClientContext == privatePeopleContext.binding) { prefs.status = "needs_update"; return }
                 var usedToken: String? = null
                 try {

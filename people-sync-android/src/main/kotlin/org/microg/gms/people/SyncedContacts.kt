@@ -21,12 +21,13 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
     private val accountScope = "account_name=? AND account_type=? AND data_set IS NULL"
     private val args get() = arrayOf(account.name, account.type) + owners
 
-    // Owned rows, plus contacts created in this account on this phone after sync was turned on.
+    // Exactly what the sync engine treats as its own: rows it owns, plus new rows it would adopt
+    // (created in this account after enabling, never uploaded, still dirty). See AndroidContactStore.contacts().
     private val rawScope get() = "$accountScope AND (${RawContacts.SYNC4} IN (?,?) OR (${RawContacts.SYNC4} IS NULL AND " +
-        "${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>${floor(prefs.privateAdoptionFloor, prefs.adoptionFloor)}))"
-    // Sync-created groups (labels and the system groups sync imports), plus labels created here after enabling.
+        "${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>${prefs.privateAdoptionFloor} AND ${RawContacts.DIRTY}=1))"
+    // Groups sync created (labels and imported system groups), plus new labels it would adopt (AndroidGroupStore.groups()).
     private val groupScope get() = "$accountScope AND (${Groups.SYNC4} IN (?,?) OR (${Groups.SYNC4} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND " +
-        "${Groups.SOURCE_ID} IS NULL AND ${Groups._ID}>${floor(prefs.privateGroupAdoptionFloor, prefs.groupAdoptionFloor ?: Long.MAX_VALUE)}))"
+        "${Groups.SOURCE_ID} IS NULL AND ${Groups._ID}>${prefs.privateGroupAdoptionFloor} AND ${Groups.DIRTY}=1))"
 
     /** Contacts or labels with edits that haven't reached Google yet; removing them loses those edits. */
     fun unsyncedChanges(): Int = count(RawContacts.CONTENT_URI, "$rawScope AND (${RawContacts.DIRTY}!=0 OR ${RawContacts.SYNC3} IS NOT NULL)") +
@@ -34,8 +35,17 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
 
     fun count(): Int = count(RawContacts.CONTENT_URI, "$rawScope AND ${RawContacts.DELETED}=0")
 
-    /** Call only after sync is off. Clears the cursor so turning sync back on downloads everything again. */
+    /**
+     * Call only after sync is off. Waits for a running sync of this account to finish, so none of its
+     * writes land after the removal. Clears the cursor so turning sync back on downloads everything again.
+     */
     fun remove() {
+        check(prefs.mode == org.microg.gms.people.sync.SyncMode.OFF)
+        val lock = ContactSyncLock.of(account)
+        lock.lock()
+        try { removeLocked() } finally { lock.unlock() }
+    }
+    private fun removeLocked() {
         check(prefs.mode == org.microg.gms.people.sync.SyncMode.OFF)
         provider.applyBatch(arrayListOf(
             ContentProviderOperation.newDelete(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope, args).build(),
@@ -45,5 +55,4 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
     }
 
     private fun count(uri: Uri, selection: String) = provider.query(uri, arrayOf("_id"), selection, args, null)?.use { it.count } ?: 0
-    private fun floor(private: Long, legacy: Long) = minOf(private, legacy)
 }

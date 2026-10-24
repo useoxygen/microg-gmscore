@@ -74,21 +74,24 @@ class SyncedContactsTest {
             contact(1, private)                               // downloaded: removed
             contact(2, legacy)                                // older sync: removed
             contact(3, null)                                  // existed before sync was enabled: kept
-            contact(11, null, dirty = true)                   // created here after enabling, not uploaded yet: removed, unsynced
-            contact(12, null, sourceId = "other-adapter")     // another sync adapter's contact: kept
+            contact(15, null, dirty = true)                   // between the legacy and private floors: not the engine's, kept
+            contact(21, null, dirty = true)                   // created here after enabling, not uploaded yet: removed, unsynced
+            contact(22, null)                                 // clean unowned row above the floor: the engine never adopts it, kept
+            contact(23, null, sourceId = "other-adapter")     // another sync adapter's contact: kept
             contact(13, private, dataSet = "plugin")          // other data set: kept
             contact(14, private, account = other)             // other account: kept
-            contact(15, private, pending = "{\"kind\":\"update\"}") // upload in flight: removed, unsynced
+            contact(24, private, pending = "{\"kind\":\"update\"}") // upload in flight: removed, unsynced
             group(1, private, systemId = "Contacts")          // system group sync imported: removed
             group(4, null, systemId = "Contacts")             // system group from elsewhere: kept
             group(2, private)                                 // synced label: removed
             group(3, null)                                    // existed before sync: kept
-            group(25, null, dirty = true)                     // label created here, not uploaded: removed, unsynced
+            group(25, null, dirty = true)                     // below the private group floor: kept
+            group(31, null, dirty = true)                     // label created here, not uploaded: removed, unsynced
         }
         ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
         val prefs = ContactSyncPreferences(context, account)
-        prefs.initializePrivateFloors(10, 20)
-        prefs.configure(SyncMode.TWO_WAY, 10, 20)
+        prefs.configure(SyncMode.TWO_WAY, 10, 20)          // legacy floors
+        prefs.initializePrivateFloors(20, 30)               // the private engine's floors
         prefs.privateGroupCheckpoint("binding", "token")
         val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
         val synced = SyncedContacts(client, account, prefs)
@@ -99,11 +102,30 @@ class SyncedContactsTest {
 
         prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
         synced.remove()
-        assertEquals(setOf(3L, 12L, 13L, 14L), provider.ids("raw_contacts"))
-        assertEquals(setOf(3L, 4L), provider.ids("groups"))
+        assertEquals(setOf(3L, 13L, 14L, 15L, 22L, 23L), provider.ids("raw_contacts"))
+        assertEquals(setOf(3L, 4L, 25L), provider.ids("groups"))
         assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
         assertNull(prefs.privateGroupCheckpoint("binding"))
         assertEquals(0, synced.unsyncedChanges())
+        client.close()
+    }
+
+    @Test fun removalWaitsForARunningSyncOfTheAccount() {
+        val context = RuntimeEnvironment.getApplication()
+        val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }); contact(1, private) }
+        ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
+        val prefs = ContactSyncPreferences(context, account)
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
+        val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
+        val lock = ContactSyncLock.of(account)
+        val syncRunning = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        val sync = Thread { lock.lock(); try { syncRunning.countDown(); release.await() } finally { lock.unlock() } }.apply { start() }
+        syncRunning.await()
+        val removal = Thread { SyncedContacts(client, account, prefs).remove() }.apply { start() }
+        removal.join(300)
+        assertTrue(removal.isAlive); assertEquals(setOf(1L), provider.ids("raw_contacts")) // still waiting for the sync
+        release.countDown(); sync.join(); removal.join(5000)
+        assertFalse(removal.isAlive); assertTrue(provider.ids("raw_contacts").isEmpty())
         client.close()
     }
 }
