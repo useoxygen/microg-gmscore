@@ -40,31 +40,83 @@ recheck actual version, controller, grants and ownership before further work.
 
 Core PR #1216 remains pushed source `0ba6bb459`, with its clean **3,175 JVM** and
 **196 Core Python** results and green hosted CI. The separate finite acceptance
-composition `dcaed172f` merges actual CYC-704 `5745c3fa0` with that source;
-`09098dc8a` contains the earlier two fixture fixes and current `8f9cd762` is
-fixture-only. Its gathered Gradle run passed in **160s**: **3,207 JVM cases**
-(20 protocol, 2,020 runtime, 111 Core, 1,056 Shell), zero failures/errors/skips,
-and the Core33 release APK build passed. The complete pinned-Kotlin2.2.21
-controller built: **1,064,641 bytes**, SHA-256
+composition merges actual CYC-704 `5745c3fa0` with that source. Complete host
+validation at fixture-only `8f9cd762` now passed: **3,207 JVM cases** (20 protocol,
+2,020 runtime, 111 Core, 1,056 Shell), zero failures/errors/skips, **198 Core Python
+in 381.335s**, 85 Shell Python, two ShellUi Python, 21 coverage cases and the
+capability ledger. The Gradle run took 160s and built the Core33 release APK.
+Receipt: `/tmp/cyc689-parity-r12-20261024/core33-complete-host-results.json`.
+
+The complete pinned-Kotlin2.2.21 controller is **1,064,641 bytes**, SHA-256
 `6b2c21d847bc91781785303979d8ea4dccece8f97c71b8e1e489a2629adff573`.
-Full Python is **still running**; this is not a complete gathered Core33 pass.
-The five image product scopes and controller trees stay at `09098dc8a`; this
-composition does not change PR #1216 or establish a matching pair.
+Signed Core33 is **29,739,664 bytes**, SHA-256
+`4a319c95800eeb1e6be77a1fc21861b842038fb142b5fae71ad5aa2001b75f68`,
+with expected signer `4d82c26c...` and all **136** tested non-META-INF entries
+identical. It is **not installed**. The five image product scopes and controller
+trees stay at `09098dc8a`; this outside-PR composition does not change PR #1216
+or establish paired-component/device acceptance. **All eight PR31 hosted checks
+succeeded at `cfd00cb21d8c7fa4f1ecf2d343d19b07082c3d5f`**, including four
+Debug/Release Gradle jobs and CodeQL/analysis. The recorded snapshot at that exact
+head is **CLEAN/MERGEABLE**; later heads require fresh checks. This is neither a
+merge nor device-acceptance claim.
 
 The isolated image clone `cyc680-image-20261024` has all **57 immutable downloads
-(approximately 524 MB)** generation/size/SHA verified and uploaded. Restoration
-of the archived **1,246 pins has not been applied**. Ten exact baseline DEBs
-(23,954,712 bytes) were recovered by copying only owned managed-cache inputs.
-Image candidate `31e1d5e2f5466018f302e4cd1f2a858e3cefadad` derives the required
-exact trees from Core compatibility `09098dc8a`, with no other product scope.
-The launcher native `.so` inventories remain distinct: **11 archived lynx
-baseline, 14 installed private launcher, 16 latest Akita**; these are not package
-counts or the ten DEBs. Image preflight identified five inherited untracked
-partner-GMS staging APKs; the parent is preserving their exact bytes/hashes outside
-the new clone checkout before restoration. No original pins have been restored.
-Restoration validation and the launcher retry are running, with no completed
-launcher or full-image build claimed. No image has been signed, installed or
-published, and no physical policy overlay was applied.
+(approximately 524 MB)** generation/size/SHA verified and uploaded. All **1,246
+archived pins are restored** and the staged five-scope patch is parent-verified
+byte-identical to Mac `31e1d5e2f5466018f302e4cd1f2a858e3cefadad`. Adoption of that
+real source **passed**, with clean tracked source and equal index/full tree
+`b7679d57e33220f19fc6b31f37b8c111e8ed36ef`.
+
+The honest baseline launcher rebuild at actual `31e1` passed in **2m58s**, with
+all **11 native libraries**. Its APK is 47,286,381 bytes, SHA-256
+`c20c73e51c5b560d772fc498aecd8a626c960bf64d95303c2323c9588078c026`.
+Receipt: `/tmp/cyc654-parallel/cyc680-baseline-launcher-20261024/launcher-build-receipt.json`.
+Ten exact baseline DEBs (23,954,712 bytes) came from copied owned-cache inputs;
+managed caches were not written. Keep the launcher native `.so` inventories
+separate: **11 archived lynx baseline, 14 installed private launcher, 16 latest
+Akita**. These are not package counts or DEB counts. Preflight found five inherited
+untracked partner-GMS staging APKs, with exact-byte/hash preservation outside the
+new clone. Launcher transfer passed for **13 files**, replacing only the APK and
+source receipt; all 11 native libraries were unchanged and the backup was verified.
+Fifteen inherited 163-byte AppleDouble sidecars (2,445 bytes total) were hash-preserved
+outside the prebuilt tree before transfer. Adoption/transfer logs are
+`image-product-adopt.log`, `image-launcher-apply-r2.log` and
+`preserve-launcher-appledouble.log` in the R12 receipt directory.
+
+The first image attempt **started at 1:23 AM PT**, build **1792830218**, and ran
+**17m32s to 7,789 steps with zero compiler failures**. It was intentionally stopped
+only to remove the explicit `-j2`: the parent freshly verified its own eight-member
+process group, sent one SIGINT and let normal Soong cleanup finish. The worker sent
+no signals.
+
+The **same source and build number resumed at 1:42 AM PT**, using normal
+`heavy-entry` admission: **32 default workers**, CPUWeight 100 fair share, no
+per-build hard CPU/memory quota and the same clone guard. Completed outputs were
+retained and `installclean` was **not repeated**. The build is still running;
+`image-build-launch.json` and `image-build-resume-launch.json` are **requests, not
+build-success evidence**. The initial attempt is in `image-full-build.log`; normal
+budget/source readback is in `image-build-budget-assessment.json`.
+Twenty-one original pinned ignored inputs were restored. Normal environment setup
+regenerates five unused partner-GMS/APK downloads; Cyclon modules override all
+three GMS modules and FDroid is excluded. Final unsigned and signed target-files
+provenance must still verify **three pinned partner APKs**—GmsCore version
+`252432043`, FakeStore and GsfProxy—plus **six GMS native ELF files**. No
+completed/signed/installed/published image or physical policy overlay is claimed.
+
+The official API 37 Google APIs ARM64 revision-8 static follow-up completed at
+**3:37 AM PT**. Its signed GMS APEX contains the exact r6 GMS base APK,
+SHA-256 `f386bff2feb0520656ae2ff5b1a75b95d6ab8d472a2dc50b60d709853cf348e5`,
+version `261136035`; all **nine complete APK member maps, including nested
+archives**, match the retained r6 reference. Source-aware inspection classified
+the remaining APEX manifest, privileged-permission and user-install policy XML,
+empty resource table and generated license notices. No new producer/schema for
+the five internal Passwords RPCs was found. The Google Play revision-8 EROFS
+continuation remains **pending**. This static result neither establishes
+whole-SDK/all-APEX equality nor cohort, account or provider acceptance. See
+[the bounded contract investigation](../passwords-rpc-contract-gaps.md#official-api-37-google-apis-arm64-revision-8-follow-up).
+Keep the earlier missing-base/ext4 refusals and original machine comparison
+unchanged; the separate classification receipt is
+`/tmp/cyc689-parity-r12-20261024/rpc-source-leads/management-scan5-erofs-metadata-assessment.json`.
 
 The R11 and R10 records below remain frozen. Five private RPC contracts, real
 cohorts, provider/official-client, family, cross-device and physical Core-fill
@@ -517,3 +569,54 @@ APKs once:
 Record source/fixture hashes, actual target labels, signing/image gates, which
 native methods ran and their boolean/count receipts. Keep implemented,
 host-tested, built, installed and device/provider accepted as separate states.
+
+## Current R13 prerequisites and capacity blocker: October 24, 2026
+
+This appended record updates the current status without changing the frozen
+R10/R11 or R12 receipts above. The initial 31e1/build1792830218 image completed
+normally at **4:11 AM PT**, unsigned and uninstalled. Its factory Services43
+requests neither `RECOVER_KEYSTORE` nor `READ_WIFI_CREDENTIAL`; an APK update
+and image allowlist cannot establish that missing factory permission authority.
+The initial image is therefore superseded for this acceptance plan.
+
+The genuine replacement is product **d8ccadcf4e70acf953c41d4d70439592001b796b**,
+intended build **1792841434** (chosen **4:30:34 AM PT**), with only the Services
+source pin and partner APK lock changed. Normal clean release-pair production
+passed with 42 people tests; the full host suites were not repeated. Normal
+activation verified RELEASE Services51 SHA `9849515311ae...` and FakeStore51 SHA
+`1fe89fc2ae48...`, preserving the dedicated 771b signer, signed GsfProxy 568c,
+framework overlay and all six arm64 ELF bytes. The actual new launcher build
+passed in 13s with clean d8cc identity, APK42421616/source receipt ac4a0833 and
+all 11 original native libraries unchanged. Core/component 8f9cd762 is unchanged.
+
+Parent source staging passed at **4:41:21 AM PT**: the actual product and launcher
+receipt, owned three-file release cache and normal preparation all verified. The
+complete superseded target-files archive was backed up and verified at
+4,311,614,269 bytes/SHA `fc69e4e8c88f1502be084197c413b8101c13b9fdc517cab16fee64f9026d5c40`.
+R13 build/sign/offline helpers are independently APPROVED, with plan manifest
+SHA `313950dc58f051e3f699cf0f7bfaf3e52b31a94c6a6f31b4217dab9ecc1f542b`.
+Their remote transfer and image rebuild have not run: the VM terminated after
+staging, normal shared32 and supported parallel64 restart both returned
+`STOCKOUT`, and the original shared32 was restored stopped. No R13 phone action
+or claim occurred. The R13 image is **not built, signed, installed or accepted**.
+
+After normal capacity returns, parent must first complete the guarded cached
+source-policy/target-files build, normal signing and offline OTA/controller-domain
+verification. A prepared helper or completed source staging is not loaded-policy
+or paired-component evidence. A later device batch still needs a fresh owner
+claim, actual boot/component/signer/hash/grant readback, nonpermissive controller
+domain proof and real UID2000 before functional acceptance. Preserve existing
+owner policy, screen lock, account opt-out and receipt expiry; no PIN setup or
+unknown-account adoption is authorized by this record. The known factory RELEASE51
+and known same-source DEBUG51 acceptance APKs remain distinct. Any finite exact
+equal-version transition requires its separately reviewed artifact-bound installer;
+this section grants no generic same-version retry or unknown-outcome replay.
+
+Keep the 26 local fixture methods separate from cached inventory, flags-only
+admission, real provider calls and physical native-fill/privacy/cancel/restart
+proof. Cached readiness cannot supply a missing approved fixture, family account,
+peer device or actual server cohort. Those resource/provider prerequisites and
+the five private RPC contracts remain open. The completed APIs r8 and Play r8
+static inspections do not establish runtime acceptance; the additional Kids
+producer-inspection plan is approved but unexecuted. R13 receipts are under
+`/tmp/cyc689-parity-r13-20261024/`; no earlier receipt has been relabeled.

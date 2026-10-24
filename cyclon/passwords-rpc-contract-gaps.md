@@ -129,3 +129,115 @@ Guessing these fields, copying a similarly named Security Domain RPC, or substit
 ## Required evidence to implement
 
 Direct implementations of the five original internal gRPC methods still require independently verified request/response descriptors and their producer/consumer chains. The current public frontend supplies a verified alternative producer for owner enrollment and destructive recovery, now connected through the protected owner web flow above. It does not justify filling missing internal tags, equating `RotateChromeSyncSharedKey` with `RotateTrustedVaultPassphraseKey`, or inventing group-marking semantics. Host validation, provider admission and device acceptance remain separate checks.
+
+## Official API 37 Google APIs ARM64 revision-8 follow-up
+
+The parent completed the bounded offline Google APIs revision-8 EROFS continuation
+on October 24, 2026 at **3:37 AM PT**. The official reference is
+[`arm64-v8a-37.0_r08.zip`](https://dl.google.com/android/repository/sys-img/google_apis/arm64-v8a-37.0_r08.zip),
+package `system-images;android-37.0;google_apis;arm64-v8a`, revision 8:
+
+| Reference pin | Value |
+| --- | --- |
+| Archive bytes | `2104098168` |
+| Official SDK SHA-1 | `7a8bfff584798fe87caa4d4883f6ade4658a185b` |
+| Download SHA-256 | `a805271ba138841e1b960c0ffca3c54d4fd1165262db7a3c390063c08fbe61fc` |
+| Signed GMS APEX SHA-256 | `c47586e1ec3875952a652ca44488d0008136db76fc715bd97f450dd02e0e1047` |
+| EROFS payload SHA-256 | `d441d332387c74b2240d9d3e3ea6035f0b8b1f891526a27376c585087fccc0cb` |
+
+The actual base is GMS `26.11.36`, version `261136035`, **216,312,877 bytes**,
+whole-APK SHA-256
+`f386bff2feb0520656ae2ff5b1a75b95d6ab8d472a2dc50b60d709853cf348e5`:
+it is byte-identical to the retained r6 base. All **nine full APK member maps**
+(the base plus eight modules), including recursively inspected nested
+APK/JAR/ZIP members, match the r6 baseline; the base's 18 DEX members are unchanged.
+The continuation checked the outer APEX signature, normal AVB verification and
+embedded/outer public-key binding before bounded EROFS inspection. This is
+container verification, not a new hardware or Google root-of-trust claim.
+
+All four remaining lead groups comprise the five files below. Their classification
+comes from parsed contents and exact pinned AOSP consumers/generators, rather than
+filename exemptions:
+
+| Exact file | Bytes / SHA-256 | Parsed classification |
+| --- | --- | --- |
+| Payload `apex_manifest.pb` | 32 / `24566c07acba12667e4db61fecd98b5a3c12325b5884d43d5ca198adbc8aa7d0` | Complete `ApexManifest`: field 1 name `com.google.android.gmssystem`, field 2 version 13; no unknown fields. Outer/inner copies are identical. |
+| Payload `etc/permissions/privapp_allowlist_com.google.android.gmssystem.xml` | 10,069 / `2bca05d3f803a362ebf95354e299654bb25ea65c4083fa516b6dd95b26b56a7f` | `permissions` / one GMS `privapp-permissions` / 136 unique permission-name entries; no unknown elements, attributes or non-whitespace data. Comments are LINT source pointers. This is declarative privileged-grant policy, not permission to copy these grants or a protocol descriptor. |
+| Payload `etc/sysconfig/preinstalled_packages_com.google.android.gmssystem.xml` | 490 / `f1fcd4d27845c367743ece1c5ba2252158c7c1e0a9657c78037e926c0d6113c3` | One GMS `install-in-user-type` policy with `SYSTEM`, `FULL` and `PROFILE`; no unknown elements, attributes or non-whitespace data. |
+| Outer `resources.arsc` | 40 / `1fa3cb291285348ec1b33c85e7317d989467707f4791c4e5302f2d312d1e18c8` | Complete empty resource table: zero packages and one empty 28-byte UTF-8 string pool; no other chunks or trailing bytes. Normal `aapt2 dump resources` exits 0 with no resource entries. |
+| Outer `assets/NOTICE.html.gz` | 70,102 / `21db2c492da69d355db19d47ab46a2c566466177f477306dcd0ef62a06b55840` | One gzip member, no unused/trailing compressed bytes; 554,768 decoded bytes, SHA-256 `d07648788aa243a4d0f6e1200aa912f214e0387d7655661f8fc2d17b6ccc78ff`. Exact AOSP `htmlnotice` template with 46 escaped legal/license sections; all 46 section IDs match the underlying text MD5 after removing the generator's one added newline. No active HTML tags, extra document regions or five-RPC names were found. |
+
+The pinned consumers are `system/apex/proto/apex_manifest.proto` and
+`apexd/apex_manifest.cpp` (identity/version); framework `SystemConfig.java`
+and `UserSystemPackageInstaller.java` (scoped permission and installation maps);
+`ResourceTypes.h` / `LoadedArsc.cpp` (resource table); and Soong
+`apex/builder.go` → `android/notices.go` →
+`build/make/tools/compliance/cmd/htmlnotice/htmlnotice.go` / `noticeindex.go`
+(generated license assets). Source hashes and exact line anchors are retained in
+the separate local assessment receipt below.
+
+The bounded GMS/base-module packaging lead supplies **no new executable,
+marshaller, request/response descriptor or invoking consumer** for the five
+internal Passwords RPCs. No application code, Google JavaScript or account/provider
+operation was executed, and no SDK was installed or booted for this inspection.
+It does not establish equality of other Google APEXes or the whole SDK, a server
+cohort, a usable account or provider/device acceptance. The separate **Google Play
+revision-8 EROFS continuation is pending**; no comparison success is claimed for it.
+The already obtained Play archive's pin is SHA-256
+`6c671df4611aef040600cf929fee56dc6306ce44a6b94183f845d66437faf859`,
+2,166,618,231 bytes, official SHA-1 `ac251e27178d78cffb0b7ee577d79643491a89a6`.
+
+Receipts remain separate: `apis-r8-gms-erofs-comparison.json` proves the nine APK
+member-map comparison; `management-scan5-erofs-metadata-assessment.json` classifies
+the exact five metadata files. Both are under
+`/tmp/cyc689-parity-r12-20261024/rpc-source-leads/`; the assessment SHA-256 is
+`f8b7bef5792c010fb91b90e1688dc987652a105070ee2c5569b494b5aa9b0ace`.
+The original missing-base/ext4 refusal receipts and the machine comparison's
+pre-classification flags are unchanged. This source assessment does not rewrite
+those historical outcomes or establish any of the five missing internal contracts.
+
+## R13 static source follow-up: October 24, 2026
+
+This appended assessment updates the pending Play statement above and preserves
+all original machine/refusal/metadata receipts. The completed Google APIs r8
+bounded nine-APK equality and source-aware APEX metadata assessment still
+establish no new producer for the five private Passwords RPCs.
+
+The normal offline Google Play r8 continuation completed across **all five
+logical partitions and 240 APKs**. Its retained machine comparison is
+`/tmp/cyc689-parity-r12-20261024/rpc-source-leads/play-r8-comparison.json`. The
+separate `affiliations-play-r8-member-assessment.json` follows every recursive
+difference for the nine audited GMS/base-module APKs: only
+`META-INF/CERT.RSA`, `META-INF/CERT.SF` and `META-INF/MANIFEST.MF` were added.
+The base's eight nested APK raw hashes change accordingly; their prior code,
+resource and other recursively inventoried members remain unchanged. Different
+verified certificates are real signing-authority/packaging differences. Neither
+receipt claims whole-APK, runtime, all-Google-code or whole-SDK equality; the
+comparison's 29 conservative leads retain their separately qualified assessment.
+
+The extra **`com.google.android.gms.supervision`** APK is an actual new source
+lead: `KidsSupervisionStub.apk`, 31,345,884 bytes, SHA-256
+`3722d3ce4ea3243f16b128579141c6e7087ee174bc7d52b85a3a7706d9e086ec`,
+with four DEX, three native libraries and 13 registry/metadata candidates. Names
+and unmatched hashes do not prove ownership of any Passwords RPC. The independently
+APPROVED `inspect-kids-supervision-producers.py` step pins the exact APK, comparison
+and17-member allowlist, stages only its four DEX and 13 metadata entries, and may
+run one normal bounded JADX pass. That producer-inspection step has **not run**;
+its three native members remain explicit unresolved leads. There is no positive
+or negative five-RPC producer result from it. The frozen plan and allowlist are
+in the same R12 `rpc-source-leads` directory. No proprietary code is committed.
+
+Separately, image31e1/build1792830218 completed unsigned at **4:11 AM PT** and
+was superseded because factory Services43 lacks the two requested Wi-Fi/recovery
+permissions. Genuine release51 inputs, product d8cc/build1792841434 and its new
+launcher receipt passed source staging at **4:41:21 AM PT**. That is not RPC
+evidence or a completed new image: remote plan transfer/rebuild is blocked after
+VM termination and shared32/parallel64 `STOCKOUT`; the original shared32 is restored
+stopped. R13 build/sign/offline helpers are reviewed, not executed. No new image
+or device/provider acceptance is claimed. R13 preparation receipts live under
+`/tmp/cyc689-parity-r13-20261024/`.
+
+All five private RPC contracts still require a real producer plus verified
+request/response and consumer authority. Provider, real cohort, family,
+cross-device and physical native-fill acceptance remain pending; these static
+results do not close them or establish full parity.
