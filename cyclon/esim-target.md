@@ -18,9 +18,10 @@ private reverse-engineering input/source material is not shipped with this repo.
    connector. Source ACTION_START_SOURCE_D2D_SERVICE is a different/source entry;
    implementing it does not implement receiving transfer.
 2. GMS broker333, action com.google.android.gms.esim.service.START, returns
-   com.google.android.gms.esim.internal.IEsimTransferService. Real caller UID
-   WRITE_EMBEDDED_SUBSCRIPTIONS is required; profile/preparation/start reads also
-   require READ_PRIVILEGED_PHONE_STATE. Our service binds the broker package to
+   com.google.android.gms.esim.internal.IEsimTransferService. Permission checks match the real caller UID in the pin: profile1 needs WRITE
+   and READ_PRIVILEGED_PHONE_STATE; preparation5 needs READ only; starts6/10/20
+   need WRITE only. Other protected APIs need WRITE. Source-Wi-Fi14/status16 and
+   feature-disabled18/22 do not add those checks. Our service binds the broker package to
    the UID and binds its returned session Binder to that UID.
 3. Target start connectorType1 (source2 is rejected48522) obtains the real pairing
    session/authentication key. iOS XOS carries protobuf at /_callback/esim,

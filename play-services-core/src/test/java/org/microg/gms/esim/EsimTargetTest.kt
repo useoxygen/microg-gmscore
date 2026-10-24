@@ -18,9 +18,9 @@ import java.util.concurrent.TimeUnit
 class EsimTargetTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val iccid = "8901234567890123456"
-    private fun start(): EsimWireRecord {
+    private fun start(version: String? = "8.0"): EsimWireRecord {
         val config = EsimWireRecord.build { Writer.write(it, 1, 123); Writer.write(it, 5, 2)
-            Writer.write(it, 8, "https://carrier.example.invalid/entitlement", false); Writer.write(it, 19, "8.0", false); Writer.write(it, 28, true) }
+            Writer.write(it, 8, "https://carrier.example.invalid/entitlement", false); Writer.write(it, 19, version, true); Writer.write(it, 28, true) }
         return config.use { EsimWireRecord.build { parcel -> Writer.write(parcel, 1, 1); Writer.write(parcel, 2, 3); Writer.write(parcel, 6, listOf(it), 0, false) } }
     }
     private inner class Peer : EsimPeer {
@@ -59,6 +59,9 @@ class EsimTargetTest {
         wire.use {
             val changed = wire.replace(mapOf(1 to { parcel -> Writer.write(parcel, 1, "changed", false) }))
             changed.use { assertEquals("future-carrier-field", it.text(199)); assertEquals("changed", it.text(1)); assertFalse(it.toString().contains("changed")) }
+        }
+        EsimWireRecord.build { it.writeInt(0xffff0002.toInt()); it.writeInt(4); it.writeInt(Int.MAX_VALUE) }.use { malicious ->
+            assertThrows(IllegalArgumentException::class.java) { malicious.list(2) }
         }
         val parcel = Parcel.obtain()
         try { parcel.writeInt(0xffff4f45.toInt()); parcel.writeInt(Int.MAX_VALUE); parcel.setDataPosition(0)
@@ -123,6 +126,46 @@ class EsimTargetTest {
         assertEquals(16, assertThrows(EsimFailure::class.java) { engine.credential(profile(engine)) }.status)
         engine.close()
     }
+    @Test fun freshSessionUuidAfterProcessLossCannotReplayCarrierMutation() {
+        val operations = mutableListOf<String?>()
+        val entitlement = EsimEntitlement({ EsimTargetIdentity("123456789012345", "1".repeat(32)) }, EsimEntitlementHttp { url ->
+            operations += url.queryParameter("operation")
+            if (operations.size == 1) throw IOException("synthetic unknown carrier outcome")
+            200 to reply()
+        })
+        fun engine() = EsimTransferEngine(context, Process.myUid(), entitlement, { Peer() }, {123})
+        val first = engine(); start().use { first.start(it) }
+        val before = profile(first); val previousId = before.text(4)
+        assertEquals(7, assertThrows(EsimFailure::class.java) { first.credential(before) }.status)
+        first.close()
+        val second = engine(); start().use { second.start(it) }
+        val after = profile(second); assertNotEquals(previousId, after.text(4)); second.credential(after).close()
+        assertEquals(listOf("ManageSubscription", "AcquireConfiguration"), operations); second.close()
+    }
+    @Test fun missingTargetIdentityDoesNotRecordANetworkMutation() {
+        var ready = false; val operations = mutableListOf<String?>()
+        val entitlement = EsimEntitlement({ EsimTargetIdentity("123456789012345", if (ready) "1".repeat(32) else "") }, EsimEntitlementHttp { url ->
+            operations += url.queryParameter("operation"); 200 to reply()
+        })
+        val engine = EsimTransferEngine(context, Process.myUid(), entitlement, { Peer() }, {123})
+        start().use { engine.start(it) }
+        assertEquals(48535, assertThrows(EsimFailure::class.java) { engine.credential(profile(engine)) }.status)
+        assertTrue(operations.isEmpty()); ready = true
+        engine.credential(profile(engine)).close()
+        assertEquals(listOf("ManageSubscription"), operations); engine.close()
+    }
+    @Test fun missingCarrierProtocolVersionIsLocalFailureAndCanBeFixedBeforeDispatch() {
+        val operations = mutableListOf<String?>()
+        val entitlement = EsimEntitlement({ EsimTargetIdentity("123456789012345", "1".repeat(32)) }, EsimEntitlementHttp { url ->
+            operations += url.queryParameter("operation"); 200 to reply()
+        })
+        fun engine() = EsimTransferEngine(context, Process.myUid(), entitlement, { Peer() }, {123})
+        val first = engine(); start(null).use { first.start(it) }
+        assertEquals(48569, assertThrows(EsimFailure::class.java) { first.credential(profile(first)) }.status)
+        assertTrue(operations.isEmpty()); first.close()
+        val second = engine(); start().use { second.start(it) }; second.credential(profile(second)).close()
+        assertEquals(listOf("ManageSubscription"), operations); second.close()
+    }
     @Test fun downloadReportMustMatchAuthenticatedSessionIccid() {
         val peer = Peer(); val engine = EsimTransferEngine(context, Process.myUid(), peerFactory = { peer }, carrierId = {123})
         start().use { engine.start(it) }
@@ -159,6 +202,34 @@ class EsimTargetTest {
         assertThrows(IllegalArgumentException::class.java) { EsimEntitlement.parse("<!DOCTYPE doc [<!ENTITY x SYSTEM 'file:///private'>]><doc/>") }
         assertEquals(48537, assertThrows(EsimFailure::class.java) { EsimEntitlement.response(mapOf("OperationResult" to "1", "SubscriptionResult" to "2", "ProfileActivationCode" to "bad")) }.status)
         assertEquals(48538, assertThrows(EsimFailure::class.java) { EsimEntitlement.response(mapOf("OperationResult" to "0")) }.status)
+    }
+    @Test fun preparationAndStartMatchPinnedPermissionContracts() {
+        val requirements = mutableListOf<Set<String>>()
+        val done = CountDownLatch(2); val errors = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        fun callback(name: String, expected: Int) = object : Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                try {
+                    data.enforceInterface(EsimTransferBinder.PREFIX + name)
+                    assertEquals(1, code); assertEquals(1, data.readInt())
+                    assertEquals(expected, Status.CREATOR.createFromParcel(data).statusCode); assertEquals(0, data.dataAvail())
+                } catch (e: Throwable) { errors.set(e) } finally { done.countDown() }
+                return true
+            }
+        }
+        val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { requirements += it })
+        for (code in listOf(5, 6)) {
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try {
+                data.writeInterfaceToken(EsimTransferBinder.DESCRIPTOR)
+                data.writeStrongBinder(callback(if (code == 5) "IPrepareEsimTransferDataCallbacks" else "IStartTransferSessionCallbacks", if (code == 5) 17 else 48522))
+                if (code == 6) { data.writeInt(1); EsimWireRecord.build { Writer.write(it, 1, 2) }.use { it.writeToParcel(data, 0) } }
+                assertTrue(binder.transact(code, data, reply, 0)); reply.readException()
+            } finally { data.recycle(); reply.recycle() }
+        }
+        try {
+            assertTrue(done.await(5, TimeUnit.SECONDS)); errors.get()?.let { throw it }
+            assertEquals(listOf(setOf("android.permission.READ_PRIVILEGED_PHONE_STATE"), setOf("android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS")), requirements)
+        } finally { binder.close() }
     }
     @Test fun binderChecksRealPermissionsBeforeDispatch() {
         val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { throw SecurityException("fixture") })

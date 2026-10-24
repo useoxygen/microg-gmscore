@@ -53,7 +53,8 @@ internal class EsimTransferEngine(private val context: Context, private val owne
         }
     }
     private fun receipt(profile: EsimProfile): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(("$ownerUid:${profile.id}:${profile.iccid}").toByteArray())
+        // Session UUID changes after restart; it cannot identify a carrier mutation.
+        val digest = MessageDigest.getInstance("SHA-256").digest(("$ownerUid:${profile.carrierId}:${profile.iccid}:${profile.entitlementUrl}").toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }
     @Synchronized fun credential(record: EsimWireRecord): EsimWireRecord {
@@ -84,9 +85,11 @@ internal class EsimTransferEngine(private val context: Context, private val owne
                 val key = receipt(profile)
                 // An unknown carrier mutation is reconciled with AcquireConfiguration, never replayed.
                 val reconcile = journal.contains(key)
-                check(journal.edit().putString(key, "dispatched").commit())
+                var dispatched = false
                 try {
-                    val result = entitlement.retrieve(profile, reconcile)
+                    val result = entitlement.retrieve(profile, reconcile) {
+                        check(journal.edit().putString(key, "dispatched").commit()); dispatched = true
+                    }
                     if (cancelled.get()) { result.close(); throw EsimFailure(16) }
                     val index = profiles.indexOf(cached)
                     val retained = profile.wire.replace(emptyMap())
@@ -96,7 +99,7 @@ internal class EsimTransferEngine(private val context: Context, private val owne
                     return result
                 } catch (e: Exception) {
                     // Even a rejected/unsupported response can follow a carrier-side mutation. Never replay it.
-                    check(journal.edit().putString(key, "unknown").commit())
+                    if (dispatched || reconcile) check(journal.edit().putString(key, "unknown").commit())
                     outcomes[profile.iccid] = 7; throw e
                 }
             }
@@ -112,12 +115,14 @@ internal class EsimTransferEngine(private val context: Context, private val owne
             val target = subscriptions.singleOrNull { it.subscriptionId == subId && it.isEmbedded } ?: throw EsimFailure(48535)
             val key = receipt(profile) + ":activation"
             if (journal.getString(key, null) in setOf("dispatched", "unknown", "activated")) throw EsimFailure(48572)
-            check(journal.edit().putString(key, "dispatched").commit())
+            var dispatched = false
             try {
-                entitlement.activate(profile, target.iccId)
+                entitlement.activate(profile, target.iccId) {
+                    check(journal.edit().putString(key, "dispatched").commit()); dispatched = true
+                }
                 check(journal.edit().putString(key, "activated").commit())
             } catch (e: Exception) {
-                check(journal.edit().putString(key, "unknown").commit()); throw e
+                if (dispatched) check(journal.edit().putString(key, "unknown").commit()); throw e
             }
         }
     }
