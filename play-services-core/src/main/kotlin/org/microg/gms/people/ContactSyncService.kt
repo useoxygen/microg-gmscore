@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.SyncResult
 import android.os.Bundle
 import android.util.Log
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -35,18 +36,25 @@ class ContactSyncService : Service() {
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
                     val api = contactsApi(token) { prefs.mode == SyncMode.TWO_WAY && mode == SyncMode.TWO_WAY }
-                    val store = AndroidContactStore(provider, account, prefs)
+                    val groups = AndroidGroupStore(provider, account, prefs)
+                    groups.initialize()
+                    val groupReport = GroupsSync(api, groups) { prefs.mode }.sync()
+                    val store = AndroidContactStore(provider, account, prefs, groups, api)
                     store.configureMode()
-                    val report = ContactsSync(api, store) { prefs.mode }.sync()
+                    val contactReport = ContactsSync(api, store) { prefs.mode }.sync()
+                    val photoReport = PhotosSync(api, api, store) { prefs.mode }.sync()
+                    val report = groupReport + contactReport + photoReport
                     result.stats.numEntries += report.downloaded
                     result.stats.numUpdates += report.uploaded
+                    result.stats.numParseExceptions += report.skipped
                     result.stats.numConflictDetectedExceptions += report.conflicts + report.uncertain
                     prefs.status = when {
+                        report.skipped > 0 -> "partial"
                         report.uncertain > 0 -> "uncertain"
                         report.conflicts > 0 -> "conflict"
                         else -> "success"
                     }
-                    if (report.conflicts == 0 && report.uncertain == 0) prefs.lastSuccess = System.currentTimeMillis()
+                    if (report.conflicts == 0 && report.uncertain == 0 && report.skipped == 0) prefs.lastSuccess = System.currentTimeMillis()
                 } catch (e: ApiException) {
                     if (e.status == 401) {
                         AccountManager.get(this@ContactSyncService).invalidateAuthToken(account.type,
@@ -55,7 +63,8 @@ class ContactSyncService : Service() {
                     prefs.status = if (e.status == 401 || e.status == 403) "authorization" else "network"
                     if (e.status == 401 || e.status == 403) result.stats.numAuthExceptions++ else result.stats.numIoExceptions++
                     if (e.retryAfterSeconds > 0) result.delayUntil = System.currentTimeMillis() / 1000 + e.retryAfterSeconds
-                    Log.w(TAG, "Contacts API status=${e.status}")
+                    prefs.diagnostic = ContactsDiagnostics.activation(ActivationStage.API, e)
+                    Log.w(TAG, "sync " + prefs.diagnostic)
                 } catch (e: AuthenticatorException) {
                     prefs.status = "authorization"
                     result.stats.numAuthExceptions++
@@ -79,6 +88,7 @@ class ContactSyncService : Service() {
             "https://www.googleapis.com/auth/contacts" else "https://www.googleapis.com/auth/contacts.readonly"
         fun contactsToken(context: Context, account: Account, mode: SyncMode): String {
             check(mode != SyncMode.OFF)
+            Log.i(TAG, "stage=authorization oauth2:" + scope(mode))
             val result = AccountManager.get(context).getAuthToken(account, "oauth2:" + scope(mode), null, false, null, null).result
             return result.getString(AccountManager.KEY_AUTHTOKEN)?.takeIf { it.isNotBlank() }
                 ?: throw AuthenticatorException("Contacts authorization required")
@@ -95,7 +105,26 @@ class ContactSyncService : Service() {
                     HttpReply(response.code, response.body?.string().orEmpty(),
                         response.header("Retry-After")?.toLongOrNull()?.coerceAtLeast(0) ?: 0)
                 }
-            }, canUpload)
+            }, canUpload, PhotoTransport { url ->
+                // Photo URLs are Google-hosted, but account bearer credentials
+                // belong only on the People API origin. Redirects stay disabled.
+                val photoUrl = url.toHttpUrl().newBuilder().setQueryParameter("sz", "1024").build()
+                http.newCall(Request.Builder().url(photoUrl).get().build()).execute().use { response ->
+                    if (response.code in listOf(403, 404)) throw UnreadableContact()
+                    if (!response.isSuccessful) throw ApiException(response.code)
+                    val body = response.body ?: throw UnreadableContact()
+                    if (body.contentLength() > ContactPhotos.MAX_BYTES) throw UnreadableContact()
+                    body.byteStream().use { input ->
+                        val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer); if (count < 0) break
+                            if (out.size() + count > ContactPhotos.MAX_BYTES) throw UnreadableContact()
+                            out.write(buffer, 0, count)
+                        }
+                        out.toByteArray()
+                    }
+                }
+            })
         }
     }
 }

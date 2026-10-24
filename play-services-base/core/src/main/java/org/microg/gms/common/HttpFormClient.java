@@ -94,7 +94,7 @@ public class HttpFormClient {
             } catch (IOException e) {
                 // Ignore
             }
-            throw new NotOkayException(error);
+            throw new NotOkayException(error, connection.getResponseCode());
         }
 
         String result = new String(Utils.readStreamToEnd(connection.getInputStream()));

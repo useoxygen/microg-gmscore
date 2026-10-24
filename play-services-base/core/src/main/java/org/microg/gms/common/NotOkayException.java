@@ -3,6 +3,15 @@ package org.microg.gms.common;
 import java.io.IOException;
 
 public class NotOkayException extends IOException {
+    private int httpStatus;
+
+    public NotOkayException(String message, int httpStatus) {
+        super(message);
+        this.httpStatus = httpStatus;
+    }
+
+    public int getHttpStatus() { return httpStatus; }
+
     public NotOkayException() {
     }
 

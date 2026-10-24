@@ -20,4 +20,5 @@
               android:contentAuthority="com.android.contacts"
               android:userVisible="true"
               android:supportsUploading="true"
-              android:isAlwaysSyncable="false"/>
+              android:isAlwaysSyncable="false"
+              android:settingsActivity="org.microg.gms.people.ContactsSyncActivity"/>

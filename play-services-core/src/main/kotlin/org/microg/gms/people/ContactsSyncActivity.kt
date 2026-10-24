@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.provider.ContactsContract
 import android.provider.ContactsContract.RawContacts
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -37,6 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.microg.gms.people.sync.ContactsDiagnostics
 import org.microg.gms.people.sync.ActivationFailure
 import org.microg.gms.people.sync.ActivationStage
 import org.microg.gms.people.sync.ActivationAccountRemoved
@@ -55,6 +58,7 @@ class ContactsSyncActivity : ComponentActivity() {
     private var busy by mutableStateOf(false)
     private var failure: ActivationFailure? by mutableStateOf(null)
     private var revision by mutableStateOf(0)
+    private var accessCheckResult by mutableStateOf<String?>(null)
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         waitingForPermission = false
         val choice = pending
@@ -83,6 +87,7 @@ class ContactsSyncActivity : ComponentActivity() {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineSmall)
                         Text(stringResource(R.string.contacts_sync_description))
+                        accessCheckResult?.let { Text(it) }
                         failure?.let { reason ->
                             Text(stringResource(when (reason) {
                                 ActivationFailure.PERMISSION -> R.string.contacts_sync_enable_permission
@@ -127,8 +132,18 @@ class ContactsSyncActivity : ComponentActivity() {
                                     }), modifier = Modifier.padding(top = 12.dp))
                                 }
                             }
+                            Text(stringResource(R.string.contacts_sync_check_description))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CyclonOutlinedButton(onClick = { checkAccess(account, SyncMode.DOWNLOAD) }, enabled = !busy) {
+                                    Text(stringResource(R.string.contacts_sync_check_download))
+                                }
+                                CyclonOutlinedButton(onClick = { checkAccess(account, SyncMode.TWO_WAY) }, enabled = !busy) {
+                                    Text(stringResource(R.string.contacts_sync_check_two_way))
+                                }
+                            }
                             if (prefs.mode != SyncMode.OFF) {
                                 Text(stringResource(when (prefs.status) {
+                                    "partial" -> R.string.contacts_sync_partial
                                     "success" -> R.string.contacts_sync_success
                                     "conflict" -> R.string.contacts_sync_conflict
                                     "uncertain" -> R.string.contacts_sync_uncertain
@@ -139,6 +154,15 @@ class ContactsSyncActivity : ComponentActivity() {
                                 }))
                                 if (prefs.lastSuccess > 0) Text(stringResource(R.string.contacts_sync_last_success,
                                     DateFormat.getDateTimeInstance().format(Date(prefs.lastSuccess))))
+                                if (prefs.mode == SyncMode.TWO_WAY) {
+                                    val insertIntent = Intent(Intent.ACTION_INSERT, RawContacts.CONTENT_URI)
+                                        .putExtra(ContactsContract.Intents.Insert.EXTRA_ACCOUNT, account)
+                                    if (insertIntent.resolveActivity(packageManager) != null) {
+                                        CyclonOutlinedButton(onClick = { startActivity(insertIntent) }, enabled = !busy) {
+                                            Text(stringResource(R.string.contacts_sync_new_contact))
+                                        }
+                                    }
+                                }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = { prefs.refresh(); revision++ }, enabled = !busy, colors = cyclonPrimaryButtonColors()) { Text(stringResource(R.string.contacts_sync_refresh)) }
                                     CyclonOutlinedButton(onClick = { choose(account, prefs.mode) }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_reconnect)) }
@@ -169,6 +193,7 @@ class ContactsSyncActivity : ComponentActivity() {
     }
     private fun choose(account: Account, mode: SyncMode) {
         failure = null
+        accessCheckResult = null
         if (mode == SyncMode.OFF) {
             ContactSyncPreferences(this, account).configure(mode, Long.MAX_VALUE)
             revision++
@@ -185,6 +210,7 @@ class ContactsSyncActivity : ComponentActivity() {
         else authorize(account, mode)
     }
     private suspend fun authToken(account: Account, mode: SyncMode): String = suspendCancellableCoroutine { continuation ->
+        Log.i("GmsContactSync", "stage=authorization oauth2:" + ContactSyncService.scope(mode))
         val future = AccountManager.get(this).getAuthToken(account, "oauth2:" + ContactSyncService.scope(mode), null, this, { result ->
             if (continuation.isActive) try {
                 val token = result.result.getString(AccountManager.KEY_AUTHTOKEN)
@@ -194,7 +220,14 @@ class ContactsSyncActivity : ComponentActivity() {
         }, null)
         continuation.invokeOnCancellation { future.cancel(false) }
     }
-    private fun authorize(account: Account, mode: SyncMode) {
+    private fun checkAccess(account: Account, mode: SyncMode) {
+        failure = null
+        accessCheckResult = null
+        retryChoice = null
+        busy = true
+        authorize(account, mode, checkOnly = true)
+    }
+    private fun authorize(account: Account, mode: SyncMode, checkOnly: Boolean = false) {
         lifecycleScope.launch {
             var stage = ActivationStage.AUTHORIZATION
             try {
@@ -203,7 +236,7 @@ class ContactsSyncActivity : ComponentActivity() {
                     stage = ActivationStage.API
                     try {
                         // Verify API access before enabling scheduling or contact writes.
-                        withContext(Dispatchers.IO) { ContactSyncService.contactsApi(token) { false }.list(null, null) }
+                        withContext(Dispatchers.IO) { ContactSyncService.contactsApi(token) { false }.checkAccess() }
                     } catch (e: ApiException) {
                         if (e.status != 401) throw e
                         // Retry one expired cached token. A 403 is a separate API-access failure.
@@ -211,7 +244,12 @@ class ContactsSyncActivity : ComponentActivity() {
                         stage = ActivationStage.AUTHORIZATION
                         token = authToken(account, mode)
                         stage = ActivationStage.API
-                        withContext(Dispatchers.IO) { ContactSyncService.contactsApi(token) { false }.list(null, null) }
+                        withContext(Dispatchers.IO) { ContactSyncService.contactsApi(token) { false }.checkAccess() }
+                    }
+                    if (checkOnly) {
+                        Log.i("GmsContactSync", "stage=api mode=${mode.name} result=ACCESS_CHECK_SUCCESS")
+                        accessCheckResult = getString(R.string.contacts_sync_check_success)
+                        return@withTimeout
                     }
                     stage = ActivationStage.LOCAL
                     val floor = withContext(Dispatchers.IO) {
@@ -219,18 +257,27 @@ class ContactsSyncActivity : ComponentActivity() {
                             "${RawContacts._ID} DESC")?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
                             ?: throw IllegalStateException("Contacts provider unavailable")
                     }
+                    val groupFloor = withContext(Dispatchers.IO) {
+                        contentResolver.query(ContactsContract.Groups.CONTENT_URI, arrayOf(ContactsContract.Groups._ID), null, null,
+                            "${ContactsContract.Groups._ID} DESC")?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                            ?: throw IllegalStateException("Contacts groups unavailable")
+                    }
                     // Return to the lifecycle-owned coroutine before committing the choice.
                     // A cancelled/recreated screen must not enable scheduling from an old IO task.
                     if (!AccountManager.get(this@ContactsSyncActivity).getAccountsByType(account.type).contains(account))
                         throw ActivationAccountRemoved()
-                    ContactSyncPreferences(this@ContactsSyncActivity, account).configure(mode, floor)
+                    ContactSyncPreferences(this@ContactsSyncActivity, account).configure(mode, floor, groupFloor)
                 }
                 retryChoice = null
                 revision++
             } catch (e: TimeoutCancellationException) { failure = ActivationFailure.TIMEOUT }
             catch (e: OperationCanceledException) { failure = ActivationFailure.CANCELLED }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { failure = activationFailure(stage, e) }
+            catch (e: Exception) {
+                failure = activationFailure(stage, e)
+                Log.w("GmsContactSync", "activation " + ContactsDiagnostics.activation(stage, e))
+                if (!checkOnly) ContactSyncPreferences(this@ContactsSyncActivity, account).diagnostic = ContactsDiagnostics.activation(stage, e)
+            }
             finally { busy = false; pending = null }
         }
     }

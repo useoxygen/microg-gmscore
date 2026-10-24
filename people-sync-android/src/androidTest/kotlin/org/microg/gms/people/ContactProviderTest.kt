@@ -7,7 +7,6 @@ import android.accounts.AccountManager
 import android.content.pm.PackageManager
 import android.content.ContentUris
 import android.content.ContentValues
-import android.os.Build
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
@@ -23,7 +22,6 @@ import org.junit.runner.RunWith
 import org.junit.rules.ExternalResource
 import org.microg.gms.people.sync.*
 import java.util.UUID
-import java.io.File
 
 /** Real Contacts Provider, mock remote service; physical devices require explicit serial opt-in. */
 @RunWith(AndroidJUnit4::class)
@@ -73,27 +71,8 @@ class ContactProviderTest {
         }
         override fun delete(resource: String) { writes++; remote = null; afterWrite?.invoke() }
     }
-    private fun approvedDevice(): Boolean {
-        if (Build.HARDWARE in listOf("ranchu", "goldfish")) return true
-        // Default runs still refuse physical phones. The caller must supply the
-        // exact connected serial, and the phone must be a development build.
-        if (Build.TYPE !in listOf("userdebug", "eng") || Build.VERSION.SDK_INT < 29) return false
-        val arguments = InstrumentationRegistry.getArguments()
-        val expected = arguments.getString("physicalDeviceSerial")
-            ?.takeIf { it.isNotBlank() } ?: return false
-        val nonce = arguments.getString("physicalDeviceNonce")?.takeIf { it.isNotBlank() } ?: return false
-        // The serial-pinned host runner reads ro.serialno through ADB and writes
-        // a fresh, one-run proof into this debug APK's private storage. Avoid
-        // UiAutomation entirely so another agent can retain its screen connection.
-        return runCatching {
-            val proof = JSONObject(File(context.filesDir, "physical-device-authorization.json").readText())
-            val age = System.currentTimeMillis() - proof.getLong("createdAt")
-            proof.getString("serial") == expected && proof.getString("nonce") == nonce &&
-                proof.getString("fingerprint") == Build.FINGERPRINT && age in 0..300_000
-        }.getOrDefault(false)
-    }
     @Before fun setup() {
-        check(context.packageName == "org.microg.gms.people.sync.android.test" && approvedDevice()) {
+        check(context.packageName == "org.microg.gms.people.sync.android.test" && FixtureDeviceApproval.approved(context)) {
             "Fixture tests require an emulator or an explicitly selected development phone"
         }
         account = Account("fixture-" + UUID.randomUUID(), "org.microg.gms.contacts.fixture")
@@ -205,6 +184,23 @@ class ContactProviderTest {
             .put("urls", JSONArray().put(JSONObject().put("value", "https://example.invalid").put("type", "work")))
         sync()
         store { assertEquals(it.project(api.remote!!), it.contacts().single().fields) }
+    }
+    @Test fun extendedFieldsRoundTripAndUploadThroughProvider() {
+        api.remote!!.json
+            .put("events", JSONArray().put(JSONObject().put("type", "anniversary")
+                .put("date", JSONObject().put("year", 0).put("month", 2).put("day", 29))))
+            .put("relations", JSONArray().put(JSONObject().put("person", "Synthetic friend").put("type", "friend")))
+            .put("imClients", JSONArray().put(JSONObject().put("username", "synthetic").put("protocol", "custom-protocol").put("type", "work")))
+            .put("sipAddresses", JSONArray().put(JSONObject().put("value", "sip:fixture@example.invalid").put("type", "home")))
+            .put("userDefined", JSONArray().put(JSONObject().put("key", "Fixture key").put("value", "Fixture value")))
+        prefs.configure(SyncMode.TWO_WAY, 0); sync()
+        store { assertEquals(it.project(api.remote!!), it.contacts().single().fields) }
+        val id = store { it.contacts().single().id }
+        assertEquals(1, resolver.update(Data.CONTENT_URI, ContentValues().apply { put(Data.DATA2, "Changed value") },
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), ContactFieldMapper.USER_DEFINED_MIME)))
+        assertEquals(1, sync().uploaded)
+        assertEquals("Changed value", api.remote!!.json.getJSONArray("userDefined").getJSONObject(0).getString("value"))
+        assertEquals(1, api.remote!!.json.getJSONArray("events").length())
     }
     @Test fun preferredNumberChangesUploadAsSourcePrimaryMetadata() {
         val first = JSONObject().put("value", "123").put("type", "mobile").put("metadata", JSONObject().put("sourcePrimary", true))
