@@ -24,6 +24,13 @@ android {
         multiDexEnabled true
     }
 
+    // minSdk 33 would store dex uncompressed; keep the earlier packing.
+    packagingOptions {
+        dex {
+            useLegacyPackaging true
+        }
+    }
+
     buildTypes {
         debug {
             postprocessing {
