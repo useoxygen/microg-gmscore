@@ -3,6 +3,8 @@
 package org.microg.gms.migration
 
 import org.microg.gms.migration.android.AndroidTargetDeviceBinder
+import org.microg.gms.migration.android.AndroidSessionStore
+import org.microg.gms.migration.android.LegacyTargetBootstrap
 import org.microg.gms.migration.nearby.DctRecord
 import org.microg.gms.migration.nearby.DctSchemas
 import org.microg.gms.migration.session.DctSessions
@@ -50,7 +52,12 @@ class SwitchSupportService : LifecycleService() {
             val target = service == GmsService.SMARTDEVICE_D2D_TARGET_DEVICE || direct
             val features = if (direct) emptyArray() else if (target) arrayOf(Feature("post_setup_restore_api", 1L), Feature("post_setup_pair", 4L), Feature("post_setup_clean_restore_api", 1L))
                 else arrayOf(Feature("post_setup_3p_restore_api", 1L), Feature("post_setup_api", 1L))
-            val binder = if (target) AndroidTargetDeviceBinder(Binder.getCallingUid(), direct = direct).also {
+            val uid = Binder.getCallingUid()
+            val sessions = AndroidSessionStore(java.io.File(noBackupFilesDir, "migration-android"))
+            val binder = if (target) AndroidTargetDeviceBinder(uid,
+                sessions.load(uid), direct = direct, reload = { sessions.load(uid) }, bootstrapFactory = { options, listener, started ->
+                    LegacyTargetBootstrap(this@SwitchSupportService,options,listener,{ sessions.commit(uid,it) },started)
+                }).also {
                 synchronized(targets) { targets.add(it) }
             } else EmptySetupStateBinder(Binder.getCallingUid(), false)
             callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS, binder,

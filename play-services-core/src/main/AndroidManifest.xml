@@ -210,6 +210,20 @@
     <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
     <uses-permission android:name="android.permission.BACKUP" tools:ignore="ProtectedPermissions" />
 
+    <!-- Classic Nearby migration: public radio APIs; LOCAL_MAC_ADDRESS is needed
+         only for regular BLE advertisements to carry the real RFCOMM endpoint.
+         The image must allowlist this privileged permission; never use 02:00... . -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.LOCAL_MAC_ADDRESS" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+
     <application
         android:allowBackup="true"
         android:forceQueryable="true"

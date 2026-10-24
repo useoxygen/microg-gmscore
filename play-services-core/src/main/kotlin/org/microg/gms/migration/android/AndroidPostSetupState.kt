@@ -7,7 +7,8 @@ import java.io.Closeable
 
 /** Per-client state. Only a verified bootstrap producer may construct a retained session.
  * The Binder API cannot install a secret or turn an arbitrary hint into authenticated state. */
-internal class AndroidPostSetupState(private var session: VerifiedBootstrap? = null) : Closeable {
+internal class AndroidPostSetupState(private var session: VerifiedBootstrap? = null,
+    private val clearStored: () -> Unit = {}, private val valid: () -> Boolean = { true }) : Closeable {
     internal class VerifiedBootstrap(val id: String, sharedSecret: ByteArray) : Closeable {
         private val secret = sharedSecret.copyOf().also { require(it.size == 32) }
         private var closed = false
@@ -17,8 +18,9 @@ internal class AndroidPostSetupState(private var session: VerifiedBootstrap? = n
         override fun close() { closed = true; secret.fill(0) }
     }
     private var handshake: PostSetupTargetHandshake? = null
-    @Synchronized fun hint(): DctRecord? = session?.hint()
+    @Synchronized fun hint(): DctRecord? { if(!valid()) clearRetained(); return session?.hint() }
     @Synchronized fun start(): ByteArray? {
+        if(hint() == null) return null
         val retained = session ?: return null
         handshake?.close()
         val next = retained.handshake()
@@ -26,10 +28,12 @@ internal class AndroidPostSetupState(private var session: VerifiedBootstrap? = n
         catch (e: Exception) { next.close(); throw e }
     }
     @Synchronized fun finish(message: ByteArray): Pair<ByteArray, ByteArray>? {
+        if(hint() == null) return null
         if (session == null) return null
         return checkNotNull(handshake) { "Post-setup handshake not started" }.finish(message)
     }
     @Synchronized fun authenticate(message: ByteArray, hmac: ByteArray): ByteArray? {
+        if(hint() == null) return null
         if (session == null) return null
         val active = checkNotNull(handshake) { "Post-setup handshake not started" }
         return try { active.authenticate(message, hmac) } finally { active.close(); handshake = null }
@@ -38,6 +42,7 @@ internal class AndroidPostSetupState(private var session: VerifiedBootstrap? = n
         handshake?.close(); handshake = null
         session?.close(); session = null
     }
+    @Synchronized fun clearRetained() { close(); clearStored() }
 }
 
 internal object AndroidSetupSchemas {

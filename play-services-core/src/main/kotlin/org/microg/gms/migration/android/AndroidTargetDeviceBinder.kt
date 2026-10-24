@@ -15,22 +15,31 @@ import java.io.Closeable
  * The pipe transport is separately testable; account bootstrap remains unavailable. */
 internal class AndroidTargetDeviceBinder(
     uid: Int,
-    private val state: AndroidPostSetupState = AndroidPostSetupState(),
-    private val direct: Boolean = false
+    private var state: AndroidPostSetupState = AndroidPostSetupState(),
+    private val direct: Boolean = false,
+    private val reload: (() -> AndroidPostSetupState)? = null,
+    private val bootstrapFactory: ((DctRecord, IBinder, (Int) -> Unit) -> LegacyTargetBootstrap)? = null
 ) : MigrationBinder(if (direct) DIRECT_TARGET_DESCRIPTOR else TARGET_DESCRIPTOR, uid), Closeable {
+    private var bootstrap: LegacyTargetBootstrap? = null
     override fun dispatch(transaction: Int, data: Parcel, reply: Parcel?): Boolean {
         val code = if (direct) when (transaction) { 1 -> 10; 2 -> 11; else -> return false } else transaction
         if (code !in setOf(1, 2, 3, 4, 5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)) return false
+        if(code in listOf(13,14,15,17) && state.hint() == null && reload != null) { state.close(); state = reload.invoke() }
         if (code == 4) {
             data.skipSafeParcelable(); data.skipApiMetadata(); data.requireEnd()
-            reply?.writeNoException(); reply?.writeString("") // No active advertising name.
+            reply?.writeNoException(); reply?.writeString(bootstrap?.name ?: "")
             return true
         }
         val callback = requireNotNull(data.readStrongBinder())
         when (code) {
             1 -> {
-                data.skipSafeParcelable(); data.readStrongBinder(); data.skipApiMetadata(); data.requireEnd()
-                status(callback, 1, 10557) // NEARBY_BOOTSTRAP_ERROR; no radio/bootstrap is running.
+                val options = requireNotNull(DctRecord.nullable(data,LegacyBootstrapExchange.schema))
+                val listener = requireNotNull(data.readStrongBinder()); data.skipApiMetadata(); data.requireEnd()
+                try {
+                    if(bootstrap?.isActive == true) status(callback,1,10551)
+                    else if(bootstrapFactory == null) status(callback,1,10557)
+                    else bootstrap = bootstrapFactory.invoke(options,listener) { code -> status(callback,1,code) }.also { it.start() }
+                } finally { options.close() }
             }
             2 -> {
                 data.readStrongBinder(); data.skipApiMetadata(); data.requireEnd()
@@ -96,12 +105,12 @@ internal class AndroidTargetDeviceBinder(
             }
             23 -> {
                 data.skipApiMetadata(); data.requireEnd()
-                state.close(); pair(callback, 9, 0)
+                state.clearRetained(); pair(callback, 9, 0)
             }
             else -> {
                 data.skipApiMetadata(); data.requireEnd()
                 when (code) {
-                    3 -> status(callback, 3, 10552)
+                    3 -> { bootstrap?.close(); bootstrap = null; status(callback,3,0) }
                     5 -> status(callback, 4, 10552, textResult = true)
                     11 -> status(callback, 6, 10565)
                     16 -> status(callback, 7, 10581, nullResult = true)
@@ -136,7 +145,7 @@ internal class AndroidTargetDeviceBinder(
             if (emptyList) writeInt(0)
         }
     }
-    override fun close() = state.close()
+    override fun close() { bootstrap?.close(); bootstrap = null; state.close() }
     companion object {
         const val DIRECT_TARGET_DESCRIPTOR = "com.google.android.gms.smartdevice.directtransfer.internal.ITargetDirectTransferService"
         const val DIRECT_CALLBACK = "com.google.android.gms.smartdevice.directtransfer.internal.IDirectTransferCallback"

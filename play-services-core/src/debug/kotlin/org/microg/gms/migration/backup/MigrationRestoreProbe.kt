@@ -63,7 +63,48 @@ object MigrationRestoreProbe {
             transport.finishRestore()
         }
         check(File(stage, app.packageName).readBytes().contentEquals(data))
+        helperIntegration(root, metadata, data)
         println("PASS: real Android hidden transport Binder/API, key-value/full-stream bytes, FD ownership and restore evidence preserved")
         println("Not tested: BackupManager registration/restore, app agents/policy, stock-GMS transfer")
+    }
+    private fun helperIntegration(root: File, metadata: ByteArray, data: ByteArray) {
+        val folder = File(root,"helper").apply { check(mkdir()) }
+        val context = object : ContextWrapper(null) { override fun getNoBackupFilesDir(): File = folder }
+        val helper = org.microg.gms.migration.EmptyMigrateHelper(android.os.Process.myUid(),context)
+        class Result : android.os.Binder() {
+            val latch = java.util.concurrent.CountDownLatch(1); var result = 0
+            override fun onTransact(code: Int, parcel: android.os.Parcel, reply: android.os.Parcel?, flags: Int): Boolean {
+                parcel.enforceInterface("com.google.android.gms.backup.migrate.helper.IVoidCallbacks")
+                check(parcel.dataAvail()==0); result=code; latch.countDown(); return true
+            }
+        }
+        fun call(code: Int, result: Result, write: android.os.Parcel.() -> Unit) {
+            val request=android.os.Parcel.obtain(); val reply=android.os.Parcel.obtain()
+            try { request.writeInterfaceToken("com.google.android.gms.backup.migrate.helper.ID2dMigrateHelper"); request.write(); request.writeStrongBinder(result); check(helper.transact(code,request,reply,0)); reply.readException() }
+            finally { request.recycle(); reply.recycle() }
+        }
+        val pipe=ParcelFileDescriptor.createPipe(); val started=Result()
+        call(3,started) { writeString("com.example.synthetic"); writeInt(1); pipe[0].writeToParcel(this,0) }
+        check(started.latch.await(1,java.util.concurrent.TimeUnit.SECONDS) && started.result==1) { "Staging registration waited for EOF or failed" }
+        val stage=File(folder,"migration-staging"); check(!File(stage,"com.example.synthetic").exists())
+        ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(data) }
+        val completed=Result(); call(4,completed) { writeString("com.example.synthetic") }
+        check(completed.latch.await(6,java.util.concurrent.TimeUnit.SECONDS) && completed.result==1) { "Helper did not publish confirmed EOF" }
+        pipe[0].close()
+        check(File(stage,"com.example.synthetic").readBytes().contentEquals(data))
+        File(stage,"@pm@").writeBytes(metadata); File(stage,"restore_token_file").writeText("42")
+        val app=PackageInfo().apply { packageName="com.example.synthetic"; applicationInfo=ApplicationInfo().apply { backupAgentName=null } }
+        MigrationBackupTransport(context).use { transport ->
+            check(transport.startRestore(42,arrayOf(app))==0)
+            check(transport.nextRestorePackage().packageName==app.packageName)
+            val output=File(folder,"restored")
+            ParcelFileDescriptor.open(output,ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_READ_WRITE).use { fd ->
+                var count=0
+                while(true) { val chunk=transport.getNextFullRestoreDataChunk(fd); if(chunk == -1)break; check(chunk>0); count+=chunk }
+                check(count==data.size)
+            }
+            check(output.readBytes().contentEquals(data))
+        }
+        println("PASS: C helper tx3 registration before EOF, tx4 two-phase publication -> A local restore exact bytes")
     }
 }

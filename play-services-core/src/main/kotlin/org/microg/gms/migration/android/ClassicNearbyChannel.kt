@@ -17,15 +17,36 @@ import java.security.MessageDigest
  * not compatible with DCT's HTTPS framing. The medium owner must enforce a deadline.
  * Application acceptance is required before any authenticated payload is exposed. */
 internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : Closeable {
-    private val reader = DataInputStream(input)
-    private val writer = DataOutputStream(output)
+    private var reader = DataInputStream(input)
+    private var writer = DataOutputStream(output)
     private var handshake: Ukey2Handshake? = null
     private var verification: ByteArray? = null
     private var context: D2DConnectionContext? = null
     @Volatile private var closed = false
     private var pending = false
+    private var pausedWrites: MutableList<V1Frame>? = null
     var endpointId: String? = null
         private set
+
+    fun requestConnection(localId: String, localInfo: ByteArray, peerId: String): ByteArray {
+        check(!closed && !pending && context == null)
+        require(localId.length == 4 && peerId.length == 4 && localInfo.size <= 131)
+        val request = ConnectionRequestFrame.newBuilder().setEndpointId(localId)
+            .setEndpointName(localInfo.toString(Charsets.UTF_8))
+            .setEndpointInfo(org.microg.gms.migration.protobuf.ByteString.copyFrom(localInfo))
+            .setNonce(java.security.SecureRandom().nextInt())
+            .addMediums(ConnectionRequestFrame.Medium.WIFI_LAN)
+            .setKeepAliveIntervalMillis(5000).setKeepAliveTimeoutMillis(30000)
+        writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.CONNECTION_REQUEST)
+            .setConnectionRequest(request).build(), false)
+        val active = Ukey2Handshake.forInitiator(Ukey2Handshake.HandshakeCipher.P256_SHA512)
+        writePacket(active.nextHandshakeMessage)
+        active.parseHandshakeMessage(readPacket())
+        writePacket(active.nextHandshakeMessage)
+        val token = active.getVerificationString(32)
+        endpointId = peerId; handshake = active; verification = token; pending = true
+        return token.copyOf()
+    }
 
     /** Returns an owned copy of the raw verification token for the app's consent UI. */
     fun receiveConnection(): Pair<ConnectionRequestFrame, ByteArray> {
@@ -82,13 +103,19 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         } finally { close() }
     }
 
+    val isConnected: Boolean get() = context != null && !closed
+
     fun receive(): V1Frame {
         check(context != null && !closed)
         return parse(requireNotNull(context).decodeMessageFromPeer(readPacket()))
     }
 
-    fun send(frame: V1Frame) {
+    @Synchronized fun send(frame: V1Frame) {
         check(context != null && !closed)
+        val paused = pausedWrites
+        if(paused != null && frame.type != V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION) {
+            require(paused.size<128); paused.add(frame); return
+        }
         writeFrame(frame, encrypted = true)
     }
 
@@ -101,6 +128,67 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
                 .setUpgradePathInfo(upgrade.upgradePathInfo)).build())
     }
 
+    /** Responder side of public Nearby BWU. Called by the sole reader. All payload
+     * writes pause while the prior encrypted channel drains; crypto counters are
+     * reused unchanged on the new medium. Never disable encryption for throughput. */
+    @Synchronized fun upgrade(input: InputStream, output: OutputStream, localId: String,
+        expectsAck: Boolean, drain: (V1Frame) -> Unit) {
+        check(context != null && !closed)
+        require(localId.length == 4)
+        val nextReader = DataInputStream(input); val nextWriter = DataOutputStream(output)
+        fun plain(frame: V1Frame) { val bytes = OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(frame).build().toByteArray(); nextWriter.writeInt(bytes.size); nextWriter.write(bytes); nextWriter.flush() }
+        fun negotiation(event: BandwidthUpgradeNegotiationFrame.EventType) = V1Frame.newBuilder()
+            .setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
+            .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder().setEventType(event)).build()
+        var committed = false
+        try {
+            check(pausedWrites == null); pausedWrites = mutableListOf()
+            plain(V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
+                .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder()
+                    .setEventType(BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION)
+                    .setClientIntroduction(BandwidthUpgradeNegotiationFrame.ClientIntroduction.newBuilder()
+                        .setEndpointId(localId).setSupportsDisablingEncryption(false))).build())
+            if(expectsAck) {
+                val ack = parse(readPacket(nextReader))
+                require(ack.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
+                    ack.bandwidthUpgradeNegotiation.eventType == BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION_ACK)
+            }
+            send(negotiation(BandwidthUpgradeNegotiationFrame.EventType.LAST_WRITE_TO_PRIOR_CHANNEL))
+            committed = true
+            var last = false; var safe = false
+            val deadline = System.nanoTime()+30_000_000_000L
+            var count = 0
+            while(!safe) {
+                check(System.nanoTime()<deadline && ++count<=128)
+                val frame = receive()
+                if(frame.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION) {
+                    when(frame.bandwidthUpgradeNegotiation.eventType) {
+                        BandwidthUpgradeNegotiationFrame.EventType.LAST_WRITE_TO_PRIOR_CHANNEL -> {
+                            check(!last); last=true
+                            send(negotiation(BandwidthUpgradeNegotiationFrame.EventType.SAFE_TO_CLOSE_PRIOR_CHANNEL))
+                        }
+                        BandwidthUpgradeNegotiationFrame.EventType.SAFE_TO_CLOSE_PRIOR_CHANNEL -> { check(last); safe=true }
+                        else -> throw IOException("Unexpected bandwidth-upgrade ordering")
+                    }
+                } else { check(!last); drain(frame) }
+            }
+            // Closing courtesy is intentionally cleartext and consumes no crypto sequence.
+            writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.DISCONNECTION)
+                .setDisconnection(DisconnectionFrame.getDefaultInstance()).build(),false)
+            runCatching { parse(readPacket()) } // peer may already have closed its prior socket
+            val oldReader=reader; val oldWriter=writer
+            reader=nextReader; writer=nextWriter
+            runCatching { oldReader.close() }; runCatching { oldWriter.close() }
+            val queued = requireNotNull(pausedWrites); pausedWrites = null
+            queued.forEach { send(it) }
+        } catch(e: Exception) {
+            pausedWrites = null
+            runCatching { nextReader.close() }; runCatching { nextWriter.close() }
+            if(committed) close()
+            throw e
+        }
+    }
+
     @Synchronized private fun writeFrame(frame: V1Frame, encrypted: Boolean) {
         val bytes = OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(frame).build().toByteArray()
         writePacket(if (encrypted) requireNotNull(context).encodeMessageToPeer(bytes) else bytes)
@@ -109,11 +197,11 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         check(!closed); require(bytes.size in 1..MAX_PACKET)
         writer.writeInt(bytes.size); writer.write(bytes); writer.flush()
     }
-    private fun readPacket(): ByteArray {
+    private fun readPacket(input: DataInputStream = reader): ByteArray {
         check(!closed)
-        val length = reader.readInt()
+        val length = input.readInt()
         if (length !in 1..MAX_PACKET) throw IOException("Invalid Nearby frame length")
-        return ByteArray(length).also(reader::readFully)
+        return ByteArray(length).also(input::readFully)
     }
     override fun close() {
         closed = true

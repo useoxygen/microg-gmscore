@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: 2026 Cyclon
+// SPDX-License-Identifier: Apache-2.0
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+android {
+    namespace 'org.microg.migration.lab'
+    compileSdkVersion androidCompileSdk
+    defaultConfig { applicationId 'org.microg.migration.lab'; minSdkVersion 26; targetSdkVersion 35; versionCode 1; versionName '0.1' }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+
+}
+dependencies { implementation project(':play-services-basement'); implementation project(':migration-ukey2'); implementation "com.google.guava:guava:$guavaVersion" }
+
+// Kotlin's Android source integration does not preserve SourceDirectorySet filters;
+// stage only this explicitly audited subset, never the whole GmsCore application.
+def stageLab = tasks.register('stageClassicLabSources', Sync) {
+    from('../play-services-core/src/main/kotlin') {
+        include 'org/microg/gms/migration/MigrationBinder.kt'
+        include 'org/microg/gms/migration/nearby/DctRecord.kt'
+        include 'org/microg/gms/migration/android/Classic*.kt'
+        include 'org/microg/gms/migration/android/DeadlineFdStreams.kt'
+    }
+    from('../play-services-core/src/debug/kotlin') {
+        include 'org/microg/gms/migration/backup/GmsClassicPeerProbe.kt'
+    }
+    into layout.buildDirectory.dir('generated/classicLab')
+}
+kotlin.sourceSets.main.kotlin.srcDir(layout.buildDirectory.dir('generated/classicLab'))
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach { dependsOn(stageLab) }

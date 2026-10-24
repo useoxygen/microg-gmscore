@@ -13,6 +13,7 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
         fun open(header: PayloadTransferFrame.PayloadHeader): OutputStream
         fun progress(id: Long, bytes: Long)
         fun complete(id: Long, bytes: Long)
+        fun cancelled(id: Long) { failed(id) }
         fun failed(id: Long)
     }
     private class Pending(val header: PayloadTransferFrame.PayloadHeader, val stream: OutputStream, var size: Long = 0)
@@ -30,7 +31,7 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
         if (frame.packetType == PayloadTransferFrame.PacketType.CONTROL) {
             require(frame.hasControlMessage())
             pending.remove(id)?.let { item ->
-                try { item.stream.close() } finally { sink.failed(id) }
+                try { item.stream.close() } finally { if(frame.controlMessage.event == PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_CANCELED) sink.cancelled(id) else sink.failed(id) }
             }
             return
         }
@@ -65,6 +66,11 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
             sink.failed(id)
             throw e
         }
+    }
+    @Synchronized fun cancel(id: Long): Boolean {
+        val item=pending.remove(id) ?: return false
+        try { item.stream.close() } finally { sink.failed(id) }
+        return true
     }
     @Synchronized override fun close() {
         closed = true
