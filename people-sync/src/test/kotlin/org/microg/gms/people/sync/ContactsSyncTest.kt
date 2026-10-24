@@ -67,6 +67,7 @@ class ContactsSyncTest {
     private inner class Api : ContactsApi {
         val remote = linkedMapOf<String, Person>()
         var page: ((String?, String?) -> Page)? = null
+        var unreadableResource: String? = null
         var writes = 0
         var creates = 0
         var createFailure = false
@@ -75,7 +76,10 @@ class ContactsSyncTest {
         var mask: Set<String>? = null
         override fun list(syncToken: String?, pageToken: String?) = page?.invoke(syncToken, pageToken)
             ?: Page(remote.values.toList(), null, "checkpoint")
-        override fun get(resource: String) = remote[resource]
+        override fun get(resource: String): Person? {
+            if (resource == unreadableResource) throw UnreadableContact()
+            return remote[resource]
+        }
         override fun create(body: JSONObject): Person {
             writes++; creates++
             val result = person("created", "created-etag", body.keys().asSequence().filter { it in PeopleApi.EDITABLE_FIELDS }
@@ -105,6 +109,60 @@ class ContactsSyncTest {
         return store to api
     }
 
+    @Test fun unreadableContactPreservesItsStoredCopyAndHoldsCheckpoint() {
+        val (store, api) = setup()
+        api.page = { _, _ -> Page(listOf(person("b")), null, "new", 1, setOf("people/a")) }
+        val report = ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(1, report.skipped)
+        assertEquals(setOf("people/a", "people/b"), store.rows.values.map { it.resource }.toSet())
+        assertEquals("checkpoint", store.token)
+    }
+    @Test fun partialFullReadCannotDeleteEvenWithUnknownMalformedIdentityOrTombstone() {
+        val (store, api) = setup(); store.token = null; api.remote.clear()
+        api.page = { _, _ -> Page(listOf(deleted("a"), person("b")), null, "new", 1) }
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(2, store.rows.size); assertNull(store.token)
+    }
+    @Test fun unreadableIdentityQuarantinesAReadableDuplicateAcrossPagesAndDirtyDeletes() {
+        val (store, api) = setup(); store.edit(deleted = true)
+        api.page = { _, page -> if (page == null) Page(listOf(person()), "p", null)
+            else Page(emptyList(), null, "new", 1, setOf("people/a")) }
+        val report = ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(0, api.writes); assertTrue(store.rows.getValue(1).deleted)
+        assertEquals(1, report.skipped); assertEquals("checkpoint", store.token)
+    }
+    @Test fun unreadableDirectReadKeepsEarlierTombstonesAndAllowsReadableSiblings() {
+        val (store, api) = setup()
+        api.remote["people/b"] = person("b")
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        api.unreadableResource = "people/b"
+        api.page = { _, _ -> Page(listOf(deleted("a"), person("b", "changed"), person("c")), null, "new") }
+        val report = ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(1, report.skipped)
+        assertEquals(setOf("people/a", "people/b", "people/c"), store.rows.values.map { it.resource }.toSet())
+        assertEquals("checkpoint", store.token)
+    }
+    @Test fun retryAfterMalformedEntryRecoversAndCommitsCheckpoint() {
+        val (store, api) = setup()
+        api.page = { _, _ -> Page(emptyList(), null, "new", 1, setOf("people/a")) }
+        assertEquals(1, ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync().skipped)
+        api.page = { _, _ -> Page(listOf(person(etag = "repaired")), null, "new") }
+        assertEquals(0, ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync().skipped)
+        assertEquals("new", store.token); assertEquals(1, store.rows.size)
+    }
+    @Test fun partialReadDoesNotDuplicateOrResolveAnUncertainCreate() {
+        val store = Store(); val api = Api()
+        store.rows[1] = LocalContact(1, 1, null, null, fields(), emptyMap(), true, false)
+        store.nextId = 2
+        api.createFailure = true
+        assertThrows(IOException::class.java) { ContactsSync(api, store) { SyncMode.TWO_WAY }.sync() }
+        api.createFailure = false
+        api.page = { _, _ -> Page(api.remote.values.toList(), null, "new", 1) }
+        val report = ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, store.rows.size); assertEquals(1, api.creates)
+        assertNotNull(store.rows.getValue(1).pending); assertEquals(1, report.uncertain)
+        assertNull(store.token)
+    }
     @Test fun offDoesNotReadOrWrite() {
         val store = Store(); val api = Api().apply { page = { _, _ -> error("Unexpected read") } }
         assertEquals(SyncReport(0, 0, 0, 0), ContactsSync(api, store) { SyncMode.OFF }.sync())

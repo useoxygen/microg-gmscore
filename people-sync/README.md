@@ -34,6 +34,11 @@ version and use `CALLER_IS_SYNCADAPTER`; checkpoints advance only after writes.
   read. A partial read cannot justify a deletion.
 - Apply incremental tombstones only to owned, clean rows. Verify absence from
   a full snapshot with a direct read, since list results lag behind mutations.
+- Quarantine malformed contacts independently, including malformed field
+  containers and direct readbacks. Readable siblings still sync. Keep the old
+  checkpoint, preserve all pull deletion candidates, and show partial status
+  until the unreadable entries recover; never treat a malformed page envelope
+  as an empty account.
 - Update only locally changed fields, with the latest CONTACT-source etag.
   Disjoint local/cloud edits merge. Same-field conflicts remain dirty and hold
   back the checkpoint; the status screen exposes that review is needed.
@@ -51,8 +56,12 @@ version and use `CALLER_IS_SYNCADAPTER`; checkpoints advance only after writes.
 
 Mapped fields are names, phone numbers, email addresses, postal addresses,
 organizations, plain-text notes, complete or year-less birthdays, nicknames,
-and websites, including preferred-value flags. Photo and label synchronization, other advanced fields, contact
-merge/alias handling, and guided conflict resolution remain future work.
+websites, relations, events/anniversaries, IM clients/protocols, SIP addresses,
+and user-defined fields, including preferred-value flags. Dates remain ASCII
+ISO strings regardless of the device locale; invalid or partially represented
+events cannot be silently replaced by another event edit. Photo and label
+synchronization, file-as, contact merge/alias handling, and guided conflict
+resolution remain future work.
 Unmapped cloud fields are excluded from update masks. Unsupported local edits
 are preserved rather than acknowledged as uploaded. Imported Device contacts
 are not automatically migrated or retired.
@@ -67,11 +76,51 @@ this module. A development-signed GmsCore is not an ordinary update of an
 upstream-signed installation: use an upstream release or validate the product's
 signing and account-retention migration before delivery.
 
+## Authorization diagnostics and parity status
+
+**This is not full stock-GMS parity or a confirmed fix for the real-account
+activation failure.** See [the GMS comparison](../docs/contacts-parity.md).
+GMS FSA2 uses private People v2 protobuf/gRPC and a flag-selected scope list
+including `peopleapi.legacy.readwrite` on its legacy path. This client remains
+on public People v1 with `contacts[.readonly]` until an actual grant/API result
+identifies the remedy. The documented legacy `m8/feeds` scope aliases `contacts`.
+
+Each account has separate **Check read access** and **Check two-way access**
+actions. They may request Google consent for the selected scope, then issue one
+minimal metadata GET (with at most one 401 token renewal). They return before
+contact-provider access, adoption baselines, `configure()`, or scheduling. They
+do not prove that creates/edits/deletes work; test those with disposable data.
+These checks do not cancel or pause sync that was already enabled independently.
+
+Diagnostics under `GmsContactSync` include fixed stages, requested scope, numeric
+HTTP status, allowlisted auth/API reason/status codes and the public presented
+client/caller SHA-1 digests. A PackageManager-reported signature can differ from
+the APK signer on a signature-spoofing OS. Never enable HTTP body VERBOSE logging.
+No account identifiers, tokens, challenge URLs, consent blobs, contact contents,
+or arbitrary exception text are added to these diagnostics. Unknown reasons are
+reported as UNKNOWN. The underlying authorization behavior and identities are
+unchanged; retaining an HTTP status does not itself repair a grant.
+
+Cyclon Contacts already uses an editable built-in GoogleAccountType, including
+phonetic fields and custom-field support. Adding duplicate primary metadata in
+GmsCore would also be loaded as a Google extension, so this change does not add
+a competing dataset. Settings support CONTACTS_SYNC_SETTINGS and its V3 action;
+**New contact in this account** opens the Contacts editor with the chosen Google
+account in two-way mode. The editor remains responsible for the user's default
+account choice. Existing hourly periodic scheduling and OS dirty-row uploads
+remain; private Chime/GCM registration is not implemented.
+
+Required remaining work is photos, label/group lifecycle and starred mapping,
+remote linking/file-as, a supported push trigger, actual Google grants/round trips,
+and device/provider/editor acceptance. Device/SIM backup and Google-only portal,
+consent migrations, social fields and calling-card services are outside the
+basic account sync implementation. No Device contacts are imported automatically.
+
 ## Tests
 
 ```sh
 ./gradlew :people-sync:test
-./gradlew :play-services-core:assembleVtmDefaultDebug
+./gradlew :play-services-core:assembleMapboxDefaultDebug
 ./gradlew :people-sync-android:assembleDebugAndroidTest
 ```
 

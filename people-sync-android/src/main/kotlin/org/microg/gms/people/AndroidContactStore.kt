@@ -90,10 +90,8 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
             else ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope(existing.id), args).withValues(values).withExpectedCount(1).build())
         if (existing != null) {
             operations.add(ContentProviderOperation.newDelete(syncUri(Data.CONTENT_URI)).withSelection(
-                "${Data.RAW_CONTACT_ID}=? AND (${Data.MIMETYPE} IN (${ContactFieldMapper.specs.joinToString(",") { "?" }}) OR (${Data.MIMETYPE}=? AND ${android.provider.ContactsContract.CommonDataKinds.Event.TYPE}=?))",
-                arrayOf(existing.id.toString()) + ContactFieldMapper.specs.map { it.mime } + arrayOf(
-                    android.provider.ContactsContract.CommonDataKinds.Event.CONTENT_ITEM_TYPE,
-                    android.provider.ContactsContract.CommonDataKinds.Event.TYPE_BIRTHDAY.toString())).build())
+                "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE} IN (${ContactFieldMapper.managedMimes.joinToString(",") { "?" }})",
+                arrayOf(existing.id.toString()) + ContactFieldMapper.managedMimes).build())
         }
         for (row in ContactFieldMapper.rows(person)) {
             val operation = ContentProviderOperation.newInsert(syncUri(Data.CONTENT_URI)).withValues(row)

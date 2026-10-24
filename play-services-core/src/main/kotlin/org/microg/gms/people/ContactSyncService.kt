@@ -40,13 +40,15 @@ class ContactSyncService : Service() {
                     val report = ContactsSync(api, store) { prefs.mode }.sync()
                     result.stats.numEntries += report.downloaded
                     result.stats.numUpdates += report.uploaded
+                    result.stats.numParseExceptions += report.skipped
                     result.stats.numConflictDetectedExceptions += report.conflicts + report.uncertain
                     prefs.status = when {
+                        report.skipped > 0 -> "partial"
                         report.uncertain > 0 -> "uncertain"
                         report.conflicts > 0 -> "conflict"
                         else -> "success"
                     }
-                    if (report.conflicts == 0 && report.uncertain == 0) prefs.lastSuccess = System.currentTimeMillis()
+                    if (report.conflicts == 0 && report.uncertain == 0 && report.skipped == 0) prefs.lastSuccess = System.currentTimeMillis()
                 } catch (e: ApiException) {
                     if (e.status == 401) {
                         AccountManager.get(this@ContactSyncService).invalidateAuthToken(account.type,
@@ -55,7 +57,8 @@ class ContactSyncService : Service() {
                     prefs.status = if (e.status == 401 || e.status == 403) "authorization" else "network"
                     if (e.status == 401 || e.status == 403) result.stats.numAuthExceptions++ else result.stats.numIoExceptions++
                     if (e.retryAfterSeconds > 0) result.delayUntil = System.currentTimeMillis() / 1000 + e.retryAfterSeconds
-                    Log.w(TAG, "Contacts API status=${e.status}")
+                    prefs.diagnostic = ContactsDiagnostics.activation(ActivationStage.API, e)
+                    Log.w(TAG, "sync " + prefs.diagnostic)
                 } catch (e: AuthenticatorException) {
                     prefs.status = "authorization"
                     result.stats.numAuthExceptions++
@@ -79,6 +82,7 @@ class ContactSyncService : Service() {
             "https://www.googleapis.com/auth/contacts" else "https://www.googleapis.com/auth/contacts.readonly"
         fun contactsToken(context: Context, account: Account, mode: SyncMode): String {
             check(mode != SyncMode.OFF)
+            Log.i(TAG, "stage=authorization oauth2:" + scope(mode))
             val result = AccountManager.get(context).getAuthToken(account, "oauth2:" + scope(mode), null, false, null, null).result
             return result.getString(AccountManager.KEY_AUTHTOKEN)?.takeIf { it.isNotBlank() }
                 ?: throw AuthenticatorException("Contacts authorization required")

@@ -206,6 +206,23 @@ class ContactProviderTest {
         sync()
         store { assertEquals(it.project(api.remote!!), it.contacts().single().fields) }
     }
+    @Test fun extendedFieldsRoundTripAndUploadThroughProvider() {
+        api.remote!!.json
+            .put("events", JSONArray().put(JSONObject().put("type", "anniversary")
+                .put("date", JSONObject().put("year", 0).put("month", 2).put("day", 29))))
+            .put("relations", JSONArray().put(JSONObject().put("person", "Synthetic friend").put("type", "friend")))
+            .put("imClients", JSONArray().put(JSONObject().put("username", "synthetic").put("protocol", "custom-protocol").put("type", "work")))
+            .put("sipAddresses", JSONArray().put(JSONObject().put("value", "sip:fixture@example.invalid").put("type", "home")))
+            .put("userDefined", JSONArray().put(JSONObject().put("key", "Fixture key").put("value", "Fixture value")))
+        prefs.configure(SyncMode.TWO_WAY, 0); sync()
+        store { assertEquals(it.project(api.remote!!), it.contacts().single().fields) }
+        val id = store { it.contacts().single().id }
+        assertEquals(1, resolver.update(Data.CONTENT_URI, ContentValues().apply { put(Data.DATA2, "Changed value") },
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), ContactFieldMapper.USER_DEFINED_MIME)))
+        assertEquals(1, sync().uploaded)
+        assertEquals("Changed value", api.remote!!.json.getJSONArray("userDefined").getJSONObject(0).getString("value"))
+        assertEquals(1, api.remote!!.json.getJSONArray("events").length())
+    }
     @Test fun preferredNumberChangesUploadAsSourcePrimaryMetadata() {
         val first = JSONObject().put("value", "123").put("type", "mobile").put("metadata", JSONObject().put("sourcePrimary", true))
         val second = JSONObject().put("value", "456").put("type", "work").put("metadata", JSONObject().put("sourcePrimary", false))

@@ -17,6 +17,9 @@ class ContactSyncPreferences(context: Context, val account: Account) {
     var status: String
         get() = prefs.getString(prefix + "status", "")!!
         set(value) { prefs.edit().putString(prefix + "status", value).apply() }
+    var diagnostic: String
+        get() = prefs.getString(prefix + "diagnostic", "")!!
+        set(value) { prefs.edit().putString(prefix + "diagnostic", value).apply() }
     var lastSuccess: Long
         get() = prefs.getLong(prefix + "lastSuccess", 0)
         set(value) { prefs.edit().putLong(prefix + "lastSuccess", value).apply() }
