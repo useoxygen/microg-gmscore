@@ -19,6 +19,30 @@ internal const val NOTIFICATION_FETCH_DELAY_MILLIS = 500L
 
 internal enum class ShowResult { SHOWN, NOTIFICATIONS_BLOCKED, NOT_SHOWABLE }
 
+/** A prompt without a usable expiry stays this long; Google's own prompts expire within minutes. */
+internal const val PROMPT_DEFAULT_TIMEOUT_MILLIS = 10 * 60 * 1000L
+internal const val PROMPT_MIN_TIMEOUT_MILLIS = 60 * 1000L
+internal const val PROMPT_MAX_TIMEOUT_MILLIS = 60 * 60 * 1000L
+
+/**
+ * How long a shown prompt may stay before Android removes it, from GNOTS `expiryTime`. Without this, a prompt that
+ * was never answered stayed until another prompt for the account was completed. The field's unit is not documented,
+ * so seconds, milliseconds and microseconds since the epoch are told apart by size. A missing or implausible expiry
+ * falls back to [PROMPT_DEFAULT_TIMEOUT_MILLIS]; the result is kept within one minute and one hour, so a skewed clock
+ * neither hides a fresh prompt at once nor keeps it all day.
+ */
+internal fun promptTimeoutMillis(expiryTime: Long?, nowMillis: Long): Long {
+    val expiryMillis = when {
+        expiryTime == null || expiryTime <= 0 -> return PROMPT_DEFAULT_TIMEOUT_MILLIS
+        expiryTime >= 100_000_000_000_000L -> expiryTime / 1000
+        expiryTime >= 100_000_000_000L -> expiryTime
+        else -> expiryTime * 1000
+    }
+    val remaining = expiryMillis - nowMillis
+    if (remaining > 24 * PROMPT_MAX_TIMEOUT_MILLIS) return PROMPT_DEFAULT_TIMEOUT_MILLIS
+    return remaining.coerceIn(PROMPT_MIN_TIMEOUT_MILLIS, PROMPT_MAX_TIMEOUT_MILLIS)
+}
+
 internal enum class MatchFailure { NO_USER_ID, NO_ACCOUNT, AMBIGUOUS }
 
 /**
@@ -74,6 +98,7 @@ internal class TwoStepRoute<A>(
     private val show: (A, NotificationData) -> ShowResult,
     private val decodeBase64: (String) -> ByteArray,
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
+    private val now: () -> Long = { System.currentTimeMillis() },
 ) {
     fun route(gcmBody: String?, payload: String?) {
         val session = diagnostics.newSession()
@@ -117,7 +142,9 @@ internal class TwoStepRoute<A>(
             }
             when (show(account, notification)) {
                 ShowResult.SHOWN -> {
-                    diagnostics.event(TwoStepEvent.SHOWN, session)
+                    // Whole minutes until the notification times out, so a device test can see the expiry was used.
+                    val timeoutMinutes = promptTimeoutMillis(notification.expiryTime, now()) / 60_000
+                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMinutes, "expiry" to (notification.expiryTime != null))
                     // Upstream reports READY then COMPLETE right after display; COMPLETE is sent again when Google's
                     // page closes. Kept as is: the statuses' server meaning is not established (report §4).
                     reportReadState(session, account, notification, NOTIFICATION_STATUS_READY)

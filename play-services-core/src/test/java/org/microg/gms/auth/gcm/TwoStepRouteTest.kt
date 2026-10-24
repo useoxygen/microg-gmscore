@@ -241,6 +241,39 @@ class TwoStepRouteTest {
     }
 
     @Test
+    fun promptsTimeOutAtGooglesExpiry() {
+        val now = 1_792_800_000_000L
+        val inFiveMinutes = now + 5 * 60_000
+        // The same expiry as seconds, milliseconds or microseconds since the epoch.
+        for (expiry in listOf(inFiveMinutes / 1000, inFiveMinutes, inFiveMinutes * 1000)) {
+            assertEquals(5 * 60_000L, promptTimeoutMillis(expiry, now))
+        }
+        // Missing or absurd expiries fall back to the default; past or very distant ones are clamped.
+        assertEquals(PROMPT_DEFAULT_TIMEOUT_MILLIS, promptTimeoutMillis(null, now))
+        assertEquals(PROMPT_DEFAULT_TIMEOUT_MILLIS, promptTimeoutMillis(0, now))
+        assertEquals(PROMPT_DEFAULT_TIMEOUT_MILLIS, promptTimeoutMillis(now + 30L * 24 * 3600_000, now))
+        assertEquals(PROMPT_MIN_TIMEOUT_MILLIS, promptTimeoutMillis(now - 60_000, now))
+        assertEquals(PROMPT_MAX_TIMEOUT_MILLIS, promptTimeoutMillis(now + 5 * 3600_000L, now))
+    }
+
+    @Test
+    fun theShownEventRecordsTheTimeoutInMinutes() {
+        val now = 1_792_800_000_000L
+        val route = TwoStepRoute<String>(
+            diagnostics = diagnostics,
+            enabled = { true },
+            accounts = { accounts },
+            fetch = { _, _ -> listOf(fetched.copy(expiryTime = now + 3 * 60_000)) },
+            setReadState = { _, _, _ -> },
+            show = { _, _ -> ShowResult.SHOWN },
+            decodeBase64 = { Base64.getUrlDecoder().decode(it) },
+            now = { now },
+        )
+        route.route(GMS_GCM_NOTIFICATIONS, tickle())
+        assertTrue(logs.last(), logs.last().endsWith("timeout_min=3 expiry=true"))
+    }
+
+    @Test
     fun sizeBucketsHidePreciseLengths() {
         assertEquals(listOf(0, 256, 256, 1024, 4096, 65536), listOf(0, 1, 256, 257, 4000, 100_000).map(::sizeBucket))
     }

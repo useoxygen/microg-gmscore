@@ -157,6 +157,7 @@ class GcmReceiverService : ReceiverService(TAG) {
             .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+            .setTimeoutAfter(promptTimeoutMillis(notificationData.expiryTime, System.currentTimeMillis()))
             .setSmallIcon(R.drawable.ic_google_logo)
         try {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_TAG, notificationId, builder.build())
