@@ -40,8 +40,21 @@ class PasswordAgentFillProvider : ContentProvider() {
                 PasswordAgentFillRequests.put(request)
                 val intent = Intent(app, PasswordAgentFillActivity::class.java)
                     .setData(Uri.parse("microg-password-agent:/fill/${request.handle}"))
-                val picker = PendingIntent.getActivity(app, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
-                return Bundle().apply { putParcelable("picker", picker) }
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    // The authenticated remote Binder caller is Core. AMS checks that the
+                    // PendingIntent creator's package belongs to the current calling UID;
+                    // create this Services-owned, explicit one-shot picker as Services.
+                    val identity = Binder.clearCallingIdentity()
+                    val picker = try {
+                        PendingIntent.getActivity(app, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
+                    } finally { Binder.restoreCallingIdentity(identity) }
+                    return Bundle().apply { putParcelable("picker", picker) }
+                } catch (failure: Throwable) {
+                    PasswordAgentFillRequests.remove(request.handle, request)
+                    request.cancel()
+                    throw failure
+                }
             }
             else -> throw SecurityException()
         }
