@@ -21,7 +21,14 @@ phone-claim run SERIAL --for "Google prompt e2e" --uses com.google.android.gms -
 phone-claim run SERIAL --for "Google prompt e2e" --uses com.google.android.gms -- node e2e.mjs SERIAL --deny
 ```
 
+Modes:
+- `--deny` taps "No, don't allow" and expects Google to stop the attempt.
+- `--locked` locks the phone with a temporary PIN (7316). It checks the lock screen, unlocks like the owner, answers the prompt, and removes the PIN at the end. Run it under a `--whole` claim.
+- `--signin` signs in with the password from the Keychain item `cyclon-test-google-cora`, instead of using recovery. Google asks the phone at sign-in only on accounts with 2-Step Verification.
+
 Google sends the prompt to every phone signed in to the account, not only the one under test.
+
+Many recoveries or denials in a row make Google pause prompts for the account for a few hours ("Too many failed attempts"). Wrong passwords count too. The script then fails with a clear message. Keep runs few, for example before a microG release.
 
 ## Reading a failure
 
@@ -35,6 +42,9 @@ Each run writes `reports/report-*.json`, which contains timed steps and the run'
 
 The phone is located by screenshot OCR because Cyclon phones block `uiautomator dump`.
 
-## Result on 2026-10-23
+## Results on 2026-10-23
 
-Prometheus (Pixel 8a, GmsCore 252432048): approve and deny both passed. The prompt was shown about 0.6 s after Google sent it.
+- Prometheus (Pixel 8a, GmsCore 252432048): approve and deny both passed. The prompt was shown about 0.6 s after Google sent it.
+- Dev 7a (GmsCore 252432049):
+  - Approve, deny and `--locked` passed.
+  - An unanswered prompt was still shown 12 minutes later. Google sent nothing after the first ~1.5 s. #40 adds a notification timeout from the prompt's `expiryTime`.

@@ -52,6 +52,9 @@ try {
     await page.getByText(/forgot password/i).first().click({ timeout: 15000 });
   }
   await page.waitForTimeout(4000);
+  step('challenge', { url: page.url().split('?')[0], text: (await text(page)).slice(0, 500) });
+  // Many recoveries or denials in a row make Google pause prompts for the account for a few hours.
+  if (/too many failed attempts/i.test(await text(page))) throw new Error('Google rate-limited this account ("too many failed attempts"); retry in a few hours');
   if (!/check your phone/i.test(await text(page))) {
     // Google may pick another method first; the prompt is then under "Try another way".
     await page.getByText(/try another way/i).first().click({ timeout: 5000 });
