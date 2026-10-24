@@ -60,3 +60,7 @@
 -keepclassmembers class * {
      @org.codehaus.jackson.annotate.* *;
 }
+-keep public class com.google.android.gms.providerinstaller.SocketFactoryCreatorImpl { *; }
+-keep public class com.google.android.gms.common.net.SocketFactoryCreatorImpl { *; }
+-keep public class com.google.android.gms.providerinstaller.SocketFactoryCreatorImpl { *; }
+-keep public class com.google.android.gms.common.net.SocketFactoryCreatorImpl { *; }

@@ -16,6 +16,7 @@ configurations {
 }
 
 dependencies {
+    debugImplementation 'com.google.zxing:core:3.5.2'
     testImplementation 'junit:junit:4.13.2'
     // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.
     testImplementation 'org.json:json:20240303'
@@ -140,7 +141,9 @@ android {
         versionName version
         versionCode appVersionCode
 
-        minSdkVersion androidMinSdk
+        // Cyclon ships these APKs only on its own Android 17 images (Android Switch itself needs 12+); the shared
+        // library modules keep upstream's androidMinSdk.
+        minSdkVersion 33
         targetSdkVersion androidTargetSdk
 
         multiDexEnabled true
