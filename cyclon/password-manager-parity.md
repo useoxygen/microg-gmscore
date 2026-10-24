@@ -5,7 +5,74 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
-## Latest gathered result: R11, October 24, 2026
+## Latest integration result: R12, October 24, 2026
+
+Services `4f809aff60` normally merges main `12dc5e21`. The sole conflict was
+version allocation: branch 49 and main 50 became **51 for both packages**
+(Services `252432051`, vending `84022651`). Independent conservation review
+approved all **398 branch-only and five main-only blobs** unchanged; the manifest
+keeps all branch entries and only adds main's `TWO_STEP_DISMISSED`.
+
+One gathered run passed **885 host tests** (434 password-sync, 13 FIDO Core,
+379 Services Core, 42 people, 17 calendar), zero failures/errors/skips, in **7m51s**.
+The primary three-module count is 826. All four Debug/Release Services/vending
+lint tasks passed with zero errors and existing warning counts 2,074/2,068/84/84;
+standalone version allocation and both v51 APK builds passed. Receipt:
+`/tmp/cyc689-parity-r12-20261024/services-gathered-results.json`.
+
+The signed product is independently verified locally: SHA-256
+`2916cfd7ffee3e59d0d3a52ee29695c248fe0e4738096af7f99c3829df8754d8`,
+127,646,581 bytes, package `com.google.android.gms`, version `252432051`.
+`apksigner` verifies one expected microG signer (`771b5899...`) under v1/v2/v3;
+all **3,286 non-META-INF entry names and payloads** match unsigned SHA-256
+`1af508adcdaceba4f68bc69be80bae203c7e8ba17fba952835170a0ce39f9404`.
+The unsigned test is byte-identical to R11 (`e3d9b125...`); the reused signed test
+`154c06a9...` was reverified with the same signer and all **85** payload entries
+identical. Receipt: `/tmp/cyc689-parity-r12-20261024/management-verified-artifacts-r12.json`.
+**v51 has no physical acceptance yet.** The last own installed Services result is
+R11 v49 `dc642be...`, with 26 passing fixture methods; that frozen physical receipt
+does not validate the new product on-device.
+
+The R11 phone snapshot is historical. Separate CYC-704 work reported installing
+Core32 `0.32.0-cyc704` at **12:40 AM PT**, followed by root-controller work until
+approximately 2 AM PT and claims recorded through 2:08 AM PT. Those coordination
+snapshots are not current ownership or paired-component proof. The previous
+Core31-to-Core32 preflight cannot authorize an update on this changed baseline;
+recheck actual version, controller, grants and ownership before further work.
+
+Core PR #1216 remains pushed source `0ba6bb459`, with its clean **3,175 JVM** and
+**196 Core Python** results and green hosted CI. The separate finite acceptance
+composition `dcaed172f` merges actual CYC-704 `5745c3fa0` with that source;
+`09098dc8a` contains the earlier two fixture fixes and current `8f9cd762` is
+fixture-only. Its gathered Gradle run passed in **160s**: **3,207 JVM cases**
+(20 protocol, 2,020 runtime, 111 Core, 1,056 Shell), zero failures/errors/skips,
+and the Core33 release APK build passed. The complete pinned-Kotlin2.2.21
+controller built: **1,064,641 bytes**, SHA-256
+`6b2c21d847bc91781785303979d8ea4dccece8f97c71b8e1e489a2629adff573`.
+Full Python is **still running**; this is not a complete gathered Core33 pass.
+The five image product scopes and controller trees stay at `09098dc8a`; this
+composition does not change PR #1216 or establish a matching pair.
+
+The isolated image clone `cyc680-image-20261024` has all **57 immutable downloads
+(approximately 524 MB)** generation/size/SHA verified and uploaded. Restoration
+of the archived **1,246 pins has not been applied**. Ten exact baseline DEBs
+(23,954,712 bytes) were recovered by copying only owned managed-cache inputs.
+Image candidate `31e1d5e2f5466018f302e4cd1f2a858e3cefadad` derives the required
+exact trees from Core compatibility `09098dc8a`, with no other product scope.
+The launcher native `.so` inventories remain distinct: **11 archived lynx
+baseline, 14 installed private launcher, 16 latest Akita**; these are not package
+counts or the ten DEBs. Image preflight identified five inherited untracked
+partner-GMS staging APKs; the parent is preserving their exact bytes/hashes outside
+the new clone checkout before restoration. No original pins have been restored.
+Restoration validation and the launcher retry are running, with no completed
+launcher or full-image build claimed. No image has been signed, installed or
+published, and no physical policy overlay was applied.
+
+The R11 and R10 records below remain frozen. Five private RPC contracts, real
+cohorts, provider/official-client, family, cross-device and physical Core-fill
+acceptance remain open; full parity is false.
+
+## Preserved R11 gathered and physical receipt: October 24, 2026
 
 Services runtime `3c9f9eef` / test source `c2a1eb33` passed **878 host tests**
 (434 password-sync, 13 FIDO Core, 372 Services Core, 42 people, 17 calendar),
@@ -841,8 +908,8 @@ No password or preference cloud writes ran in that historical review round.
 | Family sharing | Exact family eligibility, enrolled authenticated HPKE keys, fresh-recipient checks and launch receipts are connected. Incoming background policy matches the pinned default: import new, preserve conflicts, skip invalid siblings, consume processed invitations; same-sender updates default off. Get/CreateMetadata and committed Nigori keybag behavior match the reference; no separate sharing-key registry RPC was found. Second-family-account acceptance is CYC-690. |
 | Synced passkeys | Account-bound Credential Manager, legacy GMS FIDO and authenticated caBLE hybrid create/get use the real vault with current owner/domain authority. Native rename/delete, missing-secret PRF migration, bounded blob creation/read/write and Chrome-delegated payment are connected. Hybrid leases bind transcript, original request and immutable options with immediate disconnect/shutdown revocation. The gathered host batch passed; CYC-687/CYC-688/CYC-689/CYC-691 interoperability acceptance remains pending. |
 | Wi-Fi | Explicit account opt-in, encrypted cloud adapter, owned-network native consumer and durable uncertain-outcome fences are connected. READ_WIFI_CREDENTIAL requires the companion privileged image grant; old images refuse. The current target-29 caller also requires owner-granted precise location, enabled Location and allowed precise-location/Wi-Fi-scan app-ops. NETWORK_SETTINGS is signature-only, not a privapp image grant. Native/image acceptance remains CYC-689. |
-| Core agent fill | `security.password.fill` takes empty inputs and returns only `filled`; private IPC targets the retained field behind durable observation/input/capture fences. R9 emulator fill/privacy/restart and R10 Core31 legacy-controller refusal remain separately scoped; old-input `stale_observation` is not direct input-fence proof. R11 Core `0ba6bb459` passed clean host validation; signed Core32 passed read-only update preflight but was not installed, and no R11 native-fill attempt occurred. Donor policy compiled, while 31 source differences still separate it from the exact archived baseline. No matching image or paired Core32/controller acceptance; browser/WebView targets remain refused. |
-| Phone | R11 installed hash-verified Services `dc642be...` and passed 26 fixtures (22 ordinary +4 flags authority). Separate inventory passed with one candidate and zero readable/approved/sharing/blocked/unreadable counts, not peer-absence proof; cached admission refused before provider/enablement. At 12:21:36 AM PT Core31/original controller `3b32...`, owner/five settings/R11 boot, adbd2000 and enforcing SELinux/verity were unchanged; test packages absent. All three claims released, status empty. No Core/controller/policy change or R11 Core fill. Physical fill/provider/family/cross-device acceptance remains open. |
+| Core agent fill | `security.password.fill` retains the native field and durable privacy fences. PR #1216 source `0ba6bb459` keeps clean 3,175 JVM/196 Python proof; the outside-PR CYC-704/Core33 composition passed 3,207 JVM cases, release APK and complete controller builds; full Python remains running. R9 emulator fill/privacy/restart and R10 physical refusal remain separately scoped; stale input is not direct input-fence proof. R12 has no matching-pair, image or physical-fill acceptance. Browser/WebView targets remain refused. |
+| Phone | Last own Services acceptance is R11 v49 `dc642be...`: 26 fixtures, separate inventory with one candidate/zero readable and approved counts, and flags admission refused before provider/enablement. This is post-reset readiness, not peer/cloud-password absence. The 12:21:36 AM PT readback is historical; later CYC-704 installed its Core32 and used a root controller. Recheck ownership and actual components; the old Core31 preflight is unusable. R12 v51 is built and locally signer/version/payload verified, with no physical acceptance. |
 | Official interoperability | Metadata reading passed historically, but official exact-secret reading and producer note/write round trips remain unaccepted under CYC-653. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks
@@ -878,10 +945,12 @@ split: full 3,169 JVM cases at `bc551b8f5`, 194 unique Python passes across disc
 and repaired modules, and the later one-case/16-scenario actual-controller regression
 at `3d71613ce` (Core PR `8ec5d0630`). See the
 [native acceptance runbook](testing/password-parity-acceptance.md) for the scoped drivers
-and the separately scoped R10/R11 cleanup receipts. R11 host, signed-artifact,
-Services26-fixture and final phone-readback results are recorded at the top.
-Core32 remains uninstalled; R9's positive Core fill/restart remains emulator-only.
-Physical native fill and Google-provider checks remain open.
+and the separately scoped R10/R11 cleanup receipts. The top records keep R12
+integration proof separate from R11's signed artifacts, 26 fixtures and final
+phone readback. The uninstalled R11 Core32/r5 artifact is distinct from the later
+CYC-704 Core32 installation; its old preflight cannot authorize future updates.
+R9's positive fill/restart remains emulator-only. Physical native fill and
+Google-provider checks remain open.
 For a physical run, check the installed signer and preserve the current APK/data first.
 Never uninstall/clear physical GmsCore data or
 replace a phone reserved by another active task. Sign test artifacts with the existing

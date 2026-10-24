@@ -3,7 +3,74 @@
 Part of CYC-689, CYC-690 and CYC-691. This is a runbook and debug-only native
 instrumentation. Implementation, host proof, installation and acceptance are separate.
 
-## Latest gathered result: R11, October 24, 2026
+## Latest integration result: R12, October 24, 2026
+
+Services `4f809aff60` normally merges main `12dc5e21`. The sole conflict was
+version allocation: branch 49 and main 50 became **51 for both packages**
+(Services `252432051`, vending `84022651`). Independent conservation review
+approved all **398 branch-only and five main-only blobs** unchanged; the manifest
+keeps all branch entries and only adds main's `TWO_STEP_DISMISSED`.
+
+One gathered run passed **885 host tests** (434 password-sync, 13 FIDO Core,
+379 Services Core, 42 people, 17 calendar), zero failures/errors/skips, in **7m51s**.
+The primary three-module count is 826. All four Debug/Release Services/vending
+lint tasks passed with zero errors and existing warning counts 2,074/2,068/84/84;
+standalone version allocation and both v51 APK builds passed. Receipt:
+`/tmp/cyc689-parity-r12-20261024/services-gathered-results.json`.
+
+The signed product is independently verified locally: SHA-256
+`2916cfd7ffee3e59d0d3a52ee29695c248fe0e4738096af7f99c3829df8754d8`,
+127,646,581 bytes, package `com.google.android.gms`, version `252432051`.
+`apksigner` verifies one expected microG signer (`771b5899...`) under v1/v2/v3;
+all **3,286 non-META-INF entry names and payloads** match unsigned SHA-256
+`1af508adcdaceba4f68bc69be80bae203c7e8ba17fba952835170a0ce39f9404`.
+The unsigned test is byte-identical to R11 (`e3d9b125...`); the reused signed test
+`154c06a9...` was reverified with the same signer and all **85** payload entries
+identical. Receipt: `/tmp/cyc689-parity-r12-20261024/management-verified-artifacts-r12.json`.
+**v51 has no physical acceptance yet.** The last own installed Services result is
+R11 v49 `dc642be...`, with 26 passing fixture methods; that frozen physical receipt
+does not validate the new product on-device.
+
+The R11 phone snapshot is historical. Separate CYC-704 work reported installing
+Core32 `0.32.0-cyc704` at **12:40 AM PT**, followed by root-controller work until
+approximately 2 AM PT and claims recorded through 2:08 AM PT. Those coordination
+snapshots are not current ownership or paired-component proof. The previous
+Core31-to-Core32 preflight cannot authorize an update on this changed baseline;
+recheck actual version, controller, grants and ownership before further work.
+
+Core PR #1216 remains pushed source `0ba6bb459`, with its clean **3,175 JVM** and
+**196 Core Python** results and green hosted CI. The separate finite acceptance
+composition `dcaed172f` merges actual CYC-704 `5745c3fa0` with that source;
+`09098dc8a` contains the earlier two fixture fixes and current `8f9cd762` is
+fixture-only. Its gathered Gradle run passed in **160s**: **3,207 JVM cases**
+(20 protocol, 2,020 runtime, 111 Core, 1,056 Shell), zero failures/errors/skips,
+and the Core33 release APK build passed. The complete pinned-Kotlin2.2.21
+controller built: **1,064,641 bytes**, SHA-256
+`6b2c21d847bc91781785303979d8ea4dccece8f97c71b8e1e489a2629adff573`.
+Full Python is **still running**; this is not a complete gathered Core33 pass.
+The five image product scopes and controller trees stay at `09098dc8a`; this
+composition does not change PR #1216 or establish a matching pair.
+
+The isolated image clone `cyc680-image-20261024` has all **57 immutable downloads
+(approximately 524 MB)** generation/size/SHA verified and uploaded. Restoration
+of the archived **1,246 pins has not been applied**. Ten exact baseline DEBs
+(23,954,712 bytes) were recovered by copying only owned managed-cache inputs.
+Image candidate `31e1d5e2f5466018f302e4cd1f2a858e3cefadad` derives the required
+exact trees from Core compatibility `09098dc8a`, with no other product scope.
+The launcher native `.so` inventories remain distinct: **11 archived lynx
+baseline, 14 installed private launcher, 16 latest Akita**; these are not package
+counts or the ten DEBs. Image preflight identified five inherited untracked
+partner-GMS staging APKs; the parent is preserving their exact bytes/hashes outside
+the new clone checkout before restoration. No original pins have been restored.
+Restoration validation and the launcher retry are running, with no completed
+launcher or full-image build claimed. No image has been signed, installed or
+published, and no physical policy overlay was applied.
+
+The R11 and R10 records below remain frozen. Five private RPC contracts, real
+cohorts, provider/official-client, family, cross-device and physical Core-fill
+acceptance remain open; full parity is false.
+
+## Preserved R11 gathered and physical receipt: October 24, 2026
 
 Services `3c9f9eef` / test `c2a1eb33` passed **878 host tests** (434 password-sync,
 13 FIDO Core, 372 Services Core, 42 people, 17 calendar), zero failures/errors/skips,
