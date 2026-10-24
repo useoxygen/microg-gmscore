@@ -18,7 +18,8 @@ import java.util.concurrent.TimeUnit
 internal class DctControlChannel(private val http: org.microg.gms.migration.payload.DctHttpPeer, private val model: String,
                                  private val manufacturer: String, private val salt: String,
                                  private val oneWay: (String, ByteArray) -> Unit,
-                                 private val failure: (Int) -> Unit) : DctHandshake.Transport, Closeable {
+                                 private val failure: (Int) -> Unit,
+                                 private val negotiate: (WirelessMediumNegotiationRequest) -> WirelessMediumNegotiationResponse = { WirelessMediumNegotiationResponse() }) : DctHandshake.Transport, Closeable {
     private val pending = ConcurrentHashMap<Int, ArrayBlockingQueue<DctControlFrame>>()
     private val poller = Executors.newSingleThreadExecutor()
     @Volatile private var closed = false
@@ -49,8 +50,7 @@ internal class DctControlChannel(private val http: org.microg.gms.migration.payl
                 send(DctControlFrame(disconnection_response = DisconnectionResponse())); failure(8005)
             }
             frame.medium_negotiation_request != null -> {
-                // This endpoint currently subscribes; an empty response honestly declines hosting/other media.
-                send(DctControlFrame(medium_negotiation_response = WirelessMediumNegotiationResponse()))
+                send(DctControlFrame(medium_negotiation_response = negotiate(requireNotNull(frame.medium_negotiation_request))))
             }
             frame.medium_closure_request != null -> send(DctControlFrame(medium_closure_response = MediumClosureResponse()))
             frame.wifi_credential_request != null -> throw DctFailure(8017) // no fabricated Wi-Fi credential/status
