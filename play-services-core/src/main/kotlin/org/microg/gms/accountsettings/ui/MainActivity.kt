@@ -61,6 +61,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 private const val TAG = "AccountSettings"
+private const val STATE_VERIFY_NOTIFICATION_REPORTED = "verifyNotificationReported"
 
 // TODO: There likely is some API to figure those out...
 private val SCREEN_ID_TO_URL = hashMapOf(
@@ -213,7 +214,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Opened from a Google prompt notification: report it as opened now, as Google Play services does on tap.
-        if (savedInstanceState == null) intent.getStringExtra(EXTRA_ACCOUNT_NAME)?.let { updateVerifyNotification(it) }
+        verifyNotificationReported = savedInstanceState?.getBoolean(STATE_VERIFY_NOTIFICATION_REPORTED) ?: false
+        intent.getStringExtra(EXTRA_ACCOUNT_NAME)?.let { updateVerifyNotification(it) }
 
         if (screenId in SCREEN_ID_TO_URL) {
             val screenUrl = screenUrl ?: SCREEN_ID_TO_URL[screenId]?.run {
@@ -335,6 +337,11 @@ class MainActivity : AppCompatActivity() {
     }
     
     private var verifyNotificationReported = false
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_VERIFY_NOTIFICATION_REPORTED, verifyNotificationReported)
+    }
 
     /** Reports the Google prompt this page was opened from as opened, once; later calls (page close) do nothing. */
     fun updateVerifyNotification(accountName: String) {

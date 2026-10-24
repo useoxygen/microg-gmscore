@@ -137,7 +137,10 @@ class GcmReceiverService : ReceiverService(TAG) {
             accounts = {
                 accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).map { it to accountManager.getUserData(it, AuthConstants.GOOGLE_USER_ID) }
             },
-            fetch = { account, tickle -> requestNotificationInfo(accountManager, account, tickle).notifications?.notificationDataList.orEmpty() },
+            fetch = { account, tickle ->
+                val list = requestNotificationInfo(accountManager, account, tickle).notifications
+                GnotsFetch(list?.notificationDataList.orEmpty(), list?.serverTime?.takeIf { it > 0 }?.div(1000))
+            },
             setReadState = { account, notification, status -> notification.identifier?.let { sendReadState(accountManager, account, it, status) } },
             show = { account, notification, timeoutMillis -> showNotification(account, notification, timeoutMillis) },
             dismiss = { uniqueId -> cancelPrompts(uniqueId) },
