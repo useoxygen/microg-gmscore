@@ -78,7 +78,7 @@ class SignInProxyActivity : CredentialProviderActivity() {
             SignInCredential.CREATOR
         )
 
-        Log.d(TAG, "Got SignInCredential: email=${signInCredential.id}, googleIdToken=${signInCredential.googleIdToken?.take(50)}...")
+        Log.d(TAG, "Received sign-in credential")
 
         val credentialData = Bundle().apply {
             putString(GOOGLE_ID_BUNDLE_KEY_ID, signInCredential.id)
