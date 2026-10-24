@@ -1,21 +1,65 @@
 # Native password parity acceptance drivers
 
 Part of CYC-689, CYC-690 and CYC-691. This is a runbook and debug-only native
-instrumentation, not a claim of device or provider acceptance. The new drivers
-have not been executed. The last recorded host batch is 604 passing tests at
-`dece944d`; rebuilding these additions is a separate gathered check.
+instrumentation. The latest gathered Services runtime is `e2246006`: 799 host
+tests and six bridge tests passed, and the Services 049 product and
+instrumentation APKs built. The earlier 604-test result at `dece944d` is historical.
+The companion Core/Shell full JVM run passed 3,169 tests at compatibility source
+`bc551b8f5`. The 194 Python passes combine discovery and six repaired modules;
+they are not one clean full-suite run. The later focused 16-scenario regression
+passed at composite `3d71613ce`, carrying Core PR source `8ec5d0630`; it does not
+represent a repeat of all 3,169 JVM tests at that source.
+The Google-account selection, family and recovery acceptance drivers compiled
+but have not been executed; no Google-account or family round trip is accepted.
+
+On the owned API36 AOSP image, all 22 ordinary Android fixture cases passed at
+the earlier baseline and again with the factory/updated Services 049 setup.
+The second result consists of 21 cases plus the remaining case selected with its
+corrected class selector. The native callback probe passed four boolean checks;
+the protected picker launched and owner cancellation passed. An earlier
+operation-cancel case returned UNKNOWN with the native field empty. A previous
+selected-row attempt returned REFUSED with an empty field and no journal entry;
+the controller-readiness handoff was repaired before R9.
+
+The Core 28 APK uses compatibility source `bc551b8f5`, carrying the CYC-677
+`5042e184` base plus the password-fill fixes. The current controller composite is
+`3d71613ce`, carrying Core PR source `8ec5d0630`. The earlier `271d62003` was a
+source revision, not a PR number.
+
+R9's local native fill succeeded: the Core operation reported succeeded,
+effect applied and `filled=true`; the receiving fixture reported
+`matchesSyntheticSeed=true` and `empty=false`. All four framework-only receiver
+probe booleans were true. Subsequent Core observation and screenshot requests
+were refused with `native_password_private`. Input using the old pre-fill
+observation was refused with `stale_observation`; this is stale-observation
+proof, not direct proof of the native input fence.
+
+The exact manual root controller restarted from PID 7370 to 7863 with the same
+JAR checksum `3314967007`. The receiving fixture stayed at PID 6323, retained its
+matching/nonempty booleans, and a fresh Core UI-open request was still refused
+with `native_password_private`. This proves the recorded local receiving-process
+fence survived that controller restart. The exact local synthetic row was deleted
+through the native manager; the temporary probe and instrumentation were uninstalled,
+owned sessions/controller were stopped, and the owned emulator was shut down. Account
+count remained zero and the shared SDK system-image checksum stayed unchanged.
+These local-image results do not establish physical-device, Cyclon init-domain
+SELinux or Google-provider parity.
 
 The parent owns device discovery, reservation, artifact signing, installation,
 provider calls and results. The owner previously released the Pixel 7a for this
 chat. The earlier October 23 baseline was Services `cf93b15`, Core code 26
 `cyc677-ident`, and an active image init controller. That installed Core APK
 payload matched the clean CYC-677 build at `5042e184`. A separate acceptance build
-combined that source with password-fill head `5d5551a90`; preserve the active image components before
-any transition. The latest coordinated Core baseline is `c07be00`; a whole-device
-reservation runs through October 23 at 7:43 PM PT. No candidate installation has
-run in this gathered batch. Recheck the active reservation and actual installed
-components before any later acceptance action. The earlier manual-controller
-baseline is stale. The connected Pixel 8a is a release/user Cyclon Services
+combined that source with password-fill head `5d5551a90`; preserve the active image
+components before any transition. `c07be00` is the other chat's CYC-700 whole-device
+claim ID, not a Core source revision. The last claim read, October 23 at 7:24 PM
+PT, reserved the physical Pixel 7a through 7:43 PM PT. Refresh the claim and actual
+installed-component evidence before any physical-device action; expiry alone
+does not establish a fresh reservation. No candidate installation from this
+gathered batch has run on that physical phone. Read-only wireless preflight at 7:22 PM PT matched the known hardware serial and
+found Core26 unchanged but Services048 at source label `dd93566`, a different APK
+from this chat's prior048 fixture. Preserve that active source before an update.
+The earlier manual-controller baseline is stale. The connected Pixel 8a is a release/user Cyclon Services
 phone with four accounts that do not match the approved primary test account,
 and has no installed Chrome. It is not an approved second test account/device
 or an official GPM peer merely because it is connected.
