@@ -12,6 +12,7 @@ import android.net.wifi.WifiManager
 import android.net.wifi.SupplicantState
 import android.os.Process
 import android.os.Build
+import android.os.Parcel
 import android.provider.Settings
 
 class PasswordWifiUnavailableException : Exception("Privileged Wi-Fi sync unavailable")
@@ -133,7 +134,13 @@ internal class AndroidPasswordWifiPlatform(context: Context, private val verifyA
     }
     @Suppress("DEPRECATION")
     private fun build(network: PasswordWifiNetwork, base: WifiConfiguration? = null): WifiConfiguration {
-        val result = base?.let(::WifiConfiguration) ?: WifiConfiguration()
+        val result = if (base == null) WifiConfiguration() else if (Build.VERSION.SDK_INT >= 30) WifiConfiguration(base) else {
+            // The public copy constructor arrived in API30. Parcelable retains the complete native
+            // configuration on supported API26–29 without reconstructing or dropping opaque fields.
+            val parcel = Parcel.obtain()
+            try { base.writeToParcel(parcel, 0); parcel.setDataPosition(0); WifiConfiguration.CREATOR.createFromParcel(parcel) }
+            finally { parcel.recycle() }
+        }
         result.SSID = network.hexSsid // Framework accepts exact unquoted hex, including non-UTF8 SSIDs.
         result.allowedKeyManagement.clear(); result.allowedAuthAlgorithms.clear()
         result.preSharedKey = null
@@ -216,6 +223,7 @@ internal class AndroidPasswordWifiPlatform(context: Context, private val verifyA
                 granted(context, "android.permission.CHANGE_WIFI_STATE"), settings, granted(context, "android.permission.ACCESS_FINE_LOCATION"),
                 enabled, allowed(AppOpsManager.OPSTR_FINE_LOCATION), allowed(WIFI_SCAN_OP))
         } catch (_: Exception) { PasswordWifiAccess.IMAGE_GRANT_REQUIRED }
-        private fun granted(context: Context, permission: String) = context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        private fun granted(context: Context, permission: String) = Build.VERSION.SDK_INT >= 23 &&
+            context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 }

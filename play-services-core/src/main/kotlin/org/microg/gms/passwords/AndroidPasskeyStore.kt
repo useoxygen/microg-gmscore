@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.content.Context
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
@@ -17,7 +18,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** No-backup, account-isolated AEAD state. A missing key for an existing ciphertext is never recreated. */
 internal class AndroidPasskeyStore(context: Context, identity: String, private val verify: () -> Unit) {
-    private val root = File(context.noBackupFilesDir, "synced-passkeys-v1").apply {
+    private val root = if (Build.VERSION.SDK_INT < 23) throw VaultLockedException() else File(context.noBackupFilesDir, "synced-passkeys-v1").apply {
         if (!isDirectory && !mkdirs()) throw VaultLockedException()
     }
     private val id = marker(identity)
@@ -59,6 +60,7 @@ internal class AndroidPasskeyStore(context: Context, identity: String, private v
         }
     }
     private fun key(create: Boolean): SecretKey {
+        if (Build.VERSION.SDK_INT < 23) throw VaultLockedException()
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(alias, null) as? SecretKey)?.let { return it }
         if (!create) throw VaultLockedException()
@@ -76,6 +78,8 @@ internal class AndroidPasskeyStore(context: Context, identity: String, private v
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         /** Caller must re-read stable account IDs while holding each file lock before erasing its account key. */
         fun purge(context: Context, active: () -> Set<String>) {
+            // This store cannot have been created without the Android Keystore AES API.
+            if (Build.VERSION.SDK_INT < 23) return
             val root = File(context.noBackupFilesDir, "synced-passkeys-v1")
             for (file in root.listFiles().orEmpty().filter { Regex("[0-9a-f]{64}\\.bin(?:\\.bak)?").matches(it.name) }) {
                 val id = file.name.substringBefore('.')

@@ -5,6 +5,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.KeyguardManager
 import android.content.Context
+import android.os.Build
 import com.google.android.gms.BuildConfig
 import com.squareup.wire.GrpcClient
 import okhttp3.OkHttpClient
@@ -26,7 +27,9 @@ internal class EnclavePinStatus(val id: String?, val phase: EnclavePinPhase?, va
 
 /** Private native owner consumer for genuine enclave registration and set/change PIN on an existing hw_protected domain. */
 internal class EnclavePinClient(context: Context, private val account: Account, private val accountId: String, private val authorize: () -> Unit) {
-    private val context = context.applicationContext
+    private val context = context.applicationContext.also {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
+    }
     private val stopped = AtomicBoolean(false)
     private val local = LocalKeyManager.getInstance(this.context)
     private val enclave = EnclavePinTransport(this.context, account, ::verify)
@@ -34,6 +37,7 @@ internal class EnclavePinClient(context: Context, private val account: Account, 
     private val http = OkHttpClient.Builder().retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(40, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
     private fun verify() {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
         if (stopped.get() || Thread.currentThread().isInterrupted) throw VaultLockedException()
         authorize()
         val accounts = AccountManager.get(context); val guard = context.getSystemService(KeyguardManager::class.java)

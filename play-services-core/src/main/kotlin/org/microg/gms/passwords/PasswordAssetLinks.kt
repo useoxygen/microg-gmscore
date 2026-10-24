@@ -20,7 +20,7 @@ import java.net.Proxy
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.security.MessageDigest
-import java.util.Base64
+import okio.ByteString.Companion.decodeBase64
 import java.util.concurrent.TimeUnit
 
 /** A direct proof is independent of branding/grouping and never treats Android app links as credential delegation. */
@@ -69,7 +69,7 @@ class DigitalAssetLinks(private val loadDocument: (String) -> ByteArray) {
                         runCatching { AffiliationFacet.parse(asset.getString("site")) == target }.getOrDefault(false)
                     AffiliationFacet.Kind.ANDROID -> {
                         val identity = target.id.removePrefix("android://").split('@')
-                        val digest = Base64.getUrlDecoder().decode(identity[0])
+                        val digest = facetCertificateDigest(identity[0])
                         val fingerprint = digest.joinToString(":") { "%02X".format(it.toInt() and 255) }
                         val certificates = asset.optJSONArray("sha256_cert_fingerprints")
                         asset.opt("namespace") == "android_app" && asset.opt("package_name") == identity[1] &&
@@ -103,7 +103,7 @@ class PasswordAssetLinks(private val context: Context) {
         val identity = app.id.removePrefix("android://").split('@')
         val info = context.packageManager.getPackageInfo(identity[1], PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_META_DATA)
         val signers = info.signingInfo?.apkContentsSigners ?: return null
-        if (signers.size != 1 || !MessageDigest.isEqual(Base64.getUrlDecoder().decode(identity[0]),
+        if (signers.size != 1 || !MessageDigest.isEqual(facetCertificateDigest(identity[0]),
                 MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray()))) return null
         return info
     }
@@ -172,3 +172,7 @@ class PasswordAssetLinks(private val context: Context) {
         }
     }
 }
+
+/** Facets already normalize to padded URL-safe Base64. Keep that exact certificate identity on older Android too. */
+private fun facetCertificateDigest(hash: String): ByteArray = hash.decodeBase64()
+    ?.takeIf { it.size == 32 && it.base64Url() == hash }?.toByteArray() ?: throw ProtocolException()

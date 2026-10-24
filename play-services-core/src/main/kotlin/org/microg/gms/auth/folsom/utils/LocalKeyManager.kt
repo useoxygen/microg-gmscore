@@ -81,6 +81,7 @@ class LocalKeyManager(private val context: Context) {
     private val storeLock = Any()
 
     private val aead: Aead by lazy {
+        if (android.os.Build.VERSION.SDK_INT < 23) throw TinkEncryptionException("Keystore protection unavailable")
         runCatching {
             AeadConfig.register()
             val exists = context.getSharedPreferences(TINK_KEYSET_PREF_NAME, Context.MODE_PRIVATE).contains(TINK_KEYSET_KEY)
@@ -166,6 +167,7 @@ class LocalKeyManager(private val context: Context) {
     }
 
     private inline fun <T> lockedStore(action: () -> T): T = synchronized(storeLock) {
+            if (android.os.Build.VERSION.SDK_INT < 23) throw TinkEncryptionException("Keystore protection unavailable")
             RandomAccessFile(File(context.noBackupFilesDir, "folsom-store.lock"), "rw").use { lock ->
                 lock.channel.lock().use {
                     action()
@@ -421,6 +423,7 @@ class LocalKeyManager(private val context: Context) {
     /** Account-local OS lock spans enrollment I/O; the shared key-store lock spans only read/write. */
     internal fun <T> withChromesyncEnrollment(accountName: String, expectedUserId: String,
         action: (ChromesyncEnrollmentSession) -> T): T {
+        if (android.os.Build.VERSION.SDK_INT < 23) throw TinkEncryptionException("Keystore protection unavailable")
         val lockName = obfuscateAccountName(expectedUserId)
         return FolsomAccountLock.withLock(context.noBackupFilesDir, lockName) {
             if (stableAccountId(accountName) != expectedUserId) throw TinkEncryptionException("Recovery account changed")

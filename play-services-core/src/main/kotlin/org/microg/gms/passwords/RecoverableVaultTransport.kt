@@ -4,6 +4,7 @@ package org.microg.gms.passwords
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import android.os.Build
 import android.content.pm.PackageManager
 import com.google.android.gms.BuildConfig
 import com.squareup.wire.GrpcClient
@@ -23,11 +24,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Real configured admission and this installation's certificate. Never borrows a Google app's API key or signer. */
 internal class RecoverableVaultTransport(context: Context, private val account: Account, private val accountId: String,
     private val authorize: () -> Unit) {
-    private val context = context.applicationContext
+    private val context = context.applicationContext.also {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
+    }
     private val stopped = AtomicBoolean(false)
     private val http = OkHttpClient.Builder().retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(40, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
     private fun verify() {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
         if (stopped.get() || Thread.currentThread().isInterrupted) throw VaultLockedException()
         authorize()
         val accounts = AccountManager.get(context)
@@ -36,6 +40,7 @@ internal class RecoverableVaultTransport(context: Context, private val account: 
     }
     fun cancel() { stopped.set(true); http.dispatcher.cancelAll() }
     private fun service(): VaultServiceClient {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
         verify()
         if (BuildConfig.RECOVERABLE_VAULT_API_KEY.isBlank()) throw VaultLockedException()
         val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)

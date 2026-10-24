@@ -52,6 +52,7 @@ internal class FolsomConsentClient(context: Context, private val account: Accoun
     }
     private fun verify() {
         readOnlyVerify()
+        if (android.os.Build.VERSION.SDK_INT < 23) throw VaultLockedException()
         val lock = context.getSystemService(KeyguardManager::class.java)
         if (!lock.isDeviceSecure || lock.isDeviceLocked || lock.isKeyguardLocked) throw VaultLockedException()
     }

@@ -22,6 +22,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
@@ -62,12 +63,14 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         val supported = Build.VERSION.SDK_INT >= 28 && initializeProfile()
         super.onCreate(savedInstanceState)
         setResult(RESULT_CANCELED)
+        if (Build.VERSION.SDK_INT < 28 || !supported) { showUnavailable(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        if (Build.VERSION.SDK_INT >= 29) window.decorView.importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
+        // The owner's FLAG_SECURE disables content capture on API29 too; this View setter starts at API30.
+        if (Build.VERSION.SDK_INT >= 30) window.decorView.importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
         val accounts = AccountManager.get(this)
         val selected = accounts.getAccountsByType("com.google").singleOrNull { it.name == intent.getStringExtra(EXTRA_ACCOUNT) }
         val expected = intent.getStringExtra(EXTRA_ACCOUNT_ID)
-        if (!supported || selected == null || expected.isNullOrBlank() || accounts.getUserData(selected, "GoogleUserId") != expected || !acquireLease(lease)) {
+        if (selected == null || expected.isNullOrBlank() || accounts.getUserData(selected, "GoogleUserId") != expected || !acquireLease(lease)) {
             showUnavailable(); return
         }
         account = selected; accountId = expected
@@ -224,9 +227,10 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun showGoogle(authUrl: String, operation: PasswordEncryptionOperation, token: Long) {
         verify(token)
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
         val view = WebView(this)
         view.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        if (Build.VERSION.SDK_INT >= 29) view.importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
+        if (Build.VERSION.SDK_INT >= 30) view.importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
         view.settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true
             allowFileAccess = false; allowContentAccess = false; databaseEnabled = false
@@ -237,6 +241,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         }
         view.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean = true
+            @RequiresApi(21)
             override fun onPermissionRequest(request: PermissionRequest?) { request?.deny() }
             override fun onShowFileChooser(webView: WebView?, filePathCallback: ValueCallback<Array<android.net.Uri>>?, fileChooserParams: FileChooserParams?): Boolean {
                 filePathCallback?.onReceiveValue(null); return true
@@ -244,6 +249,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         }
         view.setDownloadListener { _, _, _, _, _ -> }
         view.webViewClient = object : WebViewClientCompat() {
+            @RequiresApi(21)
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                 !PasswordEncryptionWebPolicy.allowedNavigation(request.url.toString(), operation)
             @Suppress("DEPRECATION")
@@ -402,6 +408,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         private var profileInitialized = false
         private val sessions = PasswordEncryptionSessionLease()
         @Synchronized private fun initializeProfile(): Boolean = try {
+            if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
             if (!profileInitialized) {
                 WebView.setDataDirectorySuffix("password-encryption-owner-v1")
                 WebView.setWebContentsDebuggingEnabled(false)
@@ -413,6 +420,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         private fun ownsLease(value: String): Boolean = sessions.owns(value)
         private fun retireProfile(value: String) {
             if (!sessions.retire(value)) return // A refused second activity cannot touch another account's cookies.
+            if (Build.VERSION.SDK_INT < 28) { sessions.cleanupTimedOut(value); return }
             try {
                 WebStorage.getInstance().deleteAllData()
                 CookieManager.getInstance().removeAllCookies { sessions.cleared(value) }

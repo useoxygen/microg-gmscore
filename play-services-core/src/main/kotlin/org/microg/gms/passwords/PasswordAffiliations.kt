@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.content.Context
+import androidx.core.os.LocaleListCompat
 import com.google.android.gms.BuildConfig
 
 class PasswordAffiliationDisplay(val name: String?, val iconUrl: String?, val changePasswordUrl: String?, val mainDomain: String?) {
@@ -12,7 +13,7 @@ class PasswordAffiliationDisplay(val name: String?, val iconUrl: String?, val ch
 class PasswordAffiliations(context: Context, private val repository: PasswordRepository) {
     private val locale = if (android.os.Build.VERSION.SDK_INT >= 24) context.resources.configuration.locales.let {
         if (it.isEmpty) "en" else it[0].toLanguageTag()
-    } else context.resources.configuration.locale.toLanguageTag()
+    } else LocaleListCompat.create(context.resources.configuration.locale).toLanguageTags()
     private val iconSize = (context.resources.displayMetrics.density * 40).toInt().coerceIn(1, 1024)
     private val transport: AffiliationTransport? = BuildConfig.PASSWORD_AFFILIATION_API_KEY.takeIf { it.isNotBlank() }
         ?.let(::GoogleAffiliationTransport)

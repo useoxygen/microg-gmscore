@@ -18,7 +18,7 @@ import android.os.Looper
 import android.os.ResultReceiver
 import android.os.SystemClock
 import java.security.MessageDigest
-import java.util.Base64
+import okio.ByteString.Companion.toByteString
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -72,13 +72,16 @@ internal class PasswordAgentFillRequest private constructor(val handle: String, 
     private val certificate: ByteArray, val deadline: Long, private val receiver: ResultReceiver) {
     private val active = AtomicBoolean(true)
     @Volatile var close: (() -> Unit)? = null
-    val realm = "android://${Base64.getUrlEncoder().withoutPadding().encodeToString(certificate)}@$packageName/"
-    fun valid(context: Context): Boolean = active.get() && SystemClock.elapsedRealtime() < deadline && runCatching {
-        val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
-        val signers = info.signingInfo?.apkContentsSigners?.takeIf { it.size == 1 } ?: return@runCatching false
-        info.applicationInfo?.uid == uid && MessageDigest.isEqual(certificate,
-            MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray()))
-    }.getOrDefault(false)
+    val realm = "android://${certificate.toByteString().base64Url().trimEnd('=')}@$packageName/"
+    fun valid(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 28) return false
+        return active.get() && SystemClock.elapsedRealtime() < deadline && runCatching {
+            val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val signers = info.signingInfo?.apkContentsSigners?.takeIf { it.size == 1 } ?: return@runCatching false
+            info.applicationInfo?.uid == uid && MessageDigest.isEqual(certificate,
+                MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray()))
+        }.getOrDefault(false)
+    }
     fun deliver(context: Context, password: CharArray) {
         try {
             if (!valid(context) || !active.compareAndSet(true, false)) throw SecurityException()

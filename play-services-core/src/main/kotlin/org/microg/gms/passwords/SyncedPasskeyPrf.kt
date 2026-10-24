@@ -3,8 +3,9 @@ package org.microg.gms.passwords
 
 import com.google.android.gms.fido.fido2.api.common.AuthenticationExtensionsPrfOutputs
 import com.google.android.gms.fido.fido2.api.common.PrfExtension
+import okio.ByteString.Companion.decodeBase64
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
-import java.util.Base64
 
 /** Native request/result adapter. JSON carries raw WebAuthn inputs; the legacy parcel already carries normalized inputs. */
 internal object SyncedPasskeyPrf {
@@ -30,7 +31,10 @@ internal object SyncedPasskeyPrf {
     }
     private fun decode(value: String, max: Int = Proto.MAX_BYTES): ByteArray {
         if (value.length > max) throw ProtocolException()
-        return try { Base64.getUrlDecoder().decode(value) } catch (_: IllegalArgumentException) { throw ProtocolException() }
+        // Okio works below API26; retain the strict Java URL decoder's alphabet/padding admission.
+        if (!Regex("[A-Za-z0-9_-]*={0,2}").matches(value) || value.length % 4 == 1 ||
+            value.endsWith('=') && value.length % 4 != 0) throw ProtocolException()
+        return value.decodeBase64()?.toByteArray() ?: throw ProtocolException()
     }
     fun legacy(extension: PrfExtension?, create: Boolean): PasskeyPrfRequest? = extension?.let {
         PasskeyPrfRequest.legacy(it.entries.toList(), create)
@@ -46,8 +50,8 @@ internal object SyncedPasskeyPrf {
         if (second != null && first == null || first?.size?.let { it != 32 } == true || second?.size?.let { it != 32 } == true)
             throw ProtocolException()
         if (first != null) put("results", JSONObject().apply {
-            put("first", Base64.getUrlEncoder().withoutPadding().encodeToString(first))
-            if (second != null) put("second", Base64.getUrlEncoder().withoutPadding().encodeToString(second))
+            put("first", first.toByteString().base64Url().trimEnd('='))
+            if (second != null) put("second", second.toByteString().base64Url().trimEnd('='))
         })
     }
 }

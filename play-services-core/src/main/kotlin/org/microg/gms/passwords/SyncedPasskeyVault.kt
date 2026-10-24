@@ -4,6 +4,7 @@ package org.microg.gms.passwords
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import okio.ByteString.Companion.toByteString
 import org.microg.gms.auth.folsom.utils.LocalKeyManager
 import java.security.MessageDigest
 
@@ -217,7 +218,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
             if (refresh) state = manager.refresh()
             if (state.parent != null && state.parent != parent) return@ownerAction SyncedPasskeyOwnerScreen(parent, emptyList(), null, false, false)
             val all = state.records.map { PasskeyResourceCodec.read(it, keys) }
-            fun id(raw: ByteArray) = java.util.Base64.getEncoder().encodeToString(raw)
+            fun id(raw: ByteArray) = raw.toByteString().base64()
             val shadowed = all.flatMap { item -> item.shadowedCredentialIds.map { item.rpId to id(it) } }.toSet()
             val groups = all.groupingBy { it.rpId to id(it.userId) }.eachCount()
             val entries = state.records.zip(all).map { (raw, data) -> SyncedPasskeyOwnerEntry(raw.copyOf(), data,

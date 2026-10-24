@@ -14,6 +14,20 @@ import java.security.Signature
 import java.security.spec.ECGenParameterSpec
 
 class NativeSyncedPasskeyBlobReadTest {
+    @Test fun compatibleBlobCodecKeepsStrictUrlAlphabetAndPaddingAdmission() {
+        for (encoded in listOf("AQ", "AQ==", "-_8", "-_8=")) {
+            val raw = java.util.Base64.getUrlDecoder().decode(encoded)
+            SyncedPasskeyBlobReads.create(JSONObject().put("extensions", JSONObject().put("credBlob", encoded)).toString())!!.use { request ->
+                val encodedSecret = request.apply(byteArrayOf())
+                try { assertArrayEquals(raw, Proto.decode(encodedSecret).one(3)) } finally { encodedSecret.fill(0) }
+            }
+        }
+        for (encoded in listOf("A", "AQ=", "AQ===", "AQ==\n", " AQ==", "+/8=", "AQ==AA")) {
+            assertThrows(ProtocolException::class.java) {
+                SyncedPasskeyBlobReads.create(JSONObject().put("extensions", JSONObject().put("credBlob", encoded)).toString())
+            }
+        }
+    }
     @Test fun creationReportsTheActualStorageDecisionAsSignedCborBoolean() {
         assertArrayEquals(hex("a16863726564426c6f62f5"), encodeCredBlobCreationExtension(true))
         assertArrayEquals(hex("a16863726564426c6f62f4"), encodeCredBlobCreationExtension(false))

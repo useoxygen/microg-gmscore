@@ -5,8 +5,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import androidx.annotation.RequiresApi
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -49,6 +51,7 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
     }
 
     override fun <T> locked(action: (VaultSession) -> T): T = synchronized(LOCKS.getOrPut(id) { Any() }) {
+        if (Build.VERSION.SDK_INT < 23) throw VaultLockedException()
         val directory = File(this.context.noBackupFilesDir, "password-vault-locks")
         if (!directory.isDirectory && !directory.mkdirs()) throw IllegalStateException("Vault lock unavailable")
         RandomAccessFile(File(directory, "$id.lock"), "rw").use { file ->
@@ -98,6 +101,7 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
     }
 
     private fun key(create: Boolean): SecretKey {
+        if (Build.VERSION.SDK_INT < 23) throw VaultLockedException()
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val existing = keys.getKey(alias, null)
         if (existing is SecretKey) return existing
@@ -130,7 +134,7 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
 
     override fun toString(): String = "AndroidVaultStore[redacted]"
 
-    private class Database(context: Context) : SQLiteOpenHelper(context,
+    private class Database @RequiresApi(23) constructor(context: Context) : SQLiteOpenHelper(context,
         File(context.noBackupFilesDir, "password-vaults.db").absolutePath, null, 2) {
         override fun onConfigure(db: SQLiteDatabase) {
             // secure_delete returns the resulting value, even when assigning it. Newer Android
@@ -158,8 +162,12 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
         }
         private val LOCKS = ConcurrentHashMap<String, Any>()
         @Volatile private var DB: Database? = null
-        private fun database(context: Context): Database = DB ?: synchronized(this) {
-            DB ?: Database(context.applicationContext).also { DB = it }
+        private fun database(context: Context): Database {
+            // Refuse before opening storage; this vault requires Keystore-backed AES keys.
+            if (Build.VERSION.SDK_INT < 23) throw VaultLockedException()
+            return DB ?: synchronized(this) {
+                DB ?: Database(context.applicationContext).also { DB = it }
+            }
         }
     }
 }

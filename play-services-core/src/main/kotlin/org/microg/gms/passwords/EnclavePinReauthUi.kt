@@ -8,6 +8,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.webkit.WebViewClientCompat
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeUnit
 /** Actual Google PIN-reset reauthentication, authenticated for the selected native account. No JavaScript token bridge. */
 internal object EnclavePinReauthUi {
     suspend fun show(activity: AppCompatActivity, accountName: String, stableId: String, verify: () -> Unit): String = withTimeout(120_000) {
+        if (android.os.Build.VERSION.SDK_INT < 26) throw VaultLockedException()
         verify()
         val policy = EnclavePinReauthPolicy(stableId)
         val result = CompletableDeferred<String>()
@@ -48,6 +50,7 @@ internal object EnclavePinReauthUi {
         val cookies = CookieManager.getInstance().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(web, false) }
         web.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage) = true
+            @RequiresApi(21)
             override fun onPermissionRequest(request: PermissionRequest) { request.deny() }
         }
         val observer = object : DefaultLifecycleObserver {
@@ -55,9 +58,11 @@ internal object EnclavePinReauthUi {
         }
         activity.lifecycle.addObserver(observer)
         fun refuse() { result.completeExceptionally(VaultLockedException()) }
+        @RequiresApi(21)
         fun empty(status: Int, reason: String) = WebResourceResponse("text/html", "UTF-8", status, reason,
             mapOf("Cache-Control" to "no-store"), ByteArrayInputStream(byteArrayOf()))
         web.webViewClient = object : WebViewClientCompat() {
+            @RequiresApi(21)
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val permitted = EnclavePinReauthPolicy.navigationAllowed(request.url.toString())
                 if (!permitted && request.isForMainFrame) refuse()
@@ -72,6 +77,7 @@ internal object EnclavePinReauthUi {
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 if (!EnclavePinReauthPolicy.navigationAllowed(url)) refuse()
             }
+            @RequiresApi(21)
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url.toString()
                 if (!request.isForMainFrame || !policy.proofCandidate(url)) return null

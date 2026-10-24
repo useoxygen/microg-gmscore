@@ -5,11 +5,13 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.KeyguardManager
 import android.content.Context
+import android.os.Build
 import com.google.android.gms.BuildConfig
 import com.squareup.wire.GrpcClient
 import com.squareup.wire.GrpcException
 import com.squareup.wire.GrpcStatus
 import okhttp3.OkHttpClient
+import okio.ByteString.Companion.toByteString
 import org.microg.gms.auth.folsom.*
 import org.microg.gms.auth.folsom.utils.FolsomMemberKeys
 import org.microg.gms.auth.folsom.utils.LocalKeyManager
@@ -44,7 +46,9 @@ internal data class RecoveryRestoreStatus(val phase: RecoveryRestorePhase?, val 
 /** Protected native restoration from a listed account vault, not an accepted-proof simulator or a raw-key export. */
 internal class RecoveryRestoreClient(context: Context, private val account: Account, private val accountId: String,
     private val domain: String, expectedParent: String? = null, private val authorize: () -> Unit, private val sdkMode: Boolean = false) {
-    private val context = context.applicationContext
+    private val context = context.applicationContext.also {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
+    }
     private val local = LocalKeyManager.getInstance(this.context)
     private val repository = PasswordRepository(this.context, account, expectedParent)
     private val parent = expectedParent ?: if (sdkMode) existingPasswordParent() else
@@ -66,6 +70,7 @@ internal class RecoveryRestoreClient(context: Context, private val account: Acco
     }
     fun cancel() { stopped.set(true); transport.cancel(); http.dispatcher.cancelAll() }
     private fun verify() {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
         if (stopped.get() || Thread.currentThread().isInterrupted) throw VaultLockedException()
         authorize()
         val accounts = AccountManager.get(context); val lock = context.getSystemService(KeyguardManager::class.java)
@@ -86,7 +91,7 @@ internal class RecoveryRestoreClient(context: Context, private val account: Acco
         return vaults().mapNotNull { raw -> runCatching { RecoveryRestoreVault(raw, domain) }.getOrNull() }
             .filter { it.format in (if (it.handleType == 3) 1..2 else 1..3) }.map { RecoveryRestoreChoice(it.name, it.digest.copyOf(),
                 it.format, it.remainingAttempts, it.requestScopeDigest.copyOf(), it.handleType) }
-            .also { if (it.map { choice -> java.util.Base64.getEncoder().encodeToString(choice.digest) }.toSet().size != it.size) throw ProtocolException(); verify() }
+            .also { if (it.map { choice -> choice.digest.toByteString().base64() }.toSet().size != it.size) throw ProtocolException(); verify() }
     }
     private fun status(state: RecoveryRestoreState): RecoveryRestoreStatus {
         val a = state.attempt

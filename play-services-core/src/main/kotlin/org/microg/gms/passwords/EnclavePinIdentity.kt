@@ -47,6 +47,7 @@ internal class EnclavePinIdentity(context: Context, private val accountId: Strin
 
     /** allowCreate is only for an already durable new-identity journal. Existing bound keys are never replaced. */
     fun readStable(allowCreate: Boolean = false): Descriptor {
+        if (Build.VERSION.SDK_INT < 23) throw VaultLockedException()
         verify()
         if (expected == null && !allowCreate) throw VaultLockedException()
         val keys = store()

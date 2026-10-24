@@ -18,8 +18,8 @@ abstract class PasswordOwnerActivity : AppCompatActivity() {
     private var confirming = false
     private var confirmationResult: Boolean? = null
     private val keyguard get() = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
-    protected val hasSecureScreenLock get() = keyguard.isDeviceSecure
-    private val deviceUnlocked get() = !keyguard.isDeviceLocked && !keyguard.isKeyguardLocked
+    protected val hasSecureScreenLock get() = Build.VERSION.SDK_INT >= 23 && keyguard.isDeviceSecure
+    private val deviceUnlocked get() = Build.VERSION.SDK_INT >= 23 && !keyguard.isDeviceLocked && !keyguard.isKeyguardLocked
     private val confirmOwner = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         confirming = false
         confirmationResult = result.resultCode == RESULT_OK
@@ -30,6 +30,7 @@ abstract class PasswordOwnerActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     }
     protected fun authenticateOwner() {
+        if (Build.VERSION.SDK_INT < 23) { access.cancel(); onOwnerAuthenticationFailed(); return }
         // Provider activities request access in onCreate, after an OS picker selection.
         // Wait until the activity is actually resumed before accepting no-lock presence.
         if (!foreground) { requested = true; return }

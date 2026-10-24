@@ -6,7 +6,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
-import androidx.appcompat.view.WindowCallbackWrapper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
@@ -16,9 +15,9 @@ internal fun rejectsPasswordTouch(flags: Int): Boolean = flags and MotionEvent.F
     (Build.VERSION.SDK_INT >= 29 && flags and MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED != 0)
 
 /** Dialogs have their own Window callback; the Activity's dispatchTouchEvent never sees these taps. */
-internal class PasswordDialogTouchGuard(callback: Window.Callback) : WindowCallbackWrapper(callback) {
+internal class PasswordDialogTouchGuard(private val callback: Window.Callback) : Window.Callback by callback {
     override fun dispatchTouchEvent(event: MotionEvent): Boolean =
-        if (rejectsPasswordTouch(event.flags)) false else super.dispatchTouchEvent(event)
+        if (rejectsPasswordTouch(event.flags)) false else callback.dispatchTouchEvent(event)
 }
 
 @Composable

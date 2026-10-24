@@ -11,7 +11,7 @@ import java.security.cert.TrustAnchor
 import java.security.cert.X509Certificate
 import java.security.cert.X509CertSelector
 import java.security.interfaces.ECPublicKey
-import java.util.Base64
+import okio.ByteString.Companion.decodeBase64
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 import org.xml.sax.SAXException
@@ -34,7 +34,10 @@ internal object GpmPinCertificates {
         if (path("metadata", "refresh-interval").singleOrNull()?.textContent?.trim()?.toLongOrNull()?.let { it >= 0 } != true) throw ProtocolException()
         val certificates = CertificateFactory.getInstance("X.509")
         fun cert(node: Element): X509Certificate {
-            val raw = Base64.getDecoder().decode(node.textContent.replace(Regex("\\s+"), ""))
+            val encoded = node.textContent.replace(Regex("\\s+"), "")
+            if (!Regex("[A-Za-z0-9+/]*={0,2}").matches(encoded) || encoded.length % 4 == 1 ||
+                encoded.endsWith('=') && encoded.length % 4 != 0) throw ProtocolException()
+            val raw = encoded.decodeBase64()?.toByteArray() ?: throw ProtocolException()
             if (raw.size !in 1..65536) throw ProtocolException()
             return certificates.generateCertificate(ByteArrayInputStream(raw)) as? X509Certificate ?: throw ProtocolException()
         }

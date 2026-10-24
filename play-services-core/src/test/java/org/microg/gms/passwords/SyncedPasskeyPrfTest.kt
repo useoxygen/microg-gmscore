@@ -45,6 +45,23 @@ class SyncedPasskeyPrfTest {
         for (raw in invalid) assertThrows(ProtocolException::class.java) { SyncedPasskeyPrf.json(JSONObject("{\"prf\":$raw}"), false) }
         assertThrows(ProtocolException::class.java) { SyncedPasskeyPrf.json(JSONObject("""{"prf":{"evalByCredential":{}}}"""), true) }
     }
+    @Test fun compatibleCodecKeepsStrictUrlAlphabetAndJavaPaddingAdmission() {
+        val accepted = listOf("", "AQ", "AQ==", "AQI", "AQI=", "AQID", "-_8", "-_8=")
+        for (encoded in accepted) {
+            val raw = Base64.getUrlDecoder().decode(encoded)
+            val parsed = SyncedPasskeyPrf.json(JSONObject().put("prf", JSONObject().put("eval", JSONObject().put("first", encoded))), false)!!
+            val expected = PasskeyPrfRequest.normalized(PasskeyPrfValues.raw(raw), create = false)
+            parsed.evaluate(secret, id).use { actual -> expected.evaluate(secret, id).use {
+                assertArrayEquals(it.first, actual.first)
+            } }
+        }
+        for (encoded in listOf("A", "AQ=", "AQ===", "AQ==\n", " AQ==", "+/8=", "AQ==AA")) {
+            assertThrows(IllegalArgumentException::class.java) { Base64.getUrlDecoder().decode(encoded) }
+            assertThrows(ProtocolException::class.java) {
+                SyncedPasskeyPrf.json(JSONObject().put("prf", JSONObject().put("eval", JSONObject().put("first", encoded))), false)
+            }
+        }
+    }
     @Test fun capabilityOnlyCreationRequiresRealSecretAndReturnsEnabledWithoutInventingResults() {
         val request = SyncedPasskeyPrf.json(JSONObject("""{"prf":{}}"""), true)!!
         request.evaluate(secret, id).use { result ->

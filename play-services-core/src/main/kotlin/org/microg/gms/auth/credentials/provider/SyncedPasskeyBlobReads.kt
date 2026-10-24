@@ -2,6 +2,8 @@
 package org.microg.gms.auth.credentials.provider
 
 import org.json.JSONObject
+import okio.ByteString.Companion.decodeBase64
+import okio.ByteString.Companion.toByteString
 import org.microg.gms.passwords.PasskeyBlobReadRequest
 import org.microg.gms.passwords.PasskeyBlobReadResult
 import org.microg.gms.passwords.PasskeySecret
@@ -9,7 +11,6 @@ import org.microg.gms.passwords.PasskeyBlobCreateRequest
 import org.microg.gms.passwords.PasskeyBlobWriteRequest
 import org.microg.gms.passwords.PasskeyPrfMigration
 import org.microg.gms.passwords.ProtocolException
-import java.util.Base64
 
 /** Standard JSON blob consumer; mutations use the account vault's request-bound durable coordinator. */
 internal object SyncedPasskeyBlobReads {
@@ -22,7 +23,10 @@ internal object SyncedPasskeyBlobReads {
     private fun bytes(value: Any?): ByteArray {
         val raw = value as? String ?: throw ProtocolException()
         if (raw.length > 256 * 1024) throw ProtocolException()
-        return try { Base64.getUrlDecoder().decode(raw) } catch (_: IllegalArgumentException) { throw ProtocolException() }
+        // Keep URL-only, strict padding admission when using the API19-compatible codec.
+        if (!Regex("[A-Za-z0-9_-]*={0,2}").matches(raw) || raw.length % 4 == 1 ||
+            raw.endsWith('=') && raw.length % 4 != 0) throw ProtocolException()
+        return raw.decodeBase64()?.toByteArray() ?: throw ProtocolException()
     }
     fun create(raw: String): PasskeyBlobCreateRequest? {
         val ext = extensions(raw) ?: return null
@@ -84,11 +88,10 @@ internal object SyncedPasskeyBlobReads {
         val json = JSONObject(raw)
         val extensions = if (json.has("clientExtensionResults"))
             json.getJSONObject("clientExtensionResults") else JSONObject().also { json.put("clientExtensionResults", it) }
-        val base64 = Base64.getUrlEncoder().withoutPadding()
         if (request?.credBlob == true) extensions.put("getCredBlob",
-            base64.encodeToString(result?.credBlob ?: throw ProtocolException()))
+            (result?.credBlob ?: throw ProtocolException()).toByteString().base64Url().trimEnd('='))
         if (request?.largeBlob == true || written != null) extensions.put("largeBlob", JSONObject().apply {
-            result?.largeBlob?.let { put("blob", base64.encodeToString(it)) }
+            result?.largeBlob?.let { put("blob", it.toByteString().base64Url().trimEnd('=')) }
             written?.let { put("written", it) }
         })
         return json.toString()

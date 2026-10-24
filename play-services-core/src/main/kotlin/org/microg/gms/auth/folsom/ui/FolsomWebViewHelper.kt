@@ -12,6 +12,7 @@ import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import androidx.core.net.toUri
+import androidx.annotation.RequiresApi
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebResourceErrorCompat
@@ -36,6 +37,7 @@ class FolsomWebViewHelper(
     private val accountName: String
 ) {
     fun prepareWebViewSettings() {
+        if (android.os.Build.VERSION.SDK_INT < 21) throw org.microg.gms.passwords.VaultLockedException()
         webView.settings.apply {
             javaScriptEnabled = true
             allowFileAccess = false
@@ -71,6 +73,7 @@ class FolsomWebViewHelper(
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
                 return !TrustedVaultRecoveryPolicy.navigationAllowed(url)
             }
+            @RequiresApi(21)
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                 !TrustedVaultRecoveryPolicy.navigationAllowed(request.url.toString())
         }

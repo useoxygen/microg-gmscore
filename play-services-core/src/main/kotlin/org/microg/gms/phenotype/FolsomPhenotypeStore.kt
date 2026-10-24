@@ -5,6 +5,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import androidx.annotation.RequiresApi
 import org.microg.gms.passwords.ProtocolException
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -16,6 +17,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Independent device scope, not a password account store. No-backup and AEAD protect opaque server tokens. */
+@RequiresApi(23)
 internal class FolsomPhenotypeStore(context: Context) {
     private val root = File(context.noBackupFilesDir, "folsom-phenotype-v1").apply {
         check(isDirectory || mkdirs()) { "Device configuration storage unavailable" }

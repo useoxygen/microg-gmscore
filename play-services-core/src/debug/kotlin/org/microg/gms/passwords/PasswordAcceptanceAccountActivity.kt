@@ -27,7 +27,8 @@ class PasswordAcceptanceAccountActivity : PasswordOwnerActivity() {
         if (savedInstanceState != null) { finish(); return }
         request = runCatching { LegacyPasskeyTicketStore.system(this); PasswordAcceptanceAccounts.consume(intent.getStringExtra("request")) }.getOrNull()
         if (request == null) { finish(); return }
-        window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        if (android.os.Build.VERSION.SDK_INT >= 26)
+            window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         authenticateOwner()
     }
     override fun onOwnerAuthenticated() {

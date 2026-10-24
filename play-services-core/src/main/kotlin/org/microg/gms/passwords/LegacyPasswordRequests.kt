@@ -6,12 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import com.google.android.gms.auth.api.credentials.Credential
 import org.microg.gms.auth.credentials.LegacyPasswordActivity
 import java.security.MessageDigest
-import java.util.Base64
+import okio.ByteString.Companion.toByteString
 import java.util.UUID
 
 /** Recheck after repository construction/read and again at the native result boundary. */
@@ -22,13 +23,13 @@ internal class LegacyPasswordAccountGuard(private val expectedUserId: String?, p
 
 class LegacyPasswordRequest(val packageName: String, val uid: Int, val certificate: ByteArray, val mode: Int,
     val username: String?, val password: String?, val displayName: String?) {
-    val realm: String get() = "android://${Base64.getUrlEncoder().withoutPadding().encodeToString(certificate)}@$packageName/"
+    val realm: String get() = "android://${certificate.toByteString().base64Url().trimEnd('=')}@$packageName/"
     override fun toString() = "LegacyPasswordRequest[redacted]"
 }
 
 /** A resolution carries only a random handle; request values stay in encrypted storage. */
 class LegacyPasswordRequests(private val context: Context, identity: String = "legacy-password-requests-v1") {
-    private val store = AndroidVaultStore(context, identity)
+    private val store = if (Build.VERSION.SDK_INT >= 28) AndroidVaultStore(context, identity) else throw SecurityException()
     fun issue(packageName: String, uid: Int, mode: Int, credential: Credential? = null): PendingIntent {
         val certificate = certificate(packageName, uid)
         require(mode in GET..DELETE)
@@ -76,6 +77,7 @@ class LegacyPasswordRequests(private val context: Context, identity: String = "l
         if (!MessageDigest.isEqual(certificate(request.packageName, request.uid), request.certificate)) throw SecurityException()
     }
     private fun certificate(packageName: String, uid: Int): ByteArray {
+        if (Build.VERSION.SDK_INT < 28) throw SecurityException()
         val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
         if (info.applicationInfo?.uid != uid) throw SecurityException()
         val signer = info.signingInfo?.apkContentsSigners?.singleOrNull() ?: throw SecurityException()

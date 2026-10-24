@@ -44,6 +44,7 @@ internal class FolsomPhenotypeClient(context: Context, private val account: Acco
             manager.getUserData(account, "GoogleUserId") == accountId) { "Approved account changed" }
     }
     fun refresh(): Receipt {
+        if (Build.VERSION.SDK_INT < 28) throw ProtocolException()
         verify()
         check(CheckinPreferences.isEnabled(context)) { "Device configuration requests are disabled" }
         val captured = installation(context)
@@ -124,7 +125,8 @@ internal class FolsomPhenotypeClient(context: Context, private val account: Acco
         private const val URL = "https://www.googleapis.com/experimentsandconfigs/v1/getExperimentsAndConfigs?r=19&c=1"
         /** Called by the provider too: a captured pre-update/pre-check-in assignment cannot re-enable a flag. */
         private fun installation(context: Context): Installation {
-            check(Build.VERSION.SDK_INT >= 28 && context.packageName == FolsomPhenotypeProtocol.PACKAGE)
+            if (Build.VERSION.SDK_INT < 28) throw ProtocolException()
+            check(context.packageName == FolsomPhenotypeProtocol.PACKAGE)
             val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
             val signer = info.signingInfo?.apkContentsSigners?.singleOrNull()?.toByteArray() ?: throw ProtocolException()
             check(info.applicationInfo?.uid == Process.myUid())
@@ -145,9 +147,12 @@ internal class FolsomPhenotypeClient(context: Context, private val account: Acco
                 device += Proto.integer(33, phone.simCarrierId.toLong())
             } }
             runCatching { Build.getRadioVersion()?.let { device += string(16, it) } }
-            if (Build.VERSION.SDK_INT >= 30) android.os.ext.SdkExtensions.getAllExtensionVersions().toSortedMap().forEach { (id, value) ->
-                device += Proto.field(34, Proto.integer(1, id.toLong()) + Proto.integer(2, value.toLong()))
-            }
+            // The complete map is present on API31, or API30 with the genuine R extension2.
+            if (Build.VERSION.SDK_INT >= 31 || (Build.VERSION.SDK_INT >= 30 &&
+                    android.os.ext.SdkExtensions.getExtensionVersion(Build.VERSION_CODES.R) >= 2))
+                android.os.ext.SdkExtensions.getAllExtensionVersions().toSortedMap().forEach { (id, value) ->
+                    device += Proto.field(34, Proto.integer(1, id.toLong()) + Proto.integer(2, value.toLong()))
+                }
             val fingerprint = FolsomPhenotypeProtocol.digest(Proto.field(1, context.packageName) + Proto.integer(2, version) +
                 Proto.field(3, FolsomPhenotypeProtocol.digest(signer)) + Proto.field(4, device))
             val sha1 = MessageDigest.getInstance("SHA-1").digest(signer).joinToString("") { "%02x".format(it.toInt() and 255) }

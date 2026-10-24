@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Build
 import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
@@ -16,7 +17,7 @@ internal class RecoveryPatternView(context: Context, private val changed: (CharA
     private var drawing = false
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     init {
-        importantForAutofill = IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        if (Build.VERSION.SDK_INT >= 26) importantForAutofill = IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         contentDescription = context.getString(R.string.passwords_restore_pattern_description)
         isFocusable = true
     }

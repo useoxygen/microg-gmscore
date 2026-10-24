@@ -42,7 +42,8 @@ class GenericActivity : PasswordOwnerActivity() {
         val expected = intent.getStringExtra(EXTRA_ACCOUNT_ID)
         if (expected != null && expected != accountId || passwordRecovery && (domain != "chromesync" || expected.isNullOrBlank())) { finish(); return }
         supportFragmentManager.fragments.toList().forEach { supportFragmentManager.beginTransaction().remove(it).commitNowAllowingStateLoss() }
-        window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+        if (android.os.Build.VERSION.SDK_INT >= 26)
+            window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 32, 32, 32) }
         layout.addView(TextView(this).apply { setText(R.string.passwords_unlock_description) })
         layout.addView(Button(this).apply { setText(R.string.passwords_unlock); setOnClickListener { authenticateOwner() } })

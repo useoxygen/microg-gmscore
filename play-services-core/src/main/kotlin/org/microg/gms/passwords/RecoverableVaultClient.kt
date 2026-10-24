@@ -5,6 +5,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.KeyguardManager
 import android.content.Context
+import android.os.Build
 import com.google.android.gms.BuildConfig
 import com.squareup.wire.GrpcClient
 import okhttp3.OkHttpClient
@@ -25,7 +26,9 @@ internal data class RecoverableVaultStatus(val domain: String, val phase: Recove
 /** Explicit owner backup of a genuine recovered domain to Android's lock-screen recoverable keystore. */
 internal class RecoverableVaultClient(context: Context, private val account: Account, private val accountId: String,
     private val domain: String, private val expectedParent: String?, private val authorize: () -> Unit, private val sdkMode: Boolean = false) {
-    private val context = context.applicationContext
+    private val context = context.applicationContext.also {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
+    }
     private val stopped = AtomicBoolean(false)
     private val local = LocalKeyManager.getInstance(this.context)
     private val repository = PasswordRepository(this.context, account, expectedParent)
@@ -45,6 +48,7 @@ internal class RecoverableVaultClient(context: Context, private val account: Acc
     }
     fun cancel() { stopped.set(true); vault.cancel(); http.dispatcher.cancelAll() }
     private fun verify() {
+        if (Build.VERSION.SDK_INT < 28) throw VaultLockedException()
         if (stopped.get() || Thread.currentThread().isInterrupted) throw VaultLockedException()
         authorize()
         val accounts = AccountManager.get(context)
