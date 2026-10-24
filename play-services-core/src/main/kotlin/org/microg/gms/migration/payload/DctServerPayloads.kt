@@ -113,8 +113,14 @@ internal class DctServerPayloads(private val context: Context, private val recei
         return if (payload.int(17) == 3) value.list(5).map { file ->
             require(file.long(3) in 0..(4L * 1024 * 1024 * 1024))
             DctFilePart(type, file.long(3), file.bytes(1) ?: byteArrayOf()) {
-                (file.fields[2] as? ParcelFileDescriptor)?.let { ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.dup(it.fileDescriptor)) }
-                    ?: context.contentResolver.openInputStream(requireNotNull(file.fields[4] as? Uri)) ?: throw IOException("DCT file unavailable")
+                val descriptor = file.fields[2] as? ParcelFileDescriptor
+                val uri = file.fields[4] as? Uri
+                when {
+                    descriptor != null -> ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.dup(descriptor.fileDescriptor))
+                    uri != null -> context.contentResolver.openInputStream(uri) ?: throw IOException("DCT file unavailable")
+                    file.long(3) == 0L -> ByteArrayInputStream(byteArrayOf()) // metadata-only/empty file is valid
+                    else -> throw IOException("DCT file unavailable")
+                }
             }
         } else {
             @Suppress("UNCHECKED_CAST")

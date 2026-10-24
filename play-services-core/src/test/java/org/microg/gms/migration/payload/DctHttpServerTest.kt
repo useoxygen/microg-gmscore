@@ -79,6 +79,19 @@ class DctHttpServerTest {
             } } finally { bridge.close(); file.delete(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdownNow() }
         }
     }
+    @Test fun metadataOnlyEmptyFileDoesNotRequireAFileDescriptor() {
+        lateinit var server: DctServerPayloads
+        server = DctServerPayloads(RuntimeEnvironment.getApplication(), { incoming ->
+            assertEquals(0, server.send(DctRecord(DctSchemas.payload, mapOf(1 to 300L, 17 to 3,
+                16 to DctRecord(DctSchemas.response, mapOf(1 to true, 2 to incoming.obj(15)!!.long(1),
+                    3 to "application/octet-stream", 5 to listOf(DctRecord(DctSchemas.file, mapOf(1 to byteArrayOf(1,2), 3 to 0L)))))))))
+        }, { _,_,_,_ -> })
+        server.use {
+            val reply = server.incoming(DctHttpRequest("GET", "/file", emptyMap(), null))
+            assertEquals("base64; AQI=", reply.headers["X-OS-Migration-Metadata"])
+            val output = okio.Buffer(); reply.body.writeTo(output); assertEquals(0L, output.size)
+        }
+    }
     @Test fun callbackPostsAreOneWayAndDoNotWaitForApplicationResponse() {
         var seen = false
         DctPayloadBridge(RuntimeEnvironment.getApplication(), { null }, { payload ->
