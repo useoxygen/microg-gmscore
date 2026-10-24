@@ -50,7 +50,14 @@
     <!-- Turning sync off -->
     <string name="contacts_sync_turn_off_title">Turn off Google Contacts sync?</string>
     <string name="contacts_sync_turn_off_body">Contacts from %1$s will be removed from this phone. You can still find them at contacts.google.com, and you can turn sync back on at any time.</string>
-    <string name="contacts_sync_turn_off_unsynced">Important: %1$d changes haven\'t been synced yet and will be lost. To keep them, cancel and tap Sync now first.</string>
+    <plurals name="contacts_sync_turn_off_unsynced">
+        <item quantity="one">Important: %1$d change hasn\'t been synced yet and will be lost. To keep it, cancel and tap Sync now first.</item>
+        <item quantity="other">Important: %1$d changes haven\'t been synced yet and will be lost. To keep them, cancel and tap Sync now first.</item>
+    </plurals>
+    <plurals name="contacts_sync_turn_off_unsynced_download">
+        <item quantity="one">Important: %1$d change made on this phone hasn\'t been uploaded and will be lost. To keep it, cancel and turn on Upload changes from this phone first.</item>
+        <item quantity="other">Important: %1$d changes made on this phone haven\'t been uploaded and will be lost. To keep them, cancel and turn on Upload changes from this phone first.</item>
+    </plurals>
     <string name="contacts_sync_turn_off_confirm">Turn off</string>
     <string name="contacts_sync_cancel">Cancel</string>
     <string name="contacts_sync_turn_off_done">Sync turned off</string>

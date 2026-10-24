@@ -79,7 +79,8 @@ class SyncedContactsTest {
             contact(13, private, dataSet = "plugin")          // other data set: kept
             contact(14, private, account = other)             // other account: kept
             contact(15, private, pending = "{\"kind\":\"update\"}") // upload in flight: removed, unsynced
-            group(1, private, systemId = "Contacts")          // system group: kept
+            group(1, private, systemId = "Contacts")          // system group sync imported: removed
+            group(4, null, systemId = "Contacts")             // system group from elsewhere: kept
             group(2, private)                                 // synced label: removed
             group(3, null)                                    // existed before sync: kept
             group(25, null, dirty = true)                     // label created here, not uploaded: removed, unsynced
@@ -99,7 +100,7 @@ class SyncedContactsTest {
         prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
         synced.remove()
         assertEquals(setOf(3L, 12L, 13L, 14L), provider.ids("raw_contacts"))
-        assertEquals(setOf(1L, 3L), provider.ids("groups"))
+        assertEquals(setOf(3L, 4L), provider.ids("groups"))
         assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
         assertNull(prefs.privateGroupCheckpoint("binding"))
         assertEquals(0, synced.unsyncedChanges())

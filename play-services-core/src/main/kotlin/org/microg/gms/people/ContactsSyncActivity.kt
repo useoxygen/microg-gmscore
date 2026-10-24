@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -69,6 +70,9 @@ class ContactsSyncActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedInstanceState?.getString("turnOffAccount")?.let { name ->
+            turnOff = TurnOff(Account(name, "com.google"), savedInstanceState.getInt("turnOffUnsynced"))
+        }
         if (savedInstanceState?.getBoolean("waitingForPermission") == true) {
             val name = savedInstanceState.getString("pendingAccount")
             val mode = savedInstanceState.getString("pendingMode")?.let { runCatching { SyncMode.valueOf(it) }.getOrNull() }
@@ -228,12 +232,14 @@ class ContactsSyncActivity : ComponentActivity() {
 
     @Composable
     private fun TurnOffDialog(request: TurnOff) {
-        AlertDialog(onDismissRequest = { turnOff = null },
+        AlertDialog(onDismissRequest = { turnOff = null }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             title = { Text(stringResource(R.string.contacts_sync_turn_off_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.contacts_sync_turn_off_body, request.account.name))
-                    if (request.unsynced > 0) Text(stringResource(R.string.contacts_sync_turn_off_unsynced, request.unsynced),
+                    if (request.unsynced > 0) Text(pluralStringResource(
+                        if (ContactSyncPreferences(this@ContactsSyncActivity, request.account).mode == SyncMode.TWO_WAY) R.plurals.contacts_sync_turn_off_unsynced
+                        else R.plurals.contacts_sync_turn_off_unsynced_download, request.unsynced, request.unsynced),
                         color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -281,6 +287,7 @@ class ContactsSyncActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        turnOff?.let { outState.putString("turnOffAccount", it.account.name); outState.putInt("turnOffUnsynced", it.unsynced) }
         if (waitingForPermission) pending?.let { (account, mode) ->
             outState.putBoolean("waitingForPermission", true)
             outState.putString("pendingAccount", account.name)

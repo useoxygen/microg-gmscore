@@ -24,7 +24,8 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
     // Owned rows, plus contacts created in this account on this phone after sync was turned on.
     private val rawScope get() = "$accountScope AND (${RawContacts.SYNC4} IN (?,?) OR (${RawContacts.SYNC4} IS NULL AND " +
         "${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>${floor(prefs.privateAdoptionFloor, prefs.adoptionFloor)}))"
-    private val groupScope get() = "$accountScope AND ${Groups.SYSTEM_ID} IS NULL AND (${Groups.SYNC4} IN (?,?) OR (${Groups.SYNC4} IS NULL AND " +
+    // Sync-created groups (labels and the system groups sync imports), plus labels created here after enabling.
+    private val groupScope get() = "$accountScope AND (${Groups.SYNC4} IN (?,?) OR (${Groups.SYNC4} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND " +
         "${Groups.SOURCE_ID} IS NULL AND ${Groups._ID}>${floor(prefs.privateGroupAdoptionFloor, prefs.groupAdoptionFloor ?: Long.MAX_VALUE)}))"
 
     /** Contacts or labels with edits that haven't reached Google yet; removing them loses those edits. */
