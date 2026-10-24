@@ -367,11 +367,12 @@ class PasswordNativeSyncAndroidTest {
         val manager = RemoteWorkManager.getInstance(context)
         val workName = "password-fixture-background-" + UUID.randomUUID()
         val request = OneTimeWorkRequestBuilder<PasswordSyncWorker>()
-            .setInputData(workDataOf("account" to selected))
+            .setInputData(workDataOf("account" to account.name))
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
         val wasEnabled = repository.enabled
         try {
             repository.setEnabled(true)
+            repository.store.locked { it.load() }
             manager.enqueueUniqueWork(workName, ExistingWorkPolicy.KEEP, request).get(30, TimeUnit.SECONDS)
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
             var state: WorkInfo.State? = null
@@ -381,6 +382,7 @@ class PasswordNativeSyncAndroidTest {
                 if (state?.isFinished == true) break
                 Thread.sleep(100)
             }
+            repository.store.locked { it.load() }
             assertTrue("Scheduled password worker did not complete successfully", state == WorkInfo.State.SUCCEEDED)
         } finally {
             manager.cancelUniqueWork(workName).get(30, TimeUnit.SECONDS)
