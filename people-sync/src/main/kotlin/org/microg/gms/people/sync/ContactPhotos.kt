@@ -51,7 +51,9 @@ object ContactPhotos {
     }
 }
 data class PhotoBaseline(val token: String, val remote: String?, val revision: String? = null, val hash: String? = null)
-data class PhotoContact(val contact: LocalContact, val token: String, val baseline: PhotoBaseline?, val remoteHint: String?, val unreadable: Boolean = false, val remoteRevision: String? = null)
+data class PhotoContact(val contact: LocalContact, val token: String, val baseline: PhotoBaseline?, val remoteHint: String?, val unreadable: Boolean = false, val remoteRevision: String? = null,
+    /** The last metadata read recorded that Google has no photo for this contact. */
+    val remoteKnownNone: Boolean = false)
 interface PhotoStore {
     fun photoContacts(): List<PhotoContact>
     fun photoBytes(existing: PhotoContact): ByteArray?
@@ -76,6 +78,10 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
             if (local.unreadable) { skipped++; continue }
             if (contact.deleted && contact.pending == null || contact.resource == null || contact.pending != null && contact.pending.optString("kind") != "photo") continue
             val pending = contact.pending
+            // No photo here, none removed here, and none on Google as of the metadata pass:
+            // nothing to do. Avoids one Google read per photo-less contact on a fresh import.
+            if (pending == null && local.token == ContactPhotos.NONE && (local.baseline == null || local.baseline.token == ContactPhotos.NONE) &&
+                local.remoteKnownNone) continue
             if (pending == null && local.baseline != null && local.token == local.baseline.token && local.remoteHint == local.baseline.remote && local.remoteRevision == local.baseline.revision &&
                 (local.remoteHint == null || local.baseline.hash != null)) continue
             val current = api.get(contact.resource)

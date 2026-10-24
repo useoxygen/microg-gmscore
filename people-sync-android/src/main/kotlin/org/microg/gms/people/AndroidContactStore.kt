@@ -267,7 +267,8 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         var unreadable = false
         val token = try { photoToken(row.id) } catch (error: UnreadableContact) { unreadable = true; "unreadable" }
         PhotoContact(row, token, photoBaseline(state), if (state.isNull("_photoRemote")) null else state.optString("_photoRemote").takeIf { it.isNotEmpty() }, unreadable,
-            if (state.isNull("_photoRevision")) null else state.optString("_photoRevision"))
+            if (state.isNull("_photoRevision")) null else state.optString("_photoRevision"),
+            remoteKnownNone = state.has("_photoRemote") && state.isNull("_photoRemote"))
     }
     override fun photoBytes(existing: PhotoContact): ByteArray? {
         if (existing.token == ContactPhotos.NONE) return null

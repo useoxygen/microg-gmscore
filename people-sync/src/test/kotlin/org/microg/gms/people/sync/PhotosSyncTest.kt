@@ -81,6 +81,19 @@ class PhotosSyncTest {
         PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
         return store to api
     }
+    @Test fun photoLessContactsNeedNoGoogleReads() {
+        val store = Store(); val api = Api()
+        store.value = store.value.copy(remoteKnownNone = true)
+        assertEquals(0, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
+        assertEquals(0, api.reads); assertEquals(0, store.installs)
+        // A local photo removal (baseline had one) or an unknown remote state still checks Google.
+        store.value = store.value.copy(baseline = PhotoBaseline("old-token", null))
+        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, api.reads)
+        store.value = store.value.copy(baseline = null, remoteKnownNone = false)
+        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(2, api.reads)
+    }
     @Test fun lostPhotoReplyHoldsMetadataCheckpointUntilCloudNameIsApplied() {
         val (store, api) = setup()
         fun named(person: Person, name: String) = Person.parse(JSONObject(person.json.toString()).put("names",
