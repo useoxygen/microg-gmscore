@@ -51,6 +51,7 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
     }
     private fun removeLocked() {
         check(prefs.mode == org.microg.gms.people.sync.SyncMode.OFF)
+        if (!prefs.pendingRemoval) return // Cancelled by turning sync back on.
         provider.applyBatch(arrayListOf(
             ContentProviderOperation.newDelete(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope, args).build(),
             ContentProviderOperation.newDelete(syncUri(Groups.CONTENT_URI)).withSelection(groupScope, args).build(),

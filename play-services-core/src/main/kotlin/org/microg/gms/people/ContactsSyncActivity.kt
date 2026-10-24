@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -366,9 +367,19 @@ class ContactsSyncActivity : ComponentActivity() {
                             ?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
                             ?: throw IllegalStateException("Contacts provider unavailable")
                     }
-                    ContactSyncPreferences(this@ContactsSyncActivity, account).apply {
-                        initializePrivateFloors(floor, groupFloor)
-                        configure(mode, floor)
+                    // Under the account lock: a turn-off removal still in progress finishes first, and one
+                    // still owed is cancelled, so it can never delete contacts after sync is back on.
+                    withContext(Dispatchers.IO) {
+                        val lock = ContactSyncLock.of(account)
+                        if (!lock.tryLock(120, java.util.concurrent.TimeUnit.SECONDS)) throw SyncStillRunning()
+                        try {
+                            ensureActive()
+                            ContactSyncPreferences(this@ContactsSyncActivity, account).apply {
+                                pendingRemoval = false
+                                initializePrivateFloors(floor, groupFloor)
+                                configure(mode, floor)
+                            }
+                        } finally { lock.unlock() }
                     }
                 }
                 retryChoice = null

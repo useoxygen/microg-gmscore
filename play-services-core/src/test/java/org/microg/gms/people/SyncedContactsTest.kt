@@ -100,7 +100,7 @@ class SyncedContactsTest {
         assertEquals(4, synced.count())
         assertThrows(IllegalStateException::class.java) { synced.remove() } // Never while sync can still write.
 
-        prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
         synced.remove()
         assertEquals(setOf(3L, 13L, 14L, 15L, 22L, 23L), provider.ids("raw_contacts"))
         assertEquals(setOf(3L, 4L, 25L), provider.ids("groups"))
@@ -115,7 +115,7 @@ class SyncedContactsTest {
         val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }); contact(1, private) }
         ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
         val prefs = ContactSyncPreferences(context, account)
-        prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
         val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
         val lock = ContactSyncLock.of(account)
         val syncRunning = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
@@ -144,6 +144,17 @@ class SyncedContactsTest {
         release.countDown(); stuck.join()
         SyncedContacts(client, account, prefs).remove(waitMillis = 200)
         assertFalse(prefs.pendingRemoval); assertTrue(provider.ids("raw_contacts").isEmpty())
+        client.close()
+    }
+    @Test fun aRemovalCancelledByReEnablingDeletesNothing() {
+        val context = RuntimeEnvironment.getApplication()
+        val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }); contact(1, private) }
+        ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
+        val prefs = ContactSyncPreferences(context, account)
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = false // re-enable cleared the debt
+        val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
+        SyncedContacts(client, account, prefs).remove()
+        assertEquals(setOf(1L), provider.ids("raw_contacts"))
         client.close()
     }
 }
