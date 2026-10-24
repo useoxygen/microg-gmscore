@@ -6,10 +6,12 @@ have not been executed. The last recorded host batch is 604 passing tests at
 `dece944d`; rebuilding these additions is a separate gathered check.
 
 The parent owns device discovery, reservation, artifact signing, installation,
-provider calls and results. The owner released the Pixel 7a for this chat. Its
-observed baseline remains Services `cf93b15`, Core `cyc677-dedupe`, and an existing
-manual controller. Preserve those exact components and the active controller
-before any transition. The connected Pixel 8a is a release/user Cyclon Services
+provider calls and results. The owner released the Pixel 7a for this chat. The refreshed
+October 23 baseline is Services `cf93b15`, Core code 26 `cyc677-ident`, and an
+active image init controller. The installed Core APK payload matches the clean
+CYC-677 build at `5042e184`. A separate acceptance build combines that source
+with password-fill head `5d5551a90`; preserve the active image components before
+any transition. The earlier manual-controller baseline is stale. The connected Pixel 8a is a release/user Cyclon Services
 phone with four accounts that do not match the approved primary test account,
 and has no installed Chrome. It is not an approved second test account/device
 or an official GPM peer merely because it is connected.
@@ -187,7 +189,7 @@ The parent should gather the changed sources and run the full suites and both
 APKs once:
 
 ```sh
-./gradlew :password-sync:test :play-services-fido:core:testDebugUnitTest \
+./gradlew :password-sync:test :play-services-fido-core:testDebugUnitTest \
   :play-services-core:testMapboxDefaultDebugUnitTest \
   :play-services-core:assembleMapboxDefaultDebug \
   :play-services-core:assembleMapboxDefaultDebugAndroidTest --continue
