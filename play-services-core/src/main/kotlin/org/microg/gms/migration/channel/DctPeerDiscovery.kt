@@ -9,6 +9,7 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.ext.SdkExtensions
 import java.io.Closeable
 import java.net.Inet6Address
 import java.util.concurrent.Executor
@@ -36,7 +37,10 @@ internal class DctPeerDiscovery(context: Context, private val network: Network, 
             synchronized(this@DctPeerDiscovery) {
                 resolving = false
                 if (closed || serviceInfo.serviceName != sessionId || serviceInfo.network != network) return
-                var address = serviceInfo.hostAddresses.filterIsInstance<Inet6Address>()
+                // hostAddresses needs T extension 7 (always there from Android 14); Android 13 without it has only host.
+                val addresses = if (SdkExtensions.getExtensionVersion(Build.VERSION_CODES.TIRAMISU) >= 7) serviceInfo.hostAddresses
+                    else @Suppress("DEPRECATION") listOfNotNull(serviceInfo.host)
+                var address = addresses.filterIsInstance<Inet6Address>()
                     .firstOrNull { !it.isAnyLocalAddress && !it.isMulticastAddress } ?: run { fail(); return }
                 if (address.isLinkLocalAddress && address.scopeId == 0) {
                     val name = contextConnectivity.getLinkProperties(network)?.interfaceName ?: run { fail(); return }
@@ -79,7 +83,8 @@ internal class DctPeerDiscovery(context: Context, private val network: Network, 
         if (closed) return
         closed = true
         handler.removeCallbacks(timeout)
-        if (resolving) runCatching { manager.stopServiceResolution(resolution) }
+        // Without T extension 7 there is no way to stop a resolve; its result is ignored once closed.
+        if (resolving && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.TIRAMISU) >= 7) runCatching { manager.stopServiceResolution(resolution) }
         if (discovering) runCatching { manager.stopServiceDiscovery(discovery) }
         resolving = false
         discovering = false
