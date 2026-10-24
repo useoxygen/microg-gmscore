@@ -35,7 +35,8 @@ class ContactSyncService : Service() {
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
                     val api = contactsApi(token, canCreate = { prefs.uploadNewContacts }) {
-                        prefs.mode == SyncMode.TWO_WAY && mode == SyncMode.TWO_WAY
+                        prefs.mode == SyncMode.TWO_WAY && mode == SyncMode.TWO_WAY &&
+                            !ContactMigrationPrivacy(this@ContactSyncService).held
                     }
                     val store = AndroidContactStore(provider, account, prefs)
                     store.configureMode()
@@ -91,6 +92,7 @@ class ContactSyncService : Service() {
             return PeopleApi(HttpTransport { method, url, body ->
                 // Redirects and transparent POST retries must not forward tokens
                 // or duplicate contacts after a lost mutation response.
+                if (method != "GET" && !canUpload()) throw UploadDisabled()
                 if (method == "POST" && url.substringBefore('?').endsWith("people:createContact") && !canCreate())
                     throw UploadDisabled()
                 val request = Request.Builder().url(url).header("Authorization", "Bearer $token")
