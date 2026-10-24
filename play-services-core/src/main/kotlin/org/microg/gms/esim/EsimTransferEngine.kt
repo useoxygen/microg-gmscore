@@ -105,6 +105,8 @@ internal class EsimTransferEngine(private val context: Context, private val owne
             }
         }
     }
+    // Active subscriptions are read with the privileged READ_PRIVILEGED_PHONE_STATE grant, which lint does not model.
+    @android.annotation.SuppressLint("MissingPermission")
     @Synchronized fun activate(subId: Int, record: EsimWireRecord) {
         if (cancelled.get()) throw EsimFailure(16)
         if (peer == null) throw EsimFailure(48502)
