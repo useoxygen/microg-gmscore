@@ -19,6 +19,7 @@ const step = (name, data = {}) => {
 };
 
 const p = phone(serial);
+if (!(await p.unlock())) { console.error('the phone is locked with a PIN; unlock it first'); process.exit(2); }
 const priorTop = p.top();
 const log = p.watchLog();
 const { page, close } = await openBrowser();

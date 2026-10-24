@@ -24,7 +24,14 @@ export function phone(serial) {
     return { lines, seen, stop: () => proc.kill() };
   }
 
-  const top = () => (sh('dumpsys activity activities | grep -m1 topResumedActivity').match(/u0 (\S+)/) || [])[1];
+  const top = () => (sh('dumpsys activity activities | grep -m1 topResumedActivity || true').match(/u0 (\S+)/) || [])[1];
+  const locked = () => /isKeyguardShowing=true/.test(sh('dumpsys window | grep -m1 isKeyguardShowing || true'));
+  // Wakes the phone and dismisses a keyguard without a PIN; a phone with a PIN stays locked.
+  async function unlock() {
+    sh('input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard');
+    await sleep(1500);
+    return !locked();
+  }
 
   // On-screen text from a screenshot via macOS Vision OCR; Cyclon phones block uiautomator dumps.
   function nodes() {
@@ -44,7 +51,7 @@ export function phone(serial) {
     }
     return null;
   }
-  return { sh, watchLog, top, nodes, tap, waitFor };
+  return { sh, watchLog, top, unlock, nodes, tap, waitFor };
 }
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
