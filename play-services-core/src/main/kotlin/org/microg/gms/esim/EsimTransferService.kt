@@ -44,11 +44,11 @@ class EsimTransferService : LifecycleService() {
 
 internal class EsimTransferBinder(private val context: Context, private val uid: Int,
     private val engine: EsimTransferEngine = EsimTransferEngine(context, uid),
-    private val permission: (Boolean) -> Unit = { read ->
-        if (context.checkPermission("android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS", Binder.getCallingPid(), Binder.getCallingUid()) != PackageManager.PERMISSION_GRANTED)
-            throw SecurityException("Missing WRITE_EMBEDDED_SUBSCRIPTIONS")
-        if (read && context.checkPermission("android.permission.READ_PRIVILEGED_PHONE_STATE", Binder.getCallingPid(), Binder.getCallingUid()) != PackageManager.PERMISSION_GRANTED)
-            throw SecurityException("Missing READ_PRIVILEGED_PHONE_STATE")
+    private val permission: (Set<String>) -> Unit = { required ->
+        required.forEach { name ->
+            if (context.checkPermission(name, Binder.getCallingPid(), Binder.getCallingUid()) != PackageManager.PERMISSION_GRANTED)
+                throw SecurityException("Missing $name")
+        }
     }) : MigrationBinder(DESCRIPTOR, uid), java.io.Closeable {
     private val worker = Executors.newSingleThreadExecutor()
     private fun record(data: Parcel): EsimWireRecord {
@@ -66,7 +66,13 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
     }
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
         // GMS checks the real calling UID's permission, not merely the broker's package string.
-        permission(code in setOf(1, 5, 6, 10, 20))
+        permission(buildSet {
+            // Pinned ccww: preparation5 is READ-only; starts6/10/20 require WRITE, not READ.
+            if (code in setOf(1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 15, 17, 19, 20, 21, 23))
+                add("android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS")
+            if (code == 1 || code == 5) add("android.permission.READ_PRIVILEGED_PHONE_STATE")
+            //14/16 and disabled-feature18/22 have no extra permission check in the pin.
+        })
         when (code) {
             1 -> {
                 val callback = requireNotNull(data.readStrongBinder()); data.requireEnd()

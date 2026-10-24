@@ -179,6 +179,34 @@ class EsimTargetTest {
         assertEquals(48537, assertThrows(EsimFailure::class.java) { EsimEntitlement.response(mapOf("OperationResult" to "1", "SubscriptionResult" to "2", "ProfileActivationCode" to "bad")) }.status)
         assertEquals(48538, assertThrows(EsimFailure::class.java) { EsimEntitlement.response(mapOf("OperationResult" to "0")) }.status)
     }
+    @Test fun preparationAndStartMatchPinnedPermissionContracts() {
+        val requirements = mutableListOf<Set<String>>()
+        val done = CountDownLatch(2); val errors = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        fun callback(name: String, expected: Int) = object : Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                try {
+                    data.enforceInterface(EsimTransferBinder.PREFIX + name)
+                    assertEquals(1, code); assertEquals(1, data.readInt())
+                    assertEquals(expected, Status.CREATOR.createFromParcel(data).statusCode); assertEquals(0, data.dataAvail())
+                } catch (e: Throwable) { errors.set(e) } finally { done.countDown() }
+                return true
+            }
+        }
+        val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { requirements += it })
+        for (code in listOf(5, 6)) {
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try {
+                data.writeInterfaceToken(EsimTransferBinder.DESCRIPTOR)
+                data.writeStrongBinder(callback(if (code == 5) "IPrepareEsimTransferDataCallbacks" else "IStartTransferSessionCallbacks", if (code == 5) 17 else 48522))
+                if (code == 6) { data.writeInt(1); EsimWireRecord.build { Writer.write(it, 1, 2) }.use { it.writeToParcel(data, 0) } }
+                assertTrue(binder.transact(code, data, reply, 0)); reply.readException()
+            } finally { data.recycle(); reply.recycle() }
+        }
+        try {
+            assertTrue(done.await(5, TimeUnit.SECONDS)); errors.get()?.let { throw it }
+            assertEquals(listOf(setOf("android.permission.READ_PRIVILEGED_PHONE_STATE"), setOf("android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS")), requirements)
+        } finally { binder.close() }
+    }
     @Test fun binderChecksRealPermissionsBeforeDispatch() {
         val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { throw SecurityException("fixture") })
         val data = Parcel.obtain(); val reply = Parcel.obtain()
