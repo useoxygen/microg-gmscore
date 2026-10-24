@@ -42,6 +42,13 @@ Build/sign staging is separate from installation. Use the parent's documented
 `cable-test/prepare.sh` method for the approved overlay, then replace its microG
 with the signed B APK using `adb install -r`. The same package signature and
 versionCode must be compatible. Do not use `-d`, clear app data or uninstall it.
+After taking the claim below, the exact update command is:
+
+```sh
+cd "$HOME/research/cyc700-switch/parity/B-artifacts"
+shasum -a 256 -c SHA256SUMS
+adb -s 3A031JEHN04180 install -r "$PWD/GmsCore.apk"
+```
 The parent may instead put B's APK and its arm64 libraries into an isolated copy
 of that overlay before installing it. Preserve a checksum-verified baseline.
 
@@ -131,7 +138,9 @@ The main entry is in release source; the DUMP override and lab probes are debug
 only. The already-gated `CyclonAndroidSwitchWirelessSetupOverlay` points to this
 same setup alias. No Google internal service needs to be exported.
 
-The screen should show a QR only after real FC73 advertisement success. It must
+Approve the app's Nearby devices permission prompt if shown. The build requests
+NEARBY_WIFI_DEVICES for Aware and the Bluetooth connect/advertise permissions;
+denial ends the session. The screen should show a QR only after real FC73 advertisement success. It must
 encode **`https://migrate.google/1/d#s=…&p=…`**. The values are session secrets;
 do not paste them into tickets/logs or save an unprotected screenshot.
 

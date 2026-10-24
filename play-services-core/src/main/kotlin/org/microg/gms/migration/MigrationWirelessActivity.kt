@@ -3,6 +3,9 @@
 package org.microg.gms.migration
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Button
@@ -38,7 +41,22 @@ class MigrationWirelessActivity : Activity() {
         val existing = DctSessions.retained()
         if (launched && existing == null) { setResult(RESULT_CANCELED); finish(); return }
         controller = existing ?: DctSessions.create(this)
-        requireNotNull(controller).also { if (!launched) it.add(listener); if (!it.advertised && !launched) it.start() }
+        if (!launched) {
+            val required = mutableListOf<String>()
+            if (Build.VERSION.SDK_INT >= 31) required.addAll(listOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE))
+            if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            else required.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            val missing = required.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (missing.isEmpty()) startSession() else requestPermissions(missing.toTypedArray(), 700)
+        }
+    }
+    private fun startSession() { controller?.also { it.add(listener); if (!it.advertised) it.start() } }
+    override fun onRequestPermissionsResult(request: Int, permissions: Array<out String>, grants: IntArray) {
+        super.onRequestPermissionsResult(request, permissions, grants)
+        if (request == 700) {
+            if (grants.isNotEmpty() && grants.all { it == PackageManager.PERMISSION_GRANTED }) startSession()
+            else { status.text = "Nearby devices permission is required to connect your iPhone."; controller?.close() }
+        }
     }
     private fun launchImporter() {
         if (launched || isFinishing) return
