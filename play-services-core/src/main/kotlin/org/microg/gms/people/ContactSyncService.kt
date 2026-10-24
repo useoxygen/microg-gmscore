@@ -30,6 +30,12 @@ class ContactSyncService : Service() {
                 provider: ContentProviderClient, result: SyncResult) {
                 val prefs = ContactSyncPreferences(this@ContactSyncService, account)
                 if (prefs.mode == SyncMode.OFF) return
+                // Turning sync off removes synced contacts under the same lock; never write after that.
+                val lock = ContactSyncLock.of(account)
+                lock.lock()
+                try { if (prefs.mode != SyncMode.OFF) performLocked(account, provider, result, prefs) } finally { lock.unlock() }
+            }
+            private fun performLocked(account: Account, provider: ContentProviderClient, result: SyncResult, prefs: ContactSyncPreferences) {
                 if (prefs.blockedClientContext == privatePeopleContext.binding) { prefs.status = "needs_update"; return }
                 var usedToken: String? = null
                 try {
@@ -121,27 +127,6 @@ class ContactSyncService : Service() {
             val result = AccountManager.get(context).getAuthToken(account, "oauth2:" + scope(mode), null, false, null, null).result
             return result.getString(AccountManager.KEY_AUTHTOKEN)?.takeIf { it.isNotBlank() }
                 ?: throw AuthenticatorException("Contacts authorization required")
-        }
-        /** Fixed diagnostic GET. No provider/store, retries, redirects or borrowed API key. */
-        fun privatePeopleProbeGet(token: String, url: String): HttpReply {
-            require(url == PrivatePeopleProbe.url(privatePeopleContext))
-            val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
-                .callTimeout(45, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
-            val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
-            http.newCall(request).execute().use { response ->
-                val body = response.body ?: return HttpReply(response.code, "")
-                if (body.contentLength() > PrivatePeopleProbe.MAX_RESPONSE_BYTES) throw ProbeResponseTooLarge(response.code)
-                val out = java.io.ByteArrayOutputStream()
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(4096)
-                    while (true) {
-                        val count = input.read(buffer); if (count < 0) break
-                        if (out.size() + count > PrivatePeopleProbe.MAX_RESPONSE_BYTES) throw ProbeResponseTooLarge(response.code)
-                        out.write(buffer, 0, count)
-                    }
-                }
-                return HttpReply(response.code, out.toString("UTF-8"))
-            }
         }
         private fun http() = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(60, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()

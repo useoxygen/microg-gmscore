@@ -31,6 +31,15 @@ class ContactSyncPreferences(context: Context, val account: Account) {
         check(prefs.edit().putBoolean(prefix + "privateLegacyCleanupComplete", true)
             .remove(prefix + "privateGroupBinding").remove(prefix + "privateGroupCheckpoint").commit())
     }
+    /** Turn-off removal still owed (e.g. a sync was stuck); retried when the settings screen opens. */
+    var pendingRemoval: Boolean
+        get() = prefs.getBoolean(prefix + "pendingRemoval", false)
+        set(value) { check(prefs.edit().putBoolean(prefix + "pendingRemoval", value).commit()) }
+    /** After synced rows were removed: the next enable starts with full contact and label downloads. */
+    fun resetCheckpoints() {
+        check(prefs.edit().remove(prefix + "groupCheckpoint-v1").remove(prefix + "privateGroupBinding")
+            .remove(prefix + "privateGroupCheckpoint").putString(prefix + "status", "").commit())
+    }
     var groupCheckpoint: String?
         get() = prefs.getString(prefix + "groupCheckpoint-v1", null)
         set(value) { check(prefs.edit().putString(prefix + "groupCheckpoint-v1", value).commit()) }

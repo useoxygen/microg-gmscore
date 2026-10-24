@@ -138,13 +138,20 @@ revision/hash baselines. Empty/malformed/error replies preserve stored images.
 
 ## Settings and acceptance boundary
 
-Google accounts → Contacts sync offers Off, Download only and Two-way, with the
-upload/deletion explanation and non-enabling access checks. Activation obtains
-Contacts permissions and the requested OAuth grant, then verifies a cursor-only
-read before saving mode or scheduling. Access/matrix checks cannot touch provider
-state, enable sync, or persist probe tokens. Raw auth transport/parser logging is
-suppressed for Contacts self-requests even with VERBOSE enabled. Diagnostics use
-allowlisted enums/statuses and no contact/account/token/error-body content.
+Google accounts → Google Contacts sync shows one card per Google account,
+modelled on Google's own settings: a sync switch (turning it on enables two-way
+sync), a status line with the last sync and "Sync now", the actions a status needs
+(permission settings, Reconnect, Try again) and an "Upload changes from this phone"
+switch; turning it off selects Download only. Activation obtains Contacts
+permissions and the requested OAuth grant, then verifies a cursor-only read before
+saving the mode or scheduling. Turning sync off asks for confirmation, warns about
+unsynced edits, and then removes the contacts and labels that sync imported or
+adopted for that account (`SyncedContacts`), as Google's sync does; rows that
+existed before sync was enabled, other adapters' rows and system groups are kept,
+and the cursors are reset so a later enable downloads everything again. Raw auth
+transport/parser logging is suppressed for Contacts self-requests even with
+VERBOSE enabled. Diagnostics use allowlisted enums/statuses and no
+contact/account/token/error-body content.
 
 CYC-721/725/726 remain open pending review/merge and CYC-729 device/provider/editor
 qualification. Unit-only areas include journal/restart/unknown-outcome behavior,
@@ -173,7 +180,7 @@ both Debug lint targets passed (`/tmp/cyc721-r2-final.log`). These tests do not
 execute the native ContactsProvider on a device.
 
 October 24, 2026 (PT), implementation head `8d4185b49`: **175 engine tests and
-7 focused ContactsPrivateProbeTest Android host tests passed**, zero failures,
+7 focused Android host tests passed**, zero failures,
 errors or skips. The CI MapboxDefaultDebug app, standalone fixture APK and both
 `people-sync-android:lintDebug` / `play-services-core:lintMapboxDefaultDebug` passed
 in the final combined run. **25 provider fixtures compiled only; none executed.**
