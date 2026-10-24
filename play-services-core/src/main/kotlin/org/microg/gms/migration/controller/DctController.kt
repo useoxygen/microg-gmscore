@@ -38,21 +38,40 @@ internal class DctController(private val context: Context, val session: DctSessi
     private val buffered = java.util.ArrayDeque<Pair<String, ByteArray>>()
     private var bufferedBytes = 0
     private val applicationOwner = java.util.concurrent.CompletableFuture<Listener>()
-    internal fun oneWay(type: String, bytes: ByteArray) { synchronized(incomingLock) {
-        if (stopped.get()) return
-        if (listeners.any { it.oneWay(type, bytes) }) return
-        if (buffered.size >= 8 || bytes.size > 16 * 1024 * 1024 - bufferedBytes) { fail(8013); return }
-        buffered.add(type to bytes.copyOf()); bufferedBytes += bytes.size
-    } }
-    fun applicationReady(listener: Listener) { synchronized(incomingLock) {
-        if (stopped.get()) return
-        applicationOwner.complete(listener)
-        while (buffered.isNotEmpty()) {
-            val (type, bytes) = buffered.peek()
-            if (!listener.oneWay(type, bytes)) return
-            buffered.remove(); bufferedBytes -= bytes.size
+    private var applicationListener: Listener? = null
+    private var draining = false
+    internal fun oneWay(type: String, bytes: ByteArray) {
+        var overflow = false
+        synchronized(incomingLock) {
+            if (stopped.get()) return
+            if (buffered.size >= 8 || bytes.size > 16 * 1024 * 1024 - bufferedBytes) overflow = true
+            else { buffered.add(type to bytes.copyOf()); bufferedBytes += bytes.size }
         }
-    } }
+        if (overflow) fail(8013) else drainIncoming()
+    }
+    fun applicationReady(listener: Listener) {
+        synchronized(incomingLock) { if (stopped.get()) return; applicationListener = listener }
+        applicationOwner.complete(listener)
+        drainIncoming()
+    }
+    private fun drainIncoming() {
+        synchronized(incomingLock) { if (draining || applicationListener == null || stopped.get()) return; draining = true }
+        while (true) {
+            val next = synchronized(incomingLock) {
+                val listener = applicationListener
+                val message = buffered.poll()
+                if (stopped.get() || listener == null || message == null) { draining = false; return }
+                bufferedBytes -= message.second.size
+                listener to message
+            }
+            try {
+                if (!next.first.oneWay(next.second.first, next.second.second)) {
+                    synchronized(incomingLock) { buffered.addFirst(next.second); bufferedBytes += next.second.second.size; applicationListener = null; draining = false }
+                    return
+                }
+            } catch (e: Exception) { fail(8013); return }
+        }
+    }
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val channels = CopyOnWriteArrayList<DctControlChannel>()
@@ -175,9 +194,11 @@ internal class DctController(private val context: Context, val session: DctSessi
             }).also { it.start() } } catch (e: Exception) { fail(8019) }
         }
     }
-    @Synchronized private fun promotePublisher() {
-        if (stopped.get() || upgraded || peer == null || !publisherProof.get()) return
-        upgraded = true; http = null
+    private fun promotePublisher() {
+        synchronized(this) {
+            if (stopped.get() || upgraded || peer == null || !publisherProof.get()) return
+            upgraded = true; http = null
+        }
         android.util.Log.i("GmsDct", "Authenticated Wi-Fi Aware publisher channel ready")
         listeners.forEach { it.bandwidth(6, 1) }
         worker.execute {
@@ -224,7 +245,7 @@ internal class DctController(private val context: Context, val session: DctSessi
         if (!stopped.compareAndSet(false, true)) return
         android.util.Log.i("GmsDct", "Session closed status=$status")
         applicationOwner.completeExceptionally(DctFailure(status))
-        synchronized(incomingLock) { buffered.clear(); bufferedBytes = 0 }
+        synchronized(incomingLock) { buffered.clear(); bufferedBytes = 0; applicationListener = null; draining = false }
         listeners.forEach { runCatching { it.closed(status) } }; listeners.clear()
         synchronized(this) { channels.forEach { it.close() }; channels.clear(); control = null; http = null }
         server?.close(); publisher?.close(); publisher = null

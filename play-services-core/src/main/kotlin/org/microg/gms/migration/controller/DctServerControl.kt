@@ -29,13 +29,19 @@ internal class DctServerControl(private val model: String, private val manufactu
     fun handle(request: DctHttpRequest): DctHttpReply {
         check(!closed)
         return when (request.path.substringBefore('?')) {
-            "/notifications" -> synchronized(polling) {
+            "/notifications" -> {
                 require(request.method == "GET" && request.path in listOf("/notifications", "/notifications?ack"))
-                if (request.path.endsWith("?ack")) { retained?.consumed?.invoke(); retained = null }
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(25)
-                while (retained == null && !closed && System.nanoTime() < deadline) retained = queue.poll(100, TimeUnit.MILLISECONDS)
-                val message = retained
-                if (message == null) reply() else DctHttpReply(message.type, message.bytes.toRequestBody())
+                val consumed = synchronized(polling) {
+                    if (request.path.endsWith("?ack")) retained?.consumed.also { retained = null } else null
+                }
+                // Binder death can close the controller; never call its sink under the polling lock.
+                consumed?.invoke()
+                synchronized(polling) {
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(25)
+                    while (retained == null && !closed && System.nanoTime() < deadline) retained = queue.poll(100, TimeUnit.MILLISECONDS)
+                    val message = retained
+                    if (message == null) reply() else DctHttpReply(message.type, message.bytes.toRequestBody())
+                }
             }
             "/capabilities" -> {
                 require(request.method == "POST" && request.headers["content-type"]?.substringBefore(';') == DctControlChannel.CONTROL_TYPE); DeviceCapabilityRequest.ADAPTER.decode(requireNotNull(request.bytes))
