@@ -1639,6 +1639,17 @@
                 <action android:name="com.google.android.gms.backup.D2D_MIGRATE_HELPER" />
             </intent-filter>
         </service>
+        <!-- Cyclon-owned setup UI; Google internal quickstart Binder remains non-exported. -->
+        <activity android:name="org.microg.gms.migration.MigrationWirelessActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD"
+            android:excludeFromRecents="true" />
+        <activity-alias android:name="org.microg.gms.migration.MigrationWirelessSetup"
+            android:targetActivity="org.microg.gms.migration.MigrationWirelessActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <receiver android:name="org.microg.gms.migration.MigrationCancelledReceiver"
+            android:exported="true" android:permission="android.permission.BACKUP">
+            <intent-filter><action android:name="com.google.android.gms.smartdevice.OS_MIGRATION_CANCELLED" /></intent-filter>
+        </receiver>
     </application>
 
 </manifest>

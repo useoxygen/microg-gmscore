@@ -24,16 +24,31 @@ import java.util.concurrent.atomic.AtomicLong
 /** requestId correlates HTTP responses; payloadId belongs only to transfer accounting. */
 internal class DctPayloadBridge(private val context: Context, private val channel: () -> DctHttpPeer?,
                                 private val received: (DctRecord) -> Unit,
-                                private val update: (Long, Int, Long, Long) -> Unit) : Closeable {
+                                private val update: (Long, Int, Long, Long) -> Unit,
+                                private val notifyPeer: ((Long, String, ByteArray, () -> Unit) -> Boolean)? = null,
+                                private val cancelNotice: ((Long) -> Boolean)? = null) : Closeable {
+    private val server = DctServerPayloads(context, received, update)
+    fun incoming(request: DctHttpRequest): DctHttpReply = server.incoming(request)
     private val work = Executors.newFixedThreadPool(2)
     private val calls = ConcurrentHashMap<Long, Call>()
     private val requestIds = ConcurrentHashMap<Long, Long>()
     private val owned = ConcurrentHashMap<Long, DctRecord>()
+    private val notices = ConcurrentHashMap.newKeySet<Long>()
     private val nextId = AtomicLong(System.nanoTime())
     @Volatile private var closed = false
     @Synchronized fun send(payload: DctRecord): Int {
-        if (closed || channel() == null) { payload.close(); return 8005 }
-        if (payload.int(17) in 2..3) { payload.close(); return 8009 } // client role has no pending incoming request to answer
+        if (closed) { payload.close(); return 8005 }
+        if (payload.int(17) in 2..3) return server.send(payload)
+        if (channel() == null && payload.int(17) == 4 && notifyPeer != null) {
+            try { val message = requireNotNull(payload.obj(18)); val body = bytes(message, 2, -1) ?: byteArrayOf()
+                val id = payload.long(1)
+                if (!notices.add(id)) return 8009
+                val ok = notifyPeer.invoke(id, requireNotNull(message.text(1)), body) { if (notices.remove(id) && !closed) update(id, 1, body.size.toLong(), body.size.toLong()) }
+                if (!ok) notices.remove(id)
+                return if (ok) 0 else 8013
+            } finally { payload.close() }
+        }
+        if (channel() == null) { payload.close(); return 8013 }
         if (owned.size >= 16) { payload.close(); return 8013 }
         val id = payload.long(1)
         if (owned.putIfAbsent(id, payload) != null) { payload.close(); return 8009 }
@@ -70,15 +85,18 @@ internal class DctPayloadBridge(private val context: Context, private val channe
                     if (!response.isSuccessful) throw IOException("DCT application HTTP ${response.code}")
                     if (payload.int(17) == 1) {
                         val requestId = requireNotNull(payload.obj(15)).long(1)
-                        responsePayload(response, requestId).use { result ->
+                        fun deliver(result: DctRecord) { result.use {
                             if (owned.containsKey(id) && !closed) {
                                 received(result)
-                                val responseData = requireNotNull(result.obj(16))
-                                val size = if (result.int(17) == 3) responseData.list(5).sumOf { it.long(3) }
-                                    else responseData.list(7).sumOf { ((it.fields[1] as ParcelFileDescriptor).statSize - 4).coerceAtLeast(0) }
+                                val data = requireNotNull(result.obj(16))
+                                val size = if (result.int(17) == 3) data.list(5).sumOf { it.long(3) }
+                                    else data.list(7).sumOf { ((it.fields[1] as ParcelFileDescriptor).statSize - 4).coerceAtLeast(0) }
                                 update(result.long(1), 1, size, size)
                             }
-                        }
+                        } }
+                        val type = response.header("Content-Type") ?: "application/octet-stream"
+                        if (type.startsWith("multipart/mixed", true)) multipart(response, requestId, type, ::deliver)
+                        else deliver(responsePayload(response, requestId))
                     } else DctControlChannel.bounded(response)
                 }
                 if (owned.remove(id, payload)) update(id, 1, length, length)
@@ -91,7 +109,8 @@ internal class DctPayloadBridge(private val context: Context, private val channe
         return 0
     }
     fun cancel(id: Long): Int {
-        val payload = owned.remove(id) ?: return 8009
+        if (notices.remove(id)) { cancelNotice?.invoke(id); update(id, 4, 0, 0); return 0 }
+        val payload = owned.remove(id) ?: return server.cancel(id)
         calls.remove(id)?.cancel()
         update(id, 4, 0, 0)
         // The worker owns descriptor cleanup, including jobs queued before cancellation.
@@ -99,7 +118,6 @@ internal class DctPayloadBridge(private val context: Context, private val channe
     }
     private fun responsePayload(response: Response, requestId: Long): DctRecord {
         val type = response.header("Content-Type") ?: "application/octet-stream"
-        if (type.startsWith("multipart/mixed", true)) return multipart(response, requestId, type)
         if (response.header("X-OS-Migration-Metadata") != null) {
             val value = requireNotNull(response.header("X-OS-Migration-Metadata")); require(value.startsWith("base64; "))
             val metadata = android.util.Base64.decode(value.substring(8), android.util.Base64.NO_WRAP)
@@ -114,66 +132,70 @@ internal class DctPayloadBridge(private val context: Context, private val channe
                 } }
                 val part = DctRecord(DctSchemas.file, mapOf(1 to metadata, 2 to ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY), 3 to length))
                 return DctRecord(DctSchemas.payload, mapOf(1 to nextId.incrementAndGet(), 2 to 0, 17 to 3,
-                    16 to DctRecord(DctSchemas.response, mapOf(2 to requestId, 3 to type, 5 to listOf(part)))))
+                    16 to DctRecord(DctSchemas.response, mapOf(1 to true, 2 to requestId, 3 to type, 5 to listOf(part)))))
             } finally { file.delete() }
         }
         val data = DctControlChannel.bounded(response, DctRecord.MAX_BYTES)
         return DctRecord(DctSchemas.payload, mapOf(1 to nextId.incrementAndGet(), 2 to 0, 17 to 2,
-            16 to DctRecord(DctSchemas.response, mapOf(1 to (data.isEmpty()), 2 to requestId, 3 to type,
+            16 to DctRecord(DctSchemas.response, mapOf(1 to true, 2 to requestId, 3 to type,
                 7 to listOf(fdBytes(data))))))
     }
-    private fun multipart(response: Response, requestId: Long, contentType: String): DctRecord {
-        val boundary = contentType.toMediaType().parameter("boundary")
-            ?: throw IOException("Missing multipart boundary")
+    private fun multipart(response: Response, requestId: Long, contentType: String, deliver: (DctRecord) -> Unit) {
+        val boundary = contentType.toMediaType().parameter("boundary") ?: throw IOException("Missing multipart boundary")
         require(boundary.matches(Regex("[A-Za-z0-9_-]{1,70}")))
         val source = requireNotNull(response.body).source()
-        val parts = mutableListOf<DctRecord>()
-        try {
-            require(source.readUtf8LineStrict(256) == "--$boundary")
-            var total = 0L
+        val opening = source.readUtf8LineStrict(256)
+        if (opening == "--$boundary--") {
+            deliver(DctRecord(DctSchemas.payload, mapOf(1 to nextId.incrementAndGet(), 17 to 2,
+                16 to DctRecord(DctSchemas.response, mapOf(1 to true, 2 to requestId, 3 to "application/octet-stream", 6 to true)))))
+            return
+        }
+        require(opening == "--$boundary")
+        var total = 0L
+        while (true) {
+            val headers = linkedMapOf<String, String>(); var headerBytes = 0
             while (true) {
-                require(parts.size < 256)
-                val headers = linkedMapOf<String, String>()
-                var headerBytes = 0
-                while (true) {
-                    val line = source.readUtf8LineStrict(8192); headerBytes += line.length + 2; require(headerBytes <= 32768)
-                    if (line.isEmpty()) break
-                    val split = line.indexOf(':'); require(split > 0)
-                    val key = line.substring(0, split).lowercase(); require(key !in headers)
-                    headers[key] = line.substring(split + 1).trim()
-                }
-                val length = headers["content-length"]?.toLongOrNull() ?: throw IOException("Missing part length")
-                require(length in 0..(4L * 1024 * 1024 * 1024))
-                total = Math.addExact(total, length); require(total <= 32L * 1024 * 1024 * 1024)
-                require(length + 64 * 1024 * 1024 < context.cacheDir.usableSpace)
-                val metadata = headers["x-os-migration-metadata"]?.let {
-                    require(it.startsWith("base64; "))
-                    android.util.Base64.decode(it.substring(8), android.util.Base64.NO_WRAP)
-                } ?: byteArrayOf()
-                val file = File.createTempFile("dct-", ".part", context.cacheDir)
-                try {
-                    file.outputStream().use { out ->
-                        var remaining = length
-                        val buffer = ByteArray(64 * 1024)
-                        while (remaining > 0) {
-                            val count = source.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
-                            if (count <= 0) throw IOException("Truncated DCT part")
-                            out.write(buffer, 0, count); remaining -= count
-                        }
+                val line = source.readUtf8LineStrict(8192); headerBytes += line.length + 2; require(headerBytes <= 32768)
+                if (line.isEmpty()) break
+                val split = line.indexOf(':'); require(split > 0)
+                val key = line.substring(0, split).lowercase(); require(key !in headers)
+                headers[key] = line.substring(split + 1).trim()
+            }
+            val length = headers["content-length"]?.toLongOrNull() ?: throw IOException("Missing part length")
+            val filePart = headers.containsKey("x-os-migration-metadata")
+            require(length in 0..(if (filePart) 4L * 1024 * 1024 * 1024 else DctRecord.MAX_BYTES.toLong()))
+            total = Math.addExact(total, length); require(total <= 32L * 1024 * 1024 * 1024)
+            require(length + 64 * 1024 * 1024 < context.cacheDir.usableSpace)
+            val metadata = headers["x-os-migration-metadata"]?.let {
+                require(it.startsWith("base64; ")); android.util.Base64.decode(it.substring(8), android.util.Base64.NO_WRAP)
+            } ?: byteArrayOf()
+            val file = File.createTempFile("dct-", ".part", context.cacheDir)
+            try {
+                DataOutputStream(file.outputStream()).use { out ->
+                    if (!filePart) out.writeInt(length.toInt())
+                    var remaining = length; val buffer = ByteArray(64 * 1024)
+                    while (remaining > 0) {
+                        val count = source.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                        if (count <= 0) throw IOException("Truncated DCT part")
+                        out.write(buffer, 0, count); remaining -= count
                     }
-                    val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-                    parts.add(DctRecord(DctSchemas.file, mapOf(1 to metadata, 2 to fd, 3 to length)))
-                } finally { file.delete() }
+                }
                 require(source.readUtf8LineStrict(2).isEmpty())
-                when (source.readUtf8LineStrict(256)) {
-                    "--$boundary--" -> break
-                    "--$boundary" -> Unit
+                val last = when (source.readUtf8LineStrict(256)) {
+                    "--$boundary--" -> true
+                    "--$boundary" -> false
                     else -> throw IOException("Invalid DCT part boundary")
                 }
-            }
-            return DctRecord(DctSchemas.payload, mapOf(1 to nextId.incrementAndGet(), 2 to 0, 17 to 3,
-                16 to DctRecord(DctSchemas.response, mapOf(2 to requestId, 3 to contentType, 5 to parts))))
-        } catch (e: Exception) { parts.forEach { it.close() }; throw e }
+                val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                val part = if (filePart) DctRecord(DctSchemas.file, mapOf(1 to metadata, 2 to fd, 3 to length))
+                    else DctRecord(DctSchemas.parcelBytes, mapOf(1 to fd))
+                val type = headers["content-type"] ?: "application/octet-stream"
+                deliver(DctRecord(DctSchemas.payload, mapOf(1 to nextId.incrementAndGet(), 2 to 0, 17 to (if (filePart) 3 else 2),
+                    16 to DctRecord(DctSchemas.response, mapOf(1 to last, 2 to requestId, 3 to type, 6 to true,
+                        (if (filePart) 5 else 7) to listOf(part))))))
+                if (last) return
+            } finally { file.delete() }
+        }
     }
     fun oneWay(type: String, data: ByteArray) {
         if (closed) return
@@ -198,7 +220,7 @@ internal class DctPayloadBridge(private val context: Context, private val channe
         }
     }
     override fun close() {
-        closed = true; calls.values.forEach { it.cancel() }; calls.clear()
+        closed = true; notices.forEach { cancelNotice?.invoke(it) }; notices.clear(); server.close(); calls.values.forEach { it.cancel() }; calls.clear()
         work.shutdown() // queued workers still run descriptor cleanup
     }
 }

@@ -11,7 +11,7 @@ import org.microg.gms.migration.ble.DctAdvertiser
 import org.microg.gms.migration.ble.DctBluetoothNetwork
 import org.microg.gms.migration.channel.DctPeerDiscovery
 import org.microg.gms.migration.dct.*
-import org.microg.gms.migration.payload.DctHttpChannel
+import org.microg.gms.migration.payload.*
 import org.microg.gms.migration.security.DctIntegrity
 import org.microg.gms.migration.security.PlatformPakeTls
 import org.microg.gms.migration.session.DctSession
@@ -30,6 +30,7 @@ internal class DctController(private val context: Context, val session: DctSessi
         fun connected(peer: DeviceInfoResponse) {}
         fun bandwidth(medium: Int, status: Int) {}
         fun oneWay(type: String, bytes: ByteArray) {}
+        fun request(request: DctHttpRequest): DctHttpReply? = null
         fun closed(status: Int) {}
     }
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -42,6 +43,10 @@ internal class DctController(private val context: Context, val session: DctSessi
     private var advertiser: DctAdvertiser? = null
     private var discovery: DctPeerDiscovery? = null
     private var aware: AwareDataPath? = null
+    private var server: DctHttpServer? = null
+    @Volatile var publisher: DctServerControl? = null; private set
+    private val upgradeStarted = AtomicBoolean(false)
+    private val publisherProof = AtomicBoolean(false)
     @Volatile private var control: DctControlChannel? = null
     @Volatile var http: DctHttpChannel? = null; private set
     @Volatile var peer: DeviceInfoResponse? = null; private set
@@ -75,6 +80,8 @@ internal class DctController(private val context: Context, val session: DctSessi
                 override fun onAvailable(network: Network) {
                     android.util.Log.i("GmsDct", "Bluetooth IPv6 network available; starting scoped discovery")
                     if (stopped.get() || discovery != null) return
+                    val link = context.getSystemService(android.net.ConnectivityManager::class.java).getLinkProperties(network)
+                    android.util.Log.i("GmsDct", "Bluetooth link diagnostics: interface=${link?.interfaceName} linkLocal=${link?.linkAddresses?.any { it.address.isLinkLocalAddress }} ipv6Route=${link?.routes?.any { it.destination.address is Inet6Address }}")
                     try { discovery = DctPeerDiscovery(context, network, session.sessionId, object : DctPeerDiscovery.Listener {
                         override fun onResolved(network: Network, address: Inet6Address, port: Int) { android.util.Log.i("GmsDct", "Scoped DCT service resolved; linkLocal=${address.isLinkLocalAddress} scoped=${address.scopeId != 0}"); connect(network, address, port) }
                         override fun onFailure() { fail(8012) }
@@ -91,27 +98,30 @@ internal class DctController(private val context: Context, val session: DctSessi
             val channel = DctHttpChannel(network, address, port, tls)
             val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
             val controls = DctControlChannel(channel, Build.MODEL, Build.MANUFACTURER, salt,
-                { type, bytes -> listeners.forEach { it.oneWay(type, bytes) } }, { status -> if (!upgraded) fail(status) })
+                { type, bytes -> listeners.forEach { it.oneWay(type, bytes) } }, { status -> if (!upgraded) fail(status) }, { request -> publish(request, tls) })
             synchronized(this) { if (stopped.get()) { controls.close(); return@execute }; http = channel; control = controls; channels.add(controls) }
             controls.start()
             if (org.microg.gms.checkin.LastCheckinInfo.read(context).androidId == 0L) {
+                android.util.Log.i("GmsDct", "Google checkin prerequisite started")
                 try { org.microg.gms.checkin.CheckinManager.checkin(context, false) } catch (e: Exception) { throw DctFailure(8018) }
                 if (org.microg.gms.checkin.LastCheckinInfo.read(context).androidId == 0L) throw DctFailure(8018)
             }
-            val info = DctHandshake(controls, Build.MANUFACTURER, Build.MODEL, DctIntegrity(context)::token).run(salt)
+            val info = DctHandshake(controls, Build.MANUFACTURER, Build.MODEL, stage = { android.util.Log.i("GmsDct", it) }, token = DctIntegrity(context)::token).run(salt)
             if (stopped.get()) return@execute
             android.util.Log.i("GmsDct", "PAKE/control/capability/integrity handshake complete")
             peer = info
             listeners.forEach { it.connected(info) }
+            promotePublisher()
             upgrade(controls, tls, salt)
         } catch (e: Exception) { fail(if (e is DctFailure) e.status else if (e is javax.net.ssl.SSLHandshakeException) 8016 else 8012) }
     } }
     private fun upgrade(controls: DctControlChannel, tls: PlatformPakeTls, salt: String) {
+        if (!upgradeStarted.compareAndSet(false, true)) return
         val response = controls.exchange(DctControlFrame(medium_negotiation_request = WirelessMediumNegotiationRequest(
             wifi_aware = WifiAwareRequest(field1 = okio.ByteString.of(0, 0, 0)))), 4).medium_negotiation_response?.wifi_aware
             ?: throw DctFailure(8019)
-        // R4 needs pairing APIs not yet implemented. Never emit a successful upgrade for it.
-        if (response.supports_r4 || response.passphrase.length !in 8..63) throw DctFailure(8019)
+        // supports_r4 advertises peer capability, not a requirement to use pairing. We use normal PSK only.
+        if (response.passphrase.length !in 8..63) throw DctFailure(8019)
         val info = "${session.sessionId}._dct._tcp.local"
         val name = android.util.Base64.encodeToString(serviceId.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING).replace('_', '.')
         main.post {
@@ -146,12 +156,57 @@ internal class DctController(private val context: Context, val session: DctSessi
             }).also { it.start() } } catch (e: Exception) { fail(8019) }
         }
     }
+    @Synchronized private fun promotePublisher() {
+        if (stopped.get() || upgraded || peer == null || !publisherProof.get()) return
+        upgraded = true; http = null
+        android.util.Log.i("GmsDct", "Authenticated Wi-Fi Aware publisher channel ready")
+        listeners.forEach { it.bandwidth(6, 1) }
+        worker.execute {
+            channels.forEach { channel -> runCatching { channel.exchange(DctControlFrame(medium_closure_request = MediumClosureRequest()), 6) }; channel.close() }; channels.clear()
+            main.post { advertiser?.close(); radio?.close(); radio = null }
+        }
+    }
+    private fun publish(request: WirelessMediumNegotiationRequest, tls: PlatformPakeTls): WirelessMediumNegotiationResponse {
+        if (request.wifi_aware == null || !upgradeStarted.compareAndSet(false, true)) return WirelessMediumNegotiationResponse()
+        val passphrase = AwareDataPath.freshPassphrase()
+        val ready = java.util.concurrent.CompletableFuture<Int>()
+        main.post {
+            if (stopped.get()) { ready.completeExceptionally(DctFailure(8005)); return@post }
+            try {
+                val serverControl = DctServerControl(Build.MODEL, Build.MANUFACTURER,
+                    { incoming -> listeners.firstNotNullOfOrNull { it.request(incoming) } ?: throw DctFailure(8009) }, ::fail)
+                val peerAddress = java.util.concurrent.atomic.AtomicReference<Inet6Address>()
+                val serverNetwork = java.util.concurrent.atomic.AtomicReference<Network>()
+                val next = DctHttpServer.pake(tls,
+                    { socket ->
+                        peerAddress.get()?.let { it.address.contentEquals(socket.inetAddress.address) } == true &&
+                            serverNetwork.get()?.let { context.getSystemService(android.net.ConnectivityManager::class.java).getLinkProperties(it) }
+                                ?.linkAddresses?.any { it.address.address.contentEquals(socket.localAddress.address) } == true
+                    },
+                    serverControl::handle, {
+                        publisherProof.set(true); promotePublisher()
+                    }, ::fail)
+                server = next; publisher = serverControl
+                val info = "${session.sessionId}._dct._tcp.local"
+                val name = android.util.Base64.encodeToString(serviceId.toByteArray(), android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING).replace('_', '.')
+                aware = AwareDataPath(context, name, info.toByteArray(), passphrase, next.port, object : AwareDataPath.Listener {
+                    override fun onReady(network: Network, peer: Inet6Address, peerPort: Int?) { peerAddress.set(peer); serverNetwork.set(network); next.start() }
+                    override fun onFailure() { fail(8019) }
+                }).also { it.start() }
+                ready.complete(next.port)
+            } catch (e: Exception) { ready.completeExceptionally(e); fail(8019) }
+        }
+        try { ready.get(10, java.util.concurrent.TimeUnit.SECONDS) } catch (e: Exception) { throw DctFailure(8019) }
+        // This implementation declines R4 and offers the independent normal-PSK credential.
+        return WirelessMediumNegotiationResponse(wifi_aware = WifiAwareResponse(passphrase = passphrase, supports_r4 = false))
+    }
     fun stopAdvertising() { main.post { advertiser?.close(); advertiser = null } }
     fun fail(status: Int) {
         if (!stopped.compareAndSet(false, true)) return
         android.util.Log.i("GmsDct", "Session closed status=$status")
         listeners.forEach { runCatching { it.closed(status) } }; listeners.clear()
         synchronized(this) { channels.forEach { it.close() }; channels.clear(); control = null; http = null }
+        server?.close(); publisher?.close(); publisher = null
         worker.shutdownNow()
         main.post { main.removeCallbacks(expires); aware?.close(); discovery?.close(); advertiser?.close(); radio?.close() }
     }
