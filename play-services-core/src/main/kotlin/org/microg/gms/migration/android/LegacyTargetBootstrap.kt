@@ -26,6 +26,7 @@ internal class LegacyBootstrapExchange(private val options: DctRecord,
     private var sent = false
     private var acknowledged = false
     private var closed = false
+    var diagnosticPhase = "NEW"; private set
     var sourceFlags = 0L; private set
     fun initial(name: String): ByteArray {
         check(!closed && !sent); sent = true
@@ -50,27 +51,33 @@ internal class LegacyBootstrapExchange(private val options: DctRecord,
      * No peer-supplied secret/session ID can replace our issued values. */
     @Synchronized fun receive(bytes: ByteArray): Int {
         check(sent && !closed); require(bytes.size in 1..65536)
+        diagnosticPhase="JSON_PARSE"
         val message = JSONObject(bytes.toString(Charsets.UTF_8))
+        diagnosticPhase="PROTOCOL_VERSION"
         require(message.optInt("protocolVersion",3) == 3)
         if(listOf("accountBootstrapPayload","accountTransferMsg","secondDeviceAuthPayload","folsomDataPayload").any(message::has))
             throw BootstrapFailure(10573)
         if(listOf("workProfilePayload","blockstorePayload","esimActivationPayloads").any(message::has))
             throw BootstrapFailure(10581)
         val state = message.optInt("bootstrapState",0)
+        diagnosticPhase="SOURCE_STATE_$state"
         if(state == 1) throw BootstrapFailure(10564)
         if(state == 3) throw BootstrapFailure(message.optJSONObject("deviceStatus")?.optInt("errorCode",10575) ?: 10575)
         message.optJSONObject("bootstrapConfigurations")?.let { configuration ->
+            diagnosticPhase="CONFIGURATION"
             check(!acknowledged) { "Bootstrap configuration replay" }
             sourceFlags = configuration.optLong("optionFlags",0)
             if(sourceFlags and (1L shl 3) != 0L) {
+                diagnosticPhase="COMMIT_ACKNOWLEDGEMENT"
                 val retained = AndroidPostSetupState.VerifiedBootstrap(sessionId.toString(),secret)
                 try { commit(retained) } catch(e: Throwable) { retained.close(); throw e }
                 acknowledged = true
             }
             // Wi-Fi provisioning was explicitly disabled above. Do not claim it
             // succeeded if a peer nevertheless asks us to apply a saved network.
-            if(configuration.optString("wifiNetworkSsid").isNotEmpty()) throw BootstrapFailure(10557)
+            if(!configuration.isNull("wifiNetworkSsid") && configuration.optString("wifiNetworkSsid").isNotEmpty()) { diagnosticPhase="UNREQUESTED_WIFI_NETWORK"; throw BootstrapFailure(10557) }
         }
+        diagnosticPhase="VALIDATE_TERMINAL_${state}_ACK_$acknowledged"
         require(state in listOf(0,2,4)) { "Unsupported bootstrap state" }
         if(state == 2 || state == 4) check(acknowledged) { "Source completed without post-setup acknowledgement" }
         return state
@@ -97,6 +104,7 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
     private val exchange = LegacyBootstrapExchange(options,commit)
     private var endpoint: String? = null
     private var finished = false
+    @Volatile var diagnosticPhase = "NEW"; private set
     val isActive: Boolean get() = !closed.get()
     val name: String = advertisingName(context)
     var pin: String?=null; private set
@@ -128,6 +136,7 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
             val content=value.obj(2)!!; require(content.int(2)==1)
             val bytes=ClassicParcelBytes.body(content)
             worker.execute { try {
+                diagnosticPhase="PROCESS_SOURCE_RESPONSE"
                 val state=exchange.receive(bytes)
                 if(state == 2 || state == 4) {
                     finished = true
@@ -142,13 +151,15 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
         when(code) {
             2 -> DctRecord.nullable(data,ClassicSchemas.initiated)?.use { value ->
                 val peer=requireNotNull(value.text(1)); val pin=requireNotNull(value.text(3))
-                worker.execute { if(endpoint == null) { endpoint=peer; this.pin=pin; notify(6) { writeString(pin) }; call(2006,DctRecord(ClassicSchemas.accept,mapOf(1 to result,3 to peer,5 to payload))) } else call(2007,DctRecord(ClassicSchemas.reject,mapOf(1 to result,2 to peer))) }
+                worker.execute { if(endpoint == null) { endpoint=peer; this.pin=pin; diagnosticPhase="PIN_NOTIFY"; notify(6) { writeString(pin) }; diagnosticPhase="LOCAL_ACCEPT"; call(2006,DctRecord(ClassicSchemas.accept,mapOf(1 to result,3 to peer,5 to payload))); diagnosticPhase="WAIT_PEER_ACCEPT" } else call(2007,DctRecord(ClassicSchemas.reject,mapOf(1 to result,2 to peer))) }
             }
             3 -> DctRecord.nullable(data,ClassicSchemas.connected)?.use { value -> val status=value.int(2); worker.execute {
                 if(status != 0) fail(10557) else {
+                    diagnosticPhase="STOP_ADVERTISING"
                     call(2002,DctRecord(ClassicSchemas.result,mapOf(1 to result)))
                     val source=DctRecord(emptyMap()); val args=DctRecord(mapOf(2 to DctRecord.Kind.Object { emptyMap() }),mapOf(2 to source))
-                    notify(1) { writeNullable(args) }; send(exchange.initial(name))
+                    diagnosticPhase="CONNECTED_NOTIFY"
+                    notify(1) { writeNullable(args) }; diagnosticPhase="SEND_OPTIONS"; send(exchange.initial(name)); diagnosticPhase="WAIT_SOURCE_CONFIGURATION"
                 }
             } }
             4 -> worker.execute { if(!finished) { runCatching { notify(2) }; close() } }
@@ -160,10 +171,12 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
         worker.execute { try {
             val advertised=callback("IStartAdvertisingResultListener") { _,data -> DctRecord.nullable(data,ClassicSchemas.started)?.use { started(if(it.int(1)==0)0 else 10557) } }
             val options=DctRecord(ClassicSchemas.options,mapOf(1 to DctRecord(ClassicSchemas.strategy,mapOf(3 to 1,4 to 1))))
+            diagnosticPhase="START_ADVERTISING"
             call(2001,DctRecord(ClassicSchemas.start,mapOf(1 to advertised,3 to name,4 to SERVICE_ID,6 to options,7 to lifecycle,8 to name.toByteArray(Charsets.UTF_8))))
+            diagnosticPhase="ADVERTISING"
         } catch (_: Exception) { started(10557); close() } }
     }
-    private fun fail(status: Int) { if(closed.get()) return; runCatching { if(endpoint != null) send(exchange.terminal(3,status)) }; runCatching { notify(7) { writeInt(status) } }; close() }
+    private fun fail(status: Int) { if(closed.get()) return; diagnosticPhase="FAIL_${status}_AT_${diagnosticPhase}_WIRE_${nearby.diagnosticFailure}_EXCHANGE_${exchange.diagnosticPhase}"; runCatching { if(endpoint != null) send(exchange.terminal(3,status)) }; runCatching { notify(7) { writeInt(status) } }; close() }
     override fun close() { if(!closed.compareAndSet(false,true)) return; nearby.close(); exchange.close(); runCatching { listener.unlinkToDeath(death,0) }; worker.shutdownNow(); pin=null }
     companion object {
         const val SERVICE_ID = "com.google.android.gms.smartdevice.NC_ID"

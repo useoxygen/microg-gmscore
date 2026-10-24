@@ -28,6 +28,15 @@ class LegacyBootstrapExchangeTest {
             assertThrows(IllegalStateException::class.java) { exchange.receive("{\"bootstrapConfigurations\":{\"optionFlags\":8}}".toByteArray()) }
         }
     }
+    @Test fun nullWifiCredentialsAreNotAProvisioningRequest() {
+        var committed=false
+        LegacyBootstrapExchange(DctRecord(LegacyBootstrapExchange.schema)) { committed=true; it.close() }.use { exchange ->
+            exchange.initial("Cyclon")
+            assertEquals(0,exchange.receive("{\"bootstrapConfigurations\":{\"optionFlags\":8,\"wifiNetworkSsid\":null,\"wifiNetworkPassword\":null}}".toByteArray()))
+            assertTrue(committed)
+            assertEquals(4,exchange.receive("{\"bootstrapState\":4}".toByteArray()))
+        }
+    }
     @Test fun noAcknowledgementCannotCompleteAndAccountsReturnActualFailure() {
         var committed=false
         LegacyBootstrapExchange(DctRecord(LegacyBootstrapExchange.schema)) { committed=true }.use { exchange ->

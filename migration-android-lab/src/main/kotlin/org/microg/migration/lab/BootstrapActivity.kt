@@ -14,6 +14,7 @@ import java.io.File
  * spoofing; the production source must actually discover this NC_ID endpoint. */
 class BootstrapActivity : Activity() {
     private var bootstrap: LegacyTargetBootstrap?=null
+    private val handler=Handler(Looper.getMainLooper())
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val text=TextView(this).apply { textSize=22f; setPadding(40,80,40,40) }; setContentView(text)
@@ -44,6 +45,8 @@ class BootstrapActivity : Activity() {
         }
         status("STARTING (source must use the real exported Google setup UI)")
         bootstrap=LegacyTargetBootstrap(this,DctRecord(LegacyBootstrapExchange.schema,mapOf(3 to 1,18 to 128L,20 to 128L)),listener,{ verified -> store.commit(Process.myUid(),verified); status("ACKNOWLEDGED_PERSISTED (no credentials logged)") },{ code -> status("ADVERTISING_STATUS=$code") }).also { it.start() }
+        val poll=object: Runnable { override fun run() { if(isDestroyed)return; File(filesDir,"bootstrap-phase.txt").writeText(bootstrap?.diagnosticPhase ?: "CLOSED"); handler.postDelayed(this,500) } }
+        handler.post(poll)
     }
-    override fun onDestroy() { bootstrap?.close(); super.onDestroy() }
+    override fun onDestroy() { handler.removeCallbacksAndMessages(null); bootstrap?.close(); super.onDestroy() }
 }

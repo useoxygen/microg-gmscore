@@ -49,6 +49,7 @@ internal object ClassicSchemas {
 internal class ClassicNearbyBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
     private val closed = AtomicBoolean(false)
     private val ownerUid=uid
+    @Volatile var diagnosticFailure: String?=null; private set
     private val workers = ThreadPoolExecutor(10,10,0,TimeUnit.MILLISECONDS,ArrayBlockingQueue(64),ThreadPoolExecutor.AbortPolicy())
     private val timer = Executors.newSingleThreadScheduledExecutor()
     private var radio: ClassicRadio? = null
@@ -127,7 +128,8 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                         else -> throw IOException("Unsupported classic frame")
                     }
                 } } finally { keepAlive.cancel(false) }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                diagnosticFailure=channel.diagnosticPhase+":"+error.javaClass.simpleName
                 endpoint?.let { if (!session.connected) event(lifecycle,"IConnectionLifecycleListener",3,DctRecord(ClassicSchemas.connected,mapOf(1 to it,2 to 8012,4 to 0))) }
             } finally { deadline.cancel(false); endpoint?.let { if (sessions.remove(it,session)) event(lifecycle,"IConnectionLifecycleListener",4,DctRecord(ClassicSchemas.disconnected,mapOf(1 to it,2 to 0,6 to 8012))) }; session.close(); connectionSlots.release() }
         } } catch(_: RejectedExecutionException) { connectionSlots.release(); link.close() }

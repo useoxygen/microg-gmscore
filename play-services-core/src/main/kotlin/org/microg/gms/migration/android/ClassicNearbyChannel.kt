@@ -24,6 +24,7 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     private var context: D2DConnectionContext? = null
     @Volatile private var closed = false
     private var pending = false
+    @Volatile var diagnosticPhase="NEW"; private set
     private var pausedWrites: MutableList<V1Frame>? = null
     var endpointId: String? = null
         private set
@@ -74,24 +75,29 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     fun accept(verifiedToken: ByteArray) {
         check(!closed && pending && context == null)
         require(MessageDigest.isEqual(verification, verifiedToken)) { "Wrong peer verification token" }
+        diagnosticPhase="WRITE_ACCEPT"
         writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.CONNECTION_RESPONSE)
             .setConnectionResponse(ConnectionResponseFrame.newBuilder().setStatus(0)
                 .setResponse(ConnectionResponseFrame.ResponseStatus.ACCEPT)
                 .setOsInfo(OsInfo.newBuilder().setType(OsInfo.OsType.ANDROID))
                 .setSafeToDisconnectVersion(0)).build(), encrypted = false)
+        diagnosticPhase="READ_PEER_ACCEPT"
         var response: V1Frame
         do {
             response = parse(readPacket())
+            diagnosticPhase="PEER_FRAME_${response.type}"
             require(response.type == V1Frame.FrameType.CONNECTION_RESPONSE || response.type == V1Frame.FrameType.KEEP_ALIVE)
         } while (response.type == V1Frame.FrameType.KEEP_ALIVE)
         require(response.hasConnectionResponse())
         val decision = response.connectionResponse
+        diagnosticPhase="PEER_DECISION_${decision.status}_${decision.response}"
         if (if (decision.hasResponse()) decision.response != ConnectionResponseFrame.ResponseStatus.ACCEPT else decision.status != 0) {
             close(); throw IOException("Nearby peer rejected connection")
         }
         val active = requireNotNull(handshake)
         active.verifyHandshake()
         context = active.toConnectionContext()
+        diagnosticPhase="CONNECTED"
         handshake = null
         verification?.fill(0); verification = null
         pending = false
