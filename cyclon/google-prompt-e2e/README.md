@@ -23,10 +23,10 @@ phone-claim run SERIAL --for "Google prompt e2e" --uses com.google.android.gms -
 
 Modes:
 - `--deny` taps "No, don't allow" and expects Google to stop the attempt.
-- `--locked` locks the phone with a temporary PIN (7316). It checks the lock screen, unlocks like the owner, answers the prompt, and removes the PIN at the end. Run it under a `--whole` claim.
+- `--locked` locks the phone with a temporary PIN (7316). It checks the lock screen, unlocks like the owner, answers the prompt, and removes the PIN at the end, also after an error or Ctrl-C. It then checks that no PIN is left. Run it under a `--whole` claim.
 - `--signin` signs in with the password from the Keychain item `cyclon-test-google-cora`, instead of using recovery. Google asks the phone at sign-in only on accounts with 2-Step Verification.
 
-`observe.mjs SERIAL 5 30 90 2.5m 4m` leaves one prompt unanswered. At each check it reports whether the notification is still up, then prints the run's `Gms2FA` events. With #40 a prompt stays up until Google's expiry, about 2–3 minutes, and is then removed.
+`observe.mjs SERIAL 5 30 90 2.5m 4m` leaves one prompt unanswered. It notes which prompt notification this run posted (older ones are ignored), reports at each check whether that one is still up, then prints the run's `Gms2FA` events. With #40 a prompt stays up until Google's expiry, about 2–3 minutes, and is then removed.
 
 Google sends the prompt to every phone signed in to the account, not only the one under test. A phone that is still on a build before #40 reports "dismissed" as soon as it shows a prompt, and Google then withdraws the prompt from all devices about 1.5 s later (`dismissed_remote`). For tests of expiry or of prompts staying up, keep the test account only on phones with #40.
 

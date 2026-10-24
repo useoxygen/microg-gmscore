@@ -24,7 +24,11 @@ export function phone(serial) {
     return { lines, seen, stop: () => proc.kill() };
   }
 
-  const top = () => (sh('dumpsys activity activities | grep -m1 topResumedActivity || true').match(/u0 (\S+)/) || [])[1];
+  // The foreground activity and its task ("component t123"), so a second instance of the same screen is told apart.
+  const top = () => {
+    const m = sh('dumpsys activity activities | grep -m1 topResumedActivity || true').match(/u0 (\S+) (t\d+)/);
+    return m ? `${m[1]} ${m[2]}` : undefined;
+  };
   const locked = () => /isKeyguardShowing=true/.test(sh('dumpsys window | grep -m1 isKeyguardShowing || true'));
   // Wakes the phone and dismisses a keyguard without a PIN; a phone with a PIN stays locked.
   async function unlock() {
