@@ -38,7 +38,7 @@ class PrivatePeopleProbeTest {
                 "mergedPersonSourceOptions.personModelParams.personModel" to "CONTACT_CENTRIC",
                 "requestMask.includeField" to "person.metadata", "fields" to "nextPageToken,nextSyncToken",
                 "requestMask.productContactGroup" to "PRODUCT_BESTIES", "mergedPersonSourceOptions.includedProfileStates" to "CORE_ID",
-                "extensionSet.extensionNames" to "GDATA_COMPATIBILITY", "context.clientVersion.clientType" to "GMS FSA2",
+                "context.clientVersion.clientType" to "GMS FSA2",
                 "context.clientVersion.clientVersion" to "25.24.32", "context.migrationOptions.useNewRequestMaskBehavior" to "true"), params)
             HttpReply(200, """{"nextPageToken":"secret-page","nextSyncToken":"secret-sync","people":[{"name":"secret-contact"}]}""")
         }, output::add)

@@ -13,7 +13,9 @@ class ContactsTwoWayUnavailable : IllegalStateException("Two-way contacts sync i
 /** One context definition for sync, direct reads and non-enabling probes. */
 class PrivatePeopleContext(val version: String) {
     init { require(version.matches(Regex("[0-9]{1,3}\\.[0-9]{1,2}\\.[0-9]{1,2}"))) }
-    val binding get() = "fsa2-read-v1:$version:${PrivatePeopleApi.READ_MASK}"
+    // Canonical system IDs must match group list/get. GDATA compatibility
+    // projects starred/My Contacts into different legacy IDs. Never mix cursors.
+    val binding get() = "fsa2-normal-v2:$version:${PrivatePeopleApi.READ_MASK}"
     fun json() = JSONObject().put("clientVersion", JSONObject().put("clientType", CLIENT_TYPE).put("clientVersion", version))
         .put("migrationOptions", JSONObject().put("useNewRequestMaskBehavior", true))
     fun parameters() = linkedMapOf("context.clientVersion.clientType" to CLIENT_TYPE,
@@ -24,7 +26,6 @@ class PrivatePeopleContext(val version: String) {
         put("requestMask.includeField", mask); put("requestMask.productContactGroup", "PRODUCT_BESTIES")
         put("mergedPersonSourceOptions.personModelParams.personModel", "CONTACT_CENTRIC")
         put("mergedPersonSourceOptions.includedProfileStates", "CORE_ID")
-        put("extensionSet.extensionNames", "GDATA_COMPATIBILITY")
         syncToken?.let { put("syncParameters.syncToken", it) }; pageToken?.let { put("pageToken", it) }
     }
     companion object {
@@ -289,14 +290,19 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         catch (error: UnreadableContact) { skipped++; unreadable.addAll(resourceHints(values.optJSONObject(i))) }
         catch (error: org.json.JSONException) { skipped++; unreadable.addAll(resourceHints(values.optJSONObject(i))) }
         catch (error: IllegalArgumentException) { skipped++; unreadable.addAll(resourceHints(values.optJSONObject(i))) }
-        return Page(people, token(json, "nextPageToken"), token(json, "nextSyncToken"), skipped, unreadable)
+        val nextPage = token(json, "nextPageToken")
+        val nextSync = token(json, "nextSyncToken")
+        if (nextPage != null && nextSync != null) throw IOException("Premature contacts checkpoint")
+        return Page(people, nextPage, nextSync, skipped, unreadable)
     }
     override fun get(resource: String): Person? {
         val suffix = resource.removePrefix("people/fsa_")
         require(resource == resource(suffix))
         val personId = "c" + BigInteger(suffix, 16).toString()
         val result = call("POST", "people:batchGet", emptyMap(), JSONObject().put("personId", JSONArray().put(personId))
-            .put("requestMask", JSONObject().put("includeField", READ_MASK)).put("context", context.json()))
+            .put("requestMask", JSONObject().put("includeField", READ_MASK).put("productContactGroup", JSONArray().put("PRODUCT_BESTIES")))
+            .put("mergedPersonSourceOptions", JSONObject().put("personModelParams", JSONObject().put("personModel", "CONTACT_CENTRIC"))
+                .put("includedProfileStates", JSONArray().put("CORE_ID"))).put("context", context.json()))
         try {
             val responses = result.getJSONArray("personResponse"); require(responses.length() == 1)
             val response = responses.getJSONObject(0); require(text(response, "personId") == personId)
@@ -359,7 +365,10 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         catch (error: UnreadableContact) { skipped++; groupHint(values.optJSONObject(i))?.let(unreadable::add) }
         catch (error: org.json.JSONException) { skipped++; groupHint(values.optJSONObject(i))?.let(unreadable::add) }
         catch (error: IllegalArgumentException) { skipped++; groupHint(values.optJSONObject(i))?.let(unreadable::add) }
-        return GroupPage(groups, token(result, "nextPageToken"), token(result, "nextSyncToken"), skipped, unreadable)
+        val nextPage = token(result, "nextPageToken")
+        val nextSync = token(result, "nextSyncToken")
+        if (nextPage != null && nextSync != null) throw IOException("Premature group checkpoint")
+        return GroupPage(groups, nextPage, nextSync, skipped, unreadable)
     }
     private fun groupHint(raw: JSONObject?): String? = runCatching {
         val id = raw!!.optJSONObject("result")?.optJSONObject("id") ?: raw.optJSONObject("id")

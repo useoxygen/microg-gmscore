@@ -58,7 +58,7 @@ class PrivatePeopleApiTest {
         assertEquals("synthetic-page", requests[1].second["pageToken"])
         assertEquals("PRODUCT_BESTIES", requests[0].second["requestMask.productContactGroup"])
         assertEquals("CORE_ID", requests[0].second["mergedPersonSourceOptions.includedProfileStates"])
-        assertEquals("GDATA_COMPATIBILITY", requests[0].second["extensionSet.extensionNames"])
+        assertFalse(requests[0].second.containsKey("extensionSet.extensionNames"))
     }
     @Test fun recordedShapeMapsContactFieldsExtendedFieldsPhotosAndStarredWithoutPrivateTokens() {
         val result = PrivatePeopleApi.normalize(person()).single()
@@ -181,7 +181,7 @@ class PrivatePeopleApiTest {
         val store = Store(); var calls = 0
         val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
             calls++
-            if (calls == 1) HttpReply(200, JSONObject(fixture("full")).put("nextPageToken", "page-two").toString())
+            if (calls == 1) HttpReply(200, JSONObject(fixture("full")).apply { remove("nextSyncToken"); put("nextPageToken", "page-two") }.toString())
             else { assertEquals("page-two", query(url)["pageToken"]); HttpReply(200, "not-json") }
         }, context)
         assertThrows(IOException::class.java) { ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync() }
@@ -210,4 +210,46 @@ class PrivatePeopleApiTest {
         }, context)
         api.checkAccess(); assertEquals(1, calls)
     }
+    @Test fun failedPageRestartsFromDurableCheckpointWithoutPartialImports() {
+        val store = Store().apply { saved = "durable" }
+        var requests = 0
+        val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
+            val params = query(url); requests++
+            assertEquals("durable", params["syncParameters.syncToken"])
+            when (requests) {
+                1 -> HttpReply(200, JSONObject(fixture("full")).apply { remove("nextSyncToken"); put("nextPageToken", "volatile-page") }.toString())
+                2 -> { assertEquals("volatile-page", params["pageToken"]); throw IOException("Interrupted") }
+                else -> { assertFalse(params.containsKey("pageToken")); HttpReply(200, fixture("full")) }
+            }
+        }, context)
+        assertThrows(IOException::class.java) { ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync() }
+        assertEquals("durable", store.saved); assertEquals(0, store.writes)
+        // A new engine instance has no volatile pagination state to resume.
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(3, requests); assertEquals(1, store.writes); assertEquals("synthetic-sync-1", store.saved)
+    }
+    @Test fun incrementalTombstonesWaitForTheFinalPageBeforeRemovingRows() {
+        val store = Store(); store.apply(PrivatePeopleApi.normalize(person()).single(), null, true); store.saved = "old"
+        var requests = 0; var first: Map<String, String>? = null
+        val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
+            val params = query(url); requests++
+            assertEquals(0, store.removed); assertEquals("old", store.saved)
+            if (requests == 1) {
+                first = params
+                HttpReply(200, JSONObject(fixture("deleted")).apply { remove("nextSyncToken"); put("nextPageToken", "delta-page") }.toString())
+            } else {
+                assertEquals(first, params - "pageToken")
+                HttpReply(200, """{"nextSyncToken":"final-delta"}""")
+            }
+        }, context)
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(2, requests); assertEquals(1, store.removed); assertEquals("final-delta", store.saved)
+    }
+    @Test fun prematureCheckpointsCannotCommitEitherSnapshot() {
+        val api = PrivatePeopleApi(HttpTransport { _, _, _ -> HttpReply(200,
+            """{"nextPageToken":"page","nextSyncToken":"premature"}""") }, context)
+        assertThrows(IOException::class.java) { api.list(null, null) }
+        assertThrows(IOException::class.java) { api.listGroups(null, null) }
+    }
+
 }
