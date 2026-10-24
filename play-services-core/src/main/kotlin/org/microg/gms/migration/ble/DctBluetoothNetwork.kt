@@ -40,11 +40,15 @@ internal class DctBluetoothNetwork(context: Context, private val listener: Liste
         override fun onUnavailable() { close() }
     }
 
-    @Synchronized fun reserve() {
+    @Synchronized fun reserve(remote: Pair<String, Int>? = null) {
         check(!registered && !closed)
         val builder = Class.forName("android.net.L2capNetworkSpecifier\$Builder")
         val specifier = builder.getConstructor().newInstance()
-        builder.getMethod("setRole", Int::class.javaPrimitiveType).invoke(specifier, 2)
+        builder.getMethod("setRole", Int::class.javaPrimitiveType).invoke(specifier, if (remote == null) 2 else 1)
+        if (remote != null) {
+            builder.getMethod("setRemoteAddress", android.net.MacAddress::class.java).invoke(specifier, android.net.MacAddress.fromString(remote.first))
+            builder.getMethod("setPsm", Int::class.javaPrimitiveType).invoke(specifier, remote.second)
+        }
         builder.getMethod("setHeaderCompression", Int::class.javaPrimitiveType).invoke(specifier, 2)
         val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_BLUETOOTH)
             .setNetworkSpecifier(builder.getMethod("build").invoke(specifier) as NetworkSpecifier)
@@ -52,7 +56,8 @@ internal class DctBluetoothNetwork(context: Context, private val listener: Liste
         // Set before registration so immediate/reentrant callbacks and close cannot leak the reservation.
         registered = true
         try {
-            ConnectivityManager::class.java.getMethod("reserveNetwork", NetworkRequest::class.java,
+            if (remote != null) connectivity.requestNetwork(request, callback, handler, 30_000)
+            else ConnectivityManager::class.java.getMethod("reserveNetwork", NetworkRequest::class.java,
                 Handler::class.java, ConnectivityManager.NetworkCallback::class.java)
                 .invoke(connectivity, request, handler, callback)
         } catch (t: Exception) { close(); throw t }

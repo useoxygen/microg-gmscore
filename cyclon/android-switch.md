@@ -1,94 +1,122 @@
-# Android Switch development status (CYC-700)
+# Android Switch development status (CYC-700 / CYC-701 / CYC-702)
 
-This is an incomplete implementation for Android Switch 1140078. It does not yet
-provide an iPhone transfer or a functioning Nearby v3 service. No release, feed
-or product pin change is part of this branch.
+Development implementation for Android Switch 1140078 and the independently
+recovered GMS 26.41.31 contracts. **This branch does not yet establish a working
+end-to-end iPhone import.** Keep PR35 and image PR1221 draft. No release, feed,
+product pin or OTA change belongs here.
 
-## Implemented
+## Implemented source
 
-- Account discovery for the exact Switch package and its two verified Google
-  signer generations. This grants ACCOUNT discovery only; password/token/OWNER
-  operations remain denied.
-- Optional Target21/PostSetup7 setup-state queries, with an empty Bundle through
-  callback6. The nullable ApiMetadata envelope includes its separate magic word.
-- Version1 migrate-helper broker and absent-staging queries. Operations needing
-  real restore data fail explicitly. Wi-Fi export returns an empty network list.
-  SourceXos is declared but its unimplemented export features are not advertised.
-- Separate FC73 advertisement codec/owner, Android Bluetooth IPv6 reservation,
-  scoped NSD resolution, platform PAKE TLS1.3 contexts, scoped HTTP requests,
-  streaming multipart file bodies, bounded FD-backed byte payload reads and a
-  normal PSK Wi-Fi Aware data-path primitive. These are not wired to a controller.
-- A debug-only DUMP-protected probe activity for native PAKE loopback, bounded
-  radio mechanics, and a session-only QR. Release APKs omit this entry point.
-- A bounded macOS CoreBluetooth advertisement/CoC harness in `tools/dct-peer`.
-  It cannot substitute for the iPhone IPv6/PAKE/control/Aware implementation.
+- Certificate-bound ACCOUNT discovery, optional Target21/PostSetup7 queries,
+  migrate-helper v1 absent-artifact queries and empty Wi-Fi export, as before.
+  SourceXos is export; it is not advertised as an import producer.
+- Broker54 now routes to a per-UID Nearby Binder instead of DummyService. DCT
+  3001/3002/3005, stop, accept/reject, send, disconnect/all and cancellation have
+  bounded SafeParcel readers, exact raw-int result callbacks and DCT lifecycle,
+  payload and bandwidth callback schemas. Outbound discovery scans FC73; a
+  discovered endpoint retains its Bluetooth address/PSM for a client-role request.
+- A target controller reserves Bluetooth IPv6/6LoWPAN, advertises FC73 after
+  reservation, resolves only its session's `_dct._tcp` on that Network, preserves
+  link-local scope (including interface scope when NSD omits it), and creates a
+  platform SPAKE2+ TLS1.3 HTTP client. No certificate-TLS fallback exists.
+- Reconstructed protobuf schema, `/controls`, separate `/capabilities`, independent
+  `/notifications` polling and consumed-message acknowledgments. Control waits are
+  bounded. QR/password/token/application bodies are never logged.
+- Real checkin prerequisite and Integrity/DroidGuard path through the installed
+  microG vending standard Integrity service, including warmup, project/hash,
+  token and ACK. Provider opt-in remains effective. Peer-selected skip is distinct
+  from provider failure: failure/timeout returns8018; no token or attestation
+  success is fabricated. Remote iOS status1 and Apple variant are required.
+- Normal PSK Wi-Fi Aware subscriber upgrade using the authenticated peer's
+  independent passphrase, generic encoded service name, scoped IPv6/peer port and
+  a successful PAKE control response before bandwidth-success notification.
+  Initial-link failures do not tear down a proven upgraded connection.
+- Client-role application requests preserve null-body GET versus empty-body POST,
+  custom headers, URI, requestId and a separate payloadId. Bytes use bounded
+  file-backed ParcelByteArray; file responses stream into unlinked owned files.
+  Multipart uses exact Content-Length, metadata and boundaries, with file/count,
+  total-size and disk-space limits. Calls cancel by payloadId; Binder death
+  releases the terminal client's resources. Application ACK remains Switch-owned.
+- Internal non-exported TargetQuickStart tx15/16/17/18/20 and PostSetup tx1
+  ConnectionHint9/10 share one ephemeral session with authenticated Switch clients.
+  No retained session gives10590; unsupported account transfer gives13/null.
+  Quickstart callbacks are synchronous; Nearby callbacks are oneway.
+- A debug-only `MigrationWirelessActivity` (DUMP-protected) displays the QR only
+  after real advertisement success. `MigrationWirelessSetup` aliases it under
+  NETWORK_SETUP_WIZARD for the separately gated image hook. Both are absent from
+  release APKs. Back/cancel closes the session; recreation reuses it. Pending
+  setup sessions expire after ten minutes; an accepted Switch owner removes that
+  expiry and its last Binder death closes the cluster.
 
-The actual DCT link is Bluetooth IPv6/6LoWPAN, not a raw CoC carrying TLS. Android
-then acts as TLS client/prover using platform `SPAKE2PLUS_PRERELEASE`, context
-`os-migration`, empty client identity and the session as server identity. There
-is no certificate-TLS fallback. Public Nearby's C++ DCT advertisement differs
-from current GMS migration and is not used as a compatible implementation.
+## Explicit gaps (CYC-701 / CYC-702)
 
-## Verified on the owned 7a, 2026-10-23 PT
+- **No reverse HTTP hosting/publisher role yet.** Incoming medium-host requests
+  are declined. Sending byte/file response subtypes2/3 without a pending incoming
+  server request returns8009. Client-side byte/file reception is implemented.
+- Full streaming/continuation semantics of ParcelableResponse field6 remain
+  unresolved. There is no invented interpretation or successful placeholder.
+- R4 pairing is explicitly rejected8019. Other upgrade media are unsupported.
+- Google's target import onboarding task launch is still unrecovered. The debug
+  flow creates a real retained connection/QR; it does not claim that opening the
+  legacy Wi-Fi activity launches the new importer. The SetupWizard hook is a
+  draft entry into this debug flow, not a completed setup-to-Switch launch.
+- Real Binder call sequences, peer HTTP edge cases, Aware naming/roles, PAKE
+  interoperability, token policy and transfer are unverified on an iPhone.
+  Host green is not a wireless acceptance verdict.
 
-The signed debug build based on 0b0ce2c was sideloaded over a backed-up microG
-252432044/cf93b15. Fork main already includes the Google-prompt changes.
-
-- 3:34–3:35 PM: Switch account query returned count1, migrate-helper connected
-  version1, and the corrected non-null ApiMetadata query returned empty target
-  setup state. Password/OWNER access remained denied.
-- 3:35:05.891 PM: `PASS platform PAKE TLS1.3 loopback`.
-- 3:36:09.415 PM: Bluetooth IPv6 reservation failed with SecurityException.
-  The installed image lacks `CONNECTIVITY_USE_RESTRICTED_NETWORKS`; normal
-  `CHANGE_NETWORK_STATE` is insufficient because this request is restricted.
-  The image experiment in cyclon PR1221 adds the grant through the existing
-  single GmsCore allowlist, with DUMP still denied. No permission bypass,
-  remount, reboot or flash was used.
-- USB still reaches UI_AWAITING_USB and requires privileged MANAGE_USB. User-app
-  installation cannot validate that path. The QR screen displays a prototype
-  session and explicitly starts no radio or data flow.
-- 3:44:31 PM: the separate raw-CoC probe's FC73 advertisement returned success
-  with PSM128, but local `accept(timeout)` failed before a peer connected. The
-  Mac saw no session. The Activity-bounded `accept()` adjustment is committed
-  but untested: the signer VM stopped at3:42:57 PM, before its follow-up upload.
-
-The original 252432044/cf93b15 APK was restored byte-for-byte after the batch;
-Switch was removed and the phone returned Home. Secure/system settings matched
-the baseline; only Core's live global audio-focus bookkeeping differed. The
-signing key is the dedicated imported KMS key accessed by the Linux signer; no
-local key was found under the expected Cyclon config directories.
-
-Private evidence is under `~/research/cyc700-switch/evidence/`, especially
-`batched-usb-logcat.txt`, `batched-probes-logcat.txt`, `session-qr.png`, and the
-host test logs. No Google APKs or decompiled code belong in this repository.
-
-## Remaining work
-
-- CYC-701: actual Nearby v3 Binder/session/controller, control/capability and
-  notification negotiation, payload callbacks/cancellation/death cleanup,
-  negative PAKE cases, real scoped link and Aware peer tests, and R4 handling.
-- CYC-702: target quickstart and authenticated session handoff to Switch.
-  SourceXos is the export API. The current QR is not a Switch launch path.
-  OEM gRPC requires the configured package plus its signing history; Cyclon
-  SetupWizard cannot use the shipped Samsung allowlist entry.
-- CYC-703: AOSP image/privapp/signer inventory and SetupWizard Back/Skip checks,
-  then real iPhone cable and wireless acceptance. Current iOS Play Integrity
-  challenge/token/ACK enforcement remains an explicit peer-test gate.
-
-## Host checks
+## Host validation
 
 ```sh
 JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME="$HOME/Library/Android/sdk" \
   ./gradlew :play-services-core:testMapboxDefaultDebugUnitTest \
   --tests 'org.microg.gms.migration.*' \
   --tests org.microg.gms.auth.AndroidSwitchAccountAccessTest \
-  --no-configuration-cache
+  :play-services-core:assembleMapboxDefaultDebug --no-configuration-cache
 ```
 
-The 25 focused tests cover account identity boundaries, real Binder envelope
-shapes, advertisement bytes, session encoding, Aware bitmap conversion, scoped
-HTTP request rules and scoped socket routing, exact multipart bytes/stream lengths
-and FD byte envelopes. The real OkHttp routing test reproduces scope loss with
-a literal IPv6 URL, then preserves the scoped address using a fixed local DNS
-name while retaining the peer's actual IPv6 HTTP authority.
-Native PAKE is a device probe because the host JVM lacks Android's PAKE provider.
+Tests include exact control/capability bytes; token failure/skip/wrong-attestation
+and missing ACK; malformed parcel bounds and UID ownership; real localhost HTTP
+control/polling/ACK; null/empty body semantics; independent request/payload IDs;
+FD byte responses; multipart exact bytes/metadata; and real in-flight HTTP
+cancellation. Localhost tests deliberately use a test-only HTTP adapter: the Mac
+JVM lacks Android's PAKE provider, so they are **not** host PAKE/TLS acceptance.
+
+## Device evidence and next authorized run
+
+This continuation ran **no adb commands**, touched no phone and performed no
+KMS delivery signing, remount or reboot. The parent owns dev7a `3A031JEHN04180` for its cable
+test; wait for the parent to free it. Do not substitute another device.
+
+Earlier evidence, sourced from the owner's2026-10-23 5:16 PM PT comment on
+cyclon#1221: a priv-app overlay granted restricted networks and MANAGE_USB; a Mac
+DctPeer opened CoC and `l2cap-tun0` appeared. It also logged accept_ra failures.
+Earlier signed native PAKE loopback passed at3:35:05 PM PT. These results predate
+the new controller and do not test it.
+
+For the first authorized wireless run:
+
+1. Claim only the dev7a packages/settings used. Coordinate any reboot with the
+   parent. Use its approved overlay and exact snapshots; beware stale
+   CyclonGmsCore/CyclonAndroidSwitch package_cache entries on overlay removal.
+2. Sign the final debug APK through the prescribed KMS/VM path. Validate the
+   single Switch permission policy, including PERSONAL_CONTEXT_WRITE_SETTINGS
+   denial and absence of conflicting factory grants.
+3. Inspect l2cap-tun0 link-local addresses/routes and scoped mDNS after iPhone
+   connection. The accept_ra warnings alone establish neither failure nor success
+   of link-local traffic. Capture credential-free GmsDct stage/status logs.
+4. Use an authorized iOS26.3+ iPhone in Settings → Transfer to Android. Trigger
+   `am start -n com.google.android.gms/org.microg.gms.migration.MigrationWirelessActivity`
+   only after the parent frees the phone. The screen contains ephemeral pairing
+   secrets; keep screenshots/logs private.
+5. Establish PAKE, actual challenge/skip/token/ACK and normal Aware roles/name/port.
+   If Integrity fails, retain8018 and the provider's redacted reason. Current iOS
+   may reject microG's identity/project/verdict even when it returns a token.
+6. Resolve the importer onboarding launch and complete reverse/continuation paths
+   before calling this a full transfer. Test cancellation, Back, binder death,
+   large files, wrong password/peer and physical-device cleanup separately.
+
+Final host result for this continuation: 44 focused tests passed with no skips;
+`assembleMapboxDefaultDebug` succeeded. Image branch:9 integration tests passed;
+Pixel suite54 tests/18 environment skips; branding43 tests/17 environment skips.
+No AOSP image, new KMS-signed delivery, installed controller or iPhone acceptance
+was run. These are source/host gates only.

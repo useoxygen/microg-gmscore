@@ -20,6 +20,7 @@ internal class DctPeerDiscovery(context: Context, private val network: Network, 
         fun onResolved(network: Network, address: Inet6Address, port: Int)
         fun onFailure()
     }
+    private val contextConnectivity = context.getSystemService(android.net.ConnectivityManager::class.java)
     private val manager = context.getSystemService(NsdManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
     private val executor = Executor { handler.post(it) }
@@ -35,8 +36,13 @@ internal class DctPeerDiscovery(context: Context, private val network: Network, 
             synchronized(this@DctPeerDiscovery) {
                 resolving = false
                 if (closed || serviceInfo.serviceName != sessionId || serviceInfo.network != network) return
-                val address = serviceInfo.hostAddresses.filterIsInstance<Inet6Address>()
+                var address = serviceInfo.hostAddresses.filterIsInstance<Inet6Address>()
                     .firstOrNull { !it.isAnyLocalAddress && !it.isMulticastAddress } ?: run { fail(); return }
+                if (address.isLinkLocalAddress && address.scopeId == 0) {
+                    val name = contextConnectivity.getLinkProperties(network)?.interfaceName ?: run { fail(); return }
+                    val iface = java.net.NetworkInterface.getByName(name) ?: run { fail(); return }
+                    address = Inet6Address.getByAddress(null, address.address, iface)
+                }
                 if (serviceInfo.port !in 1..65535) { fail(); return }
                 close()
                 listener.onResolved(network, address, serviceInfo.port)

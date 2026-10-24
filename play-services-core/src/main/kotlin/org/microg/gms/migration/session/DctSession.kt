@@ -11,6 +11,11 @@ internal class DctSession private constructor(val sessionId: String, val passwor
 
     companion object {
         private const val ALPHABET = "abcdefghjkmnpqrstvwxyz23456789"
+        fun restore(sessionId: String, password: String): DctSession {
+            require(sessionId.length == 6 && password.length == 6)
+            require((sessionId + password).all { it in ALPHABET })
+            return DctSession(sessionId, password)
+        }
         fun create(random: SecureRandom = SecureRandom()): DctSession {
             fun credential() = CharArray(6) { ALPHABET[random.nextInt(ALPHABET.length)] }.concatToString()
             return DctSession(credential(), credential())

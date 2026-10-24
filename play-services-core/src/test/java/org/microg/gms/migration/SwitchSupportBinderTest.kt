@@ -60,6 +60,46 @@ class SwitchSupportBinderTest {
         }
     }
 
+    @Test fun connectionHintHasOnlyTheRealRetainedCredentialsOr10590WhenAbsent() {
+        org.microg.gms.migration.session.DctSessions.retained()?.close()
+        val controller = org.microg.gms.migration.session.DctSessions.create(org.robolectric.RuntimeEnvironment.getApplication())
+        fun query(expectedStatus: Int) {
+            var received = false
+            val callback = object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    data.enforceInterface(PAIR_CALLBACK); assertEquals(1, code)
+                    assertEquals(1, data.readInt()); assertEquals(expectedStatus, Status.CREATOR.createFromParcel(data).statusCode)
+                    assertEquals(1, data.readInt())
+                    val hint = org.microg.gms.migration.nearby.DctRecord.read(data, org.microg.gms.migration.nearby.DctSchemas.hint)
+                    if (expectedStatus == 0) {
+                        assertEquals(controller.session.sessionId, hint.text(9)); assertEquals(controller.session.password, hint.text(10))
+                    } else assertTrue(hint.fields.isEmpty())
+                    data.requireEnd(); received = true; return true
+                }
+            }
+            call(EmptySetupStateBinder(Binder.getCallingUid(), false), POST_DESCRIPTOR, 1) {
+                writeStrongBinder(callback); writeInt(0)
+            }.recycle()
+            assertTrue(received)
+        }
+        try { query(0) } finally { controller.close() }
+        query(10590)
+    }
+
+    @Test fun targetQuickstartUnsupportedAccountTransferUsesSynchronousErrorCallback() {
+        var received = false
+        val callback = object : Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                data.enforceInterface(OS_CALLBACK); assertEquals(5, code); assertEquals(0, flags)
+                assertEquals(13, data.readInt()); assertEquals(0, data.readInt()); data.requireEnd()
+                reply!!.writeNoException(); received = true; return true
+            }
+        }
+        val binder = TargetQuickStartBinder(org.robolectric.RuntimeEnvironment.getApplication())
+        try { call(binder, QUICKSTART_DESCRIPTOR, 18) { writeStrongBinder(callback) }.recycle(); assertTrue(received) }
+        finally { binder.close() }
+    }
+
     @Test fun wifiExportReturnsTheListEncodingExpectedByTheCaller() {
         val reply = call(ExportStateBinder(Binder.getCallingUid(), true), WIFI_EXPORT_DESCRIPTOR, 1) {}
         try { assertEquals(emptyList<Any>(), reply.readArrayList(javaClass.classLoader)); reply.requireEnd() }

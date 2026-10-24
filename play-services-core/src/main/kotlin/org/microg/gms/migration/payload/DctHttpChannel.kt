@@ -19,8 +19,15 @@ import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.X509TrustManager
 
+internal interface DctHttpPeer {
+    fun control(offlineFrame: ByteArray): Call
+    fun capabilities(message: ByteArray): Call
+    fun notifications(ack: Boolean = false): Call
+    fun request(path: String, contentType: String?, bytes: ByteArray?, headers: List<Pair<String, String>> = emptyList()): Call
+}
+
 /** HTTP framing belongs to OkHttp. Authentication belongs exclusively to the platform PAKE TLS socket factory. */
-internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int, tls: PlatformPakeTls) : Closeable {
+internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int, tls: PlatformPakeTls) : Closeable, DctHttpPeer {
     private val route = DctPeerRoute(address, port)
     // PAKE TLS has no certificate identity. This shim is never used to construct a certificate-TLS context.
     // The constructor accepts only PlatformPakeTls (private factory, PAKE credentials, no ordinary-TLS fallback).
@@ -35,10 +42,10 @@ internal class DctHttpChannel(network: Network, address: Inet6Address, port: Int
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(35, TimeUnit.SECONDS).callTimeout(60, TimeUnit.SECONDS).build()
 
-    fun control(offlineFrame: ByteArray): Call = request("/controls", "application/vnd.dct.control+proto", offlineFrame)
-    fun capabilities(message: ByteArray): Call = request("/capabilities", "application/vnd.dct.control+proto", message)
-    fun notifications(ack: Boolean = false): Call = request(if (ack) "/notifications?ack" else "/notifications", null, null)
-    fun request(path: String, contentType: String?, bytes: ByteArray?, headers: List<Pair<String, String>> = emptyList()): Call =
+    override fun control(offlineFrame: ByteArray): Call = request("/controls", "application/vnd.dct.control+proto", offlineFrame).apply { timeout().timeout(20, TimeUnit.SECONDS) }
+    override fun capabilities(message: ByteArray): Call = request("/capabilities", "application/vnd.dct.control+proto", message).apply { timeout().timeout(20, TimeUnit.SECONDS) }
+    override fun notifications(ack: Boolean): Call = request(if (ack) "/notifications?ack" else "/notifications", null, null)
+    override fun request(path: String, contentType: String?, bytes: ByteArray?, headers: List<Pair<String, String>>): Call =
         request(path, bytes?.toRequestBody(contentType?.toMediaType()), headers)
     fun request(path: String, body: RequestBody?, headers: List<Pair<String, String>> = emptyList()): Call =
         client.newCall(DctHttpRequests.build(route.base, path, body, headers).newBuilder()

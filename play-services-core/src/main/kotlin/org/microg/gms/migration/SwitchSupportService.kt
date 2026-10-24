@@ -2,6 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.migration
 
+import org.microg.gms.migration.nearby.DctRecord
+import org.microg.gms.migration.nearby.DctSchemas
+import org.microg.gms.migration.session.DctSessions
 import android.content.Intent
 import android.os.Binder
 import android.os.Bundle
@@ -42,7 +45,7 @@ class SwitchSupportService : LifecycleService() {
             }
             val target = service == GmsService.SMARTDEVICE_D2D_TARGET_DEVICE
             val features = if (target) arrayOf(Feature("post_setup_restore_api", 1L))
-                else arrayOf(Feature("post_setup_3p_restore_api", 1L))
+                else arrayOf(Feature("post_setup_3p_restore_api", 1L), Feature("post_setup_api", 1L))
             callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS,
                 EmptySetupStateBinder(Binder.getCallingUid(), target), ConnectionInfo().apply { this.features = features })
         }
@@ -54,6 +57,17 @@ class SwitchSupportService : LifecycleService() {
 internal class EmptySetupStateBinder(uid: Int, private val target: Boolean) :
     MigrationBinder(if (target) TARGET_DESCRIPTOR else POST_DESCRIPTOR, uid) {
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
+        if (!target && code == 1) {
+            val callback = requireNotNull(data.readStrongBinder())
+            data.skipApiMetadata(); data.requireEnd()
+            val retained = DctSessions.retained()
+            sendCallback(callback, PAIR_CALLBACK, 1) {
+                writeNullable(if (retained == null) Status(10590) else Status.SUCCESS)
+                writeNullable(DctRecord(DctSchemas.hint, if (retained == null) emptyMap() else
+                    mapOf(9 to retained.session.sessionId, 10 to retained.session.password)))
+            }
+            reply?.writeNoException(); return true
+        }
         // Target tx21: quick-start restore info. PostSetup tx7: third-party restore info.
         if (code != if (target) 21 else 7) return false
         val callback = requireNotNull(data.readStrongBinder()) { "Missing setup-state callback" }
