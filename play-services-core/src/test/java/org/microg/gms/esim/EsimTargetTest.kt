@@ -18,9 +18,9 @@ import java.util.concurrent.TimeUnit
 class EsimTargetTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val iccid = "8901234567890123456"
-    private fun start(): EsimWireRecord {
+    private fun start(version: String? = "8.0"): EsimWireRecord {
         val config = EsimWireRecord.build { Writer.write(it, 1, 123); Writer.write(it, 5, 2)
-            Writer.write(it, 8, "https://carrier.example.invalid/entitlement", false); Writer.write(it, 19, "8.0", false); Writer.write(it, 28, true) }
+            Writer.write(it, 8, "https://carrier.example.invalid/entitlement", false); Writer.write(it, 19, version, true); Writer.write(it, 28, true) }
         return config.use { EsimWireRecord.build { parcel -> Writer.write(parcel, 1, 1); Writer.write(parcel, 2, 3); Writer.write(parcel, 6, listOf(it), 0, false) } }
     }
     private inner class Peer : EsimPeer {
@@ -141,6 +141,30 @@ class EsimTargetTest {
         val second = engine(); start().use { second.start(it) }
         val after = profile(second); assertNotEquals(previousId, after.text(4)); second.credential(after).close()
         assertEquals(listOf("ManageSubscription", "AcquireConfiguration"), operations); second.close()
+    }
+    @Test fun missingTargetIdentityDoesNotRecordANetworkMutation() {
+        var ready = false; val operations = mutableListOf<String?>()
+        val entitlement = EsimEntitlement({ EsimTargetIdentity("123456789012345", if (ready) "1".repeat(32) else "") }, EsimEntitlementHttp { url ->
+            operations += url.queryParameter("operation"); 200 to reply()
+        })
+        val engine = EsimTransferEngine(context, Process.myUid(), entitlement, { Peer() }, {123})
+        start().use { engine.start(it) }
+        assertEquals(48535, assertThrows(EsimFailure::class.java) { engine.credential(profile(engine)) }.status)
+        assertTrue(operations.isEmpty()); ready = true
+        engine.credential(profile(engine)).close()
+        assertEquals(listOf("ManageSubscription"), operations); engine.close()
+    }
+    @Test fun missingCarrierProtocolVersionIsLocalFailureAndCanBeFixedBeforeDispatch() {
+        val operations = mutableListOf<String?>()
+        val entitlement = EsimEntitlement({ EsimTargetIdentity("123456789012345", "1".repeat(32)) }, EsimEntitlementHttp { url ->
+            operations += url.queryParameter("operation"); 200 to reply()
+        })
+        fun engine() = EsimTransferEngine(context, Process.myUid(), entitlement, { Peer() }, {123})
+        val first = engine(); start(null).use { first.start(it) }
+        assertEquals(48569, assertThrows(EsimFailure::class.java) { first.credential(profile(first)) }.status)
+        assertTrue(operations.isEmpty()); first.close()
+        val second = engine(); start().use { second.start(it) }; second.credential(profile(second)).close()
+        assertEquals(listOf("ManageSubscription"), operations); second.close()
     }
     @Test fun downloadReportMustMatchAuthenticatedSessionIccid() {
         val peer = Peer(); val engine = EsimTransferEngine(context, Process.myUid(), peerFactory = { peer }, carrierId = {123})

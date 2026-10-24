@@ -25,20 +25,20 @@ internal fun interface EsimEntitlementHttp { fun get(url: okhttp3.HttpUrl): Pair
 /** TS.43 target fast-token flow. No EAP-AKA source authentication is synthesized on the target. */
 internal class EsimEntitlement(private val identity: () -> EsimTargetIdentity,
     private val http: EsimEntitlementHttp = network(), private val now: () -> Long = System::currentTimeMillis) {
-    fun retrieve(profile: EsimProfile, reconcile: Boolean = false): EsimWireRecord {
+    fun retrieve(profile: EsimProfile, reconcile: Boolean = false, onDispatch: () -> Unit = {}): EsimWireRecord {
         if (!profile.activationCode.isNullOrBlank()) {
             if (profile.activationExpiry > 0 && profile.activationExpiry <= now()) throw EsimFailure(48552)
             return credential(profile.activationCode)
         }
-        val values = request(profile, if (reconcile) "AcquireConfiguration" else "ManageSubscription", if (reconcile) null else 3)
+        val values = request(profile, if (reconcile) "AcquireConfiguration" else "ManageSubscription", if (reconcile) null else 3, onDispatch = onDispatch)
         return response(values)
     }
-    fun activate(profile: EsimProfile, targetIccid: String) {
+    fun activate(profile: EsimProfile, targetIccid: String, onDispatch: () -> Unit = {}) {
         require(targetIccid.matches(Regex("[0-9]{10,32}")))
-        val values = request(profile, "ManageSubscription", 10, targetIccid)
+        val values = request(profile, "ManageSubscription", 10, targetIccid, onDispatch)
         if (values["OperationResult"] != "0") throw EsimFailure(48537)
     }
-    private fun request(profile: EsimProfile, operation: String, operationType: Int?, targetIccid: String? = null): Map<String, String> {
+    private fun request(profile: EsimProfile, operation: String, operationType: Int?, targetIccid: String? = null, onDispatch: () -> Unit): Map<String, String> {
         if (profile.token.isNullOrBlank()) throw EsimFailure(48507)
         if (profile.tokenExpiry > 0 && profile.tokenExpiry <= now()) throw EsimFailure(48552)
         val target = identity()
@@ -47,7 +47,7 @@ internal class EsimEntitlement(private val identity: () -> EsimTargetIdentity,
         catch (_: Exception) { throw EsimFailure(48507) }
         require(endpoint.isHttps && endpoint.username.isEmpty() && endpoint.password.isEmpty() && endpoint.fragment == null)
         require(endpoint.querySize == 0 && endpoint.host != "localhost" && !endpoint.host.endsWith(".local") && ':' !in endpoint.host)
-        val version = profile.metadata.obj(19)?.use { it.text(19) }?.takeIf { it.matches(Regex("[0-9]{1,2}(\\.[0-9]{1,2})?")) } ?: "8.0"
+        val version = profile.metadata.obj(19)?.use { it.text(19) }?.takeIf { it.matches(Regex("[0-9]{1,2}(\\.[0-9]{1,2})?")) } ?: throw EsimFailure(48569)
         val builder = endpoint.newBuilder().addQueryParameter("app", "ap2009").addQueryParameter("vers", "0")
             .addQueryParameter("entitlement_version", version).addQueryParameter("temporary_token", profile.token)
             .addQueryParameter("operation", operation).addQueryParameter("terminal_id", target.imei)
@@ -57,7 +57,9 @@ internal class EsimEntitlement(private val identity: () -> EsimTargetIdentity,
         profile.device?.text(2)?.takeIf { it.isNotBlank() }?.let { builder.addQueryParameter("old_terminal_id", it) }
         operationType?.let { builder.addQueryParameter("operation_type", it.toString()) }
         targetIccid?.let { builder.addQueryParameter("target_terminal_iccid", it) }
-        val reply = try { http.get(builder.build()) } catch (_: Exception) { throw EsimFailure(7) }
+        val url = builder.build()
+        onDispatch() // Durable intent only after local validation, immediately before possible network effects.
+        val reply = try { http.get(url) } catch (_: Exception) { throw EsimFailure(7) }
         if (reply.first == 511 || reply.first == 401 || reply.first == 403) throw EsimFailure(48552)
         if (reply.first !in 200..299) throw EsimFailure(7)
         return parse(reply.second)

@@ -147,8 +147,8 @@ in [esim-target.md](../cyclon/esim-target.md), CYC-718. No real-line test is aut
 
 ## Validation scope
 
-Round2 full B+C host regression:77 core tests (migration/contact/eSIM) plus4
-FakeStore tests pass, zero failures/errors/skips. Includes12 new synthetic eSIM
+Round2 full B+C host regression:79 core tests (migration/contact/eSIM) plus4
+FakeStore tests pass, zero failures/errors/skips. Includes14 new synthetic eSIM
 protocol/permission/callback/cancel/unknown-reply tests. GmsCore/FakeStore debug
 APKs build and Android instrumentation Kotlin compiles. Setup host10, image/media14
 and permissions20+11 external-vendor skips are separately verified in image#1227;
