@@ -4,10 +4,7 @@
             android:exported="true" android:permission="android.permission.DUMP" />
         <activity android:name="org.microg.gms.migration.MigrationWirelessActivity"
             android:exported="true" android:permission="android.permission.DUMP"
-            android:excludeFromRecents="true" />
-        <activity-alias android:name="org.microg.gms.migration.MigrationWirelessSetup"
-            android:targetActivity="org.microg.gms.migration.MigrationWirelessActivity"
-            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+            tools:replace="android:permission" android:excludeFromRecents="true" />
         <!-- Only debug APKs; shell/root entry, never a production launch surface. -->
         <activity android:name="org.microg.gms.migration.MigrationLabActivity"
             android:exported="true" android:permission="android.permission.DUMP"

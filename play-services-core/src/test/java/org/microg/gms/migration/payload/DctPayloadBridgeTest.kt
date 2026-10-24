@@ -62,13 +62,15 @@ class DctPayloadBridgeTest {
             }
             write("--synthetic--\r\n".toByteArray())
         }.toByteArray()
-        val delivered = CountDownLatch(1); val error = AtomicReference<Throwable>(); val actual = java.util.concurrent.atomic.AtomicBoolean(false)
+        val delivered = CountDownLatch(2); val position = java.util.concurrent.atomic.AtomicInteger(); val error = AtomicReference<Throwable>(); val actual = java.util.concurrent.atomic.AtomicBoolean(false)
         LoopbackDctPeer { LoopbackDctPeer.respond(it, "multipart/mixed; boundary=synthetic", body) }.use { peer ->
             DctPayloadBridge(RuntimeEnvironment.getApplication(), { peer }, { payload ->
                 try {
                     actual.set(true); assertEquals(3, payload.int(17)); assertEquals(999L, payload.obj(16)!!.long(2))
-                    val files = payload.obj(16)!!.list(5); assertEquals(2, files.size)
-                    files.forEachIndexed { index, file ->
+                    val files = payload.obj(16)!!.list(5); assertEquals(1, files.size)
+                    files.forEach { file ->
+                        val index = position.getAndIncrement()
+                        assertTrue(payload.obj(16)!!.bool(6)); assertEquals(index == 1, payload.obj(16)!!.bool(1))
                         assertEquals(parts[index].size.toLong(), file.long(3))
                         assertArrayEquals(if (index == 0) byteArrayOf(1, 2) else byteArrayOf(3, 4), file.bytes(1))
                         val fd = file.fields[2] as ParcelFileDescriptor

@@ -9,15 +9,16 @@ internal object DctAdvertisement {
     const val SERVICE_UUID = "0000fc73-0000-1000-8000-00805f9b34fb"
     private const val VERSION = 0x20
 
-    fun target(sessionId: String, psm: Int): ByteArray {
+    fun target(sessionId: String, psm: Int, supportedServices: Int = 2): ByteArray {
         require(sessionId.length == 6 && sessionId.all { it in 'a'..'z' || it in '0'..'9' })
         require(psm in 1..0xffff)
+        require(supportedServices in 1..3)
         val elements = linkedMapOf(
             1 to sessionId.toByteArray(Charsets.UTF_8),
             2 to byteArrayOf(1), // Android
             3 to byteArrayOf(-2), // migration producer's nominal transmit power
             4 to byteArrayOf(psm.toByte(), (psm ushr 8).toByte()),
-            6 to byteArrayOf(2) // data import
+            6 to byteArrayOf(supportedServices.toByte()) // bit1 eSIM, bit2 data import
         )
         return encode(elements)
     }

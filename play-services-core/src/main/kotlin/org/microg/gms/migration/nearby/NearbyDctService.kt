@@ -20,7 +20,7 @@ import org.microg.gms.common.PackageUtils
 import org.microg.gms.migration.*
 import org.microg.gms.migration.controller.DctController
 import org.microg.gms.migration.dct.DeviceInfoResponse
-import org.microg.gms.migration.payload.DctPayloadBridge
+import org.microg.gms.migration.payload.*
 import org.microg.gms.migration.session.DctSession
 import org.microg.gms.migration.session.DctSessions
 import org.microg.gms.utils.ExtendedPackageInfo
@@ -106,7 +106,11 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
             event(lifecycle, "IConnectionLifecycleListener", 5, DctRecord(DctSchemas.bandwidth,
                 mapOf(1 to device().text(1)!!, 2 to 3, 3 to medium, 4 to 3, 11 to device(), 12 to status)))
         }
-        override fun oneWay(type: String, bytes: ByteArray) { bridge?.oneWay(type, bytes) ?: controller?.fail(8009) }
+        override fun request(request: DctHttpRequest): DctHttpReply? = bridge?.incoming(request)
+        override fun oneWay(type: String, bytes: ByteArray): Boolean {
+            val target = bridge ?: return false
+            target.oneWay(type, bytes); return true
+        }
         override fun closed(status: Int) {
             if (startResult != null) advertising(status)
             if (!connected) connectionResult(status)
@@ -209,8 +213,9 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
                             event(payloadListener, "IPayloadListener", 3, DctRecord(DctSchemas.update,
                                 mapOf(1 to device().text(1)!!, 2 to DctRecord(DctSchemas.transfer,
                                     mapOf(1 to id, 2 to status, 3 to total, 4 to transferredBytes)), 3 to 3, 6 to device())))
-                        })
-                        accepted = true; controller?.claimActive(); result(callback, 0); connectionResult(0)
+                        }, { id, type, bytes, consumed -> controller?.publisher?.oneWay(type, bytes, id, consumed) == true },
+                            { id -> controller?.publisher?.cancel(id) == true })
+                        accepted = true; controller?.claimActive(); result(callback, 0); connectionResult(0); controller?.applicationReady(listener)
                     }
                 }
                 2007 -> { result(callback, if (matches(request, 6, 2)) 0 else 8005); if (matches(request, 6, 2)) controller?.fail(8004) }

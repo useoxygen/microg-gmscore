@@ -85,6 +85,13 @@ class ContactsSyncActivity : ComponentActivity() {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineSmall)
                         Text(stringResource(R.string.contacts_sync_description))
+                        if (com.google.android.gms.BuildConfig.DEBUG) Row {
+                            val privacy = ContactMigrationPrivacy(this@ContactsSyncActivity)
+                            Checkbox(checked = privacy.developerControlsEnabled, onCheckedChange = {
+                                privacy.developerControlsEnabled = it; revision++
+                            })
+                            Text(stringResource(R.string.contacts_sync_developer_controls), modifier = Modifier.padding(top = 12.dp))
+                        }
                         if (ContactMigrationPrivacy(this@ContactsSyncActivity).held) {
                             Text(stringResource(R.string.contacts_sync_migration_held))
                             CyclonOutlinedButton(onClick = { resumeUploads = true }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) }
@@ -133,7 +140,7 @@ class ContactsSyncActivity : ComponentActivity() {
                                     }), modifier = Modifier.padding(top = 12.dp))
                                 }
                             }
-                            if (prefs.mode == SyncMode.TWO_WAY) {
+                            if (prefs.mode == SyncMode.TWO_WAY && ContactMigrationPrivacy(this@ContactsSyncActivity).developerControlsEnabled) {
                                 Row {
                                     Checkbox(checked = prefs.uploadNewContacts, enabled = !busy, onCheckedChange = { enabled ->
                                         if (enabled) newContactsConfirmation = account

@@ -18,10 +18,9 @@ configurations {
 dependencies {
     implementation project(":migration-ukey2")
     compileOnly project(":migration-framework-stubs")
-    // Resolve hidden transport signatures while compiling tests; Robolectric supplies
-    // the real framework implementation at runtime, and stubs never enter the APK.
+    // Stubs resolve hidden APIs only at compile time; never package them.
     testCompileOnly project(":migration-framework-stubs")
-    debugImplementation 'com.google.zxing:core:3.5.2'
+    implementation 'com.google.zxing:core:3.5.2'
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test:runner:1.6.2'

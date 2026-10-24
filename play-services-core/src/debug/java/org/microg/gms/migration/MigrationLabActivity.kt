@@ -33,9 +33,23 @@ class MigrationLabActivity : Activity() {
     private var radio: DctBluetoothNetwork? = null
     private var advertising: DctAdvertiser? = null
     private var rawServer: BluetoothServerSocket? = null
+    private var peerProbe: MigrationPeerProbe? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.TYPE == "user") { finish(); return }
+        if (intent.getStringExtra("mode") == "peer") {
+            setContentView(TextView(this).apply { text = "Checking synthetic Mac PAKE / HTTP peer…" })
+            peerProbe = MigrationPeerProbe(this, intent.getIntExtra("peer_port", 8443)) { runOnUiThread { finish() } }.also { it.start() }
+            handler.postDelayed({ finish() }, 70_000); return
+        }
+        if (intent.getStringExtra("mode") == "pake-negative") {
+            setContentView(TextView(this).apply { text = "Checking PAKE rejection cases…" })
+            Thread {
+                val result = runCatching { PakeNegativeProbe.run(); "PASS PAKE wrong password / wrong identity / ordinary TLS rejected" }
+                    .getOrElse { "BLOCKED PAKE negative cases: ${it.javaClass.simpleName}" }
+                Log.i("GmsSwitchLab", result); runOnUiThread { finish() }
+            }.start(); return
+        }
         if (intent.getStringExtra("mode") == "ble") { startRadioProbe(); return }
         if (intent.getStringExtra("mode") == "raw-ble") { startRawCocProbe(); return }
         if (intent.getStringExtra("mode") == "session") { showSession(DctSession.create()); return }
@@ -141,6 +155,7 @@ class MigrationLabActivity : Activity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        peerProbe?.close()
         advertising?.close()
         runCatching { rawServer?.close() }
         radio?.close()

@@ -93,6 +93,7 @@ class ContactProviderTest {
         }.getOrDefault(false)
     }
     @Before fun setup() {
+        ContactMigrationPrivacy(context).developerControlsEnabled = false
         check(context.packageName == "org.microg.gms.people.sync.android.test" && approvedDevice()) {
             "Fixture tests require an emulator or an explicitly selected development phone"
         }
@@ -180,7 +181,9 @@ class ContactProviderTest {
             assertEquals(it.project(api.remote!!), current.baseline)
         }
     }
-    @Test fun importedAccountRowsStayLocalUntilSeparateOwnerChoice() {
+    @Test fun developerFixtureGateCanKeepImportedRowsLocal() {
+        ContactMigrationPrivacy(context).developerControlsEnabled = true
+        ContactSyncPreferences(context, account).uploadNewContacts = false
         api.remote = null; prefs.configure(SyncMode.TWO_WAY, 0)
         val id = insertLocal("Imported from iPhone")
         sync(); assertEquals(0, api.writes)
@@ -202,7 +205,8 @@ class ContactProviderTest {
         store { val row = it.contacts().single(); assertEquals(id, row.id); assertEquals("people/created", row.resource); assertFalse(row.dirty) }
         sync(); assertEquals(1, api.writes)
     }
-    @Test fun existingUnownedRowsAreNotAdopted() {
+    @Test fun developerAdoptionFloorExcludesOlderFixtureRows() {
+        ContactMigrationPrivacy(context).developerControlsEnabled = true
         val old = insertLocal("Existing local copy")
         context.getSharedPreferences("contacts-sync", 0).edit().putLong("${account.type}:${account.name}:adoptionFloor", old).commit()
         prefs.configure(SyncMode.TWO_WAY, old)
