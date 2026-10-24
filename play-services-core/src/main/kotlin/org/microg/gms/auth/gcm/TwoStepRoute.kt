@@ -54,8 +54,9 @@ internal fun promptTimeoutMillis(expiryTime: Long?, referenceMillis: Long): Long
         ?: PROMPT_DEFAULT_TIMEOUT_MILLIS
 
 /**
- * Whether a prompt is too close to its expiry to show. Only judged against Google's server time ([serverTimeMillis],
- * the push's send time): with the phone's own clock, a phone running fast would hide valid prompts.
+ * Whether a prompt is too close to its expiry to show. Only judged against Google's server time ([serverTimeMillis]:
+ * the fetch response's server time, else the push's send time); with the phone's own clock, a phone running fast
+ * would hide valid prompts.
  */
 internal fun promptExpired(expiryTime: Long?, serverTimeMillis: Long?): Boolean {
     if (serverTimeMillis == null) return false
