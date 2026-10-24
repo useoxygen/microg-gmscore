@@ -65,6 +65,9 @@ internal fun promptExpired(expiryTime: Long?, serverTimeMillis: Long?): Boolean 
 
 internal enum class MatchFailure { NO_USER_ID, NO_ACCOUNT, AMBIGUOUS }
 
+/** A GNOTS fetch: the notifications and the server's time at the fetch (`NotificationList.serverTime`, in ms). */
+internal class GnotsFetch(val notifications: List<NotificationData>, val serverTimeMillis: Long?)
+
 /**
  * The local account whose Google user id is [userId], or why there is none. Two accounts claiming the same id is
  * refused rather than guessed: a prompt must never open under the wrong account.
@@ -113,7 +116,7 @@ internal class TwoStepRoute<A>(
     private val diagnostics: TwoStepDiagnostics,
     private val enabled: () -> Boolean,
     private val accounts: () -> List<Pair<A, String?>>,
-    private val fetch: (A, NotificationData) -> List<NotificationData>,
+    private val fetch: (A, NotificationData) -> GnotsFetch,
     private val setReadState: (A, NotificationData, Int) -> Unit,
     private val show: (A, NotificationData, Long) -> ShowResult,
     private val dismiss: (String) -> Int,
@@ -121,8 +124,11 @@ internal class TwoStepRoute<A>(
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
-    /** [serverTimeMillis] is the push's send time from Google's server, if the push carried one. */
-    fun route(gcmBody: String?, payload: String?, serverTimeMillis: Long? = null) {
+    /**
+     * [pushTimeMillis] is the push's send time from Google's server, if the push carried one. The fetch response's
+     * server time replaces it when present, as in Google Play services, so a push delivered late is judged by now.
+     */
+    fun route(gcmBody: String?, payload: String?, pushTimeMillis: Long? = null) {
         val session = diagnostics.newSession()
         if (gcmBody != GMS_GCM_NOTIFICATIONS) {
             diagnostics.event(TwoStepEvent.IGNORED, session, "has_body" to (gcmBody != null))
@@ -143,11 +149,8 @@ internal class TwoStepRoute<A>(
             diagnostics.event(TwoStepEvent.MALFORMED, session, "payload" to true)
             return
         }
-        // Field 3 (`isActive` in microG's proto) asks the device to take the notification down, for example after the
-        // prompt was answered on another device. Google Play services removes it and logs NOTIFICATION_DISMISSED_REMOTE.
         if (tickle.isActive == true) {
-            val removed = tickle.identifier?.uniqueId?.takeIf { it.isNotEmpty() }?.let(dismiss) ?: 0
-            diagnostics.event(TwoStepEvent.DISMISSED_REMOTE, session, "count" to removed)
+            dismissRemotely(session, tickle, Stage.TICKLE)
             return
         }
         val candidates = accounts()
@@ -156,11 +159,13 @@ internal class TwoStepRoute<A>(
             diagnostics.event(TwoStepEvent.ACCOUNT_NOT_MATCHED, session, "reason" to failure, "accounts" to candidates.size)
             return
         }
-        val notifications = fetchWithRetries(session, account, tickle) ?: return
-        diagnostics.event(TwoStepEvent.FETCHED, session, "count" to notifications.size)
-        for (notification in notifications) {
+        val fetched = fetchWithRetries(session, account, tickle) ?: return
+        val serverTimeMillis = fetched.serverTimeMillis ?: pushTimeMillis
+        diagnostics.event(TwoStepEvent.FETCHED, session, "count" to fetched.notifications.size)
+        for (notification in fetched.notifications) {
+            // Google Play services passes fetched notifications through the same removal handling as pushes.
             if (notification.isActive == true) {
-                diagnostics.event(TwoStepEvent.ALREADY_ACTIVE, session, "stage" to Stage.FETCHED)
+                dismissRemotely(session, notification, Stage.FETCHED)
                 continue
             }
             if (promptExpired(notification.expiryTime, serverTimeMillis)) {
@@ -183,11 +188,20 @@ internal class TwoStepRoute<A>(
         }
     }
 
-    private fun fetchWithRetries(session: String, account: A, tickle: NotificationData): List<NotificationData>? {
+    /**
+     * Field 3 (`isActive` in microG's proto) asks the device to take the notification down, for example after the prompt
+     * was answered on another device. Google Play services removes it and logs NOTIFICATION_DISMISSED_REMOTE.
+     */
+    private fun dismissRemotely(session: String, notification: NotificationData, stage: Stage) {
+        val removed = notification.identifier?.uniqueId?.takeIf { it.isNotEmpty() }?.let(dismiss) ?: 0
+        diagnostics.event(TwoStepEvent.DISMISSED_REMOTE, session, "stage" to stage, "count" to removed)
+    }
+
+    private fun fetchWithRetries(session: String, account: A, tickle: NotificationData): GnotsFetch? {
         for (attempt in 1..NOTIFICATION_FETCH_ATTEMPTS) {
             try {
-                val notifications = fetch(account, tickle)
-                if (notifications.isNotEmpty()) return notifications
+                val fetched = fetch(account, tickle)
+                if (fetched.notifications.isNotEmpty()) return fetched
                 diagnostics.event(TwoStepEvent.FETCH_FAILED, session, "attempt" to attempt, "reason" to FetchFailure.EMPTY)
             } catch (e: Exception) {
                 diagnostics.event(TwoStepEvent.FETCH_FAILED, session, "attempt" to attempt, "reason" to FetchFailure.ERROR)
@@ -206,6 +220,6 @@ internal class TwoStepRoute<A>(
         }
     }
 
-    private enum class Stage { FETCHED }
+    private enum class Stage { TICKLE, FETCHED }
     private enum class FetchFailure { EMPTY, ERROR }
 }

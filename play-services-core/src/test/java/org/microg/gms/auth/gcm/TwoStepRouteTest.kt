@@ -41,7 +41,7 @@ class TwoStepRouteTest {
         diagnostics = diagnostics,
         enabled = { enabled },
         accounts = { accounts },
-        fetch = { account, _ -> fetchedFor += account; fetchResults.removeAt(0)() },
+        fetch = { account, _ -> fetchedFor += account; GnotsFetch(fetchResults.removeAt(0)(), null) },
         setReadState = { account, _, status -> readStates += account to status },
         show = { account, _, _ -> shownFor += account; showResult },
         dismiss = { id -> dismissed += id; 1 },
@@ -176,13 +176,13 @@ class TwoStepRouteTest {
     }
 
     @Test
-    fun fetchedNotificationsFlaggedForRemovalAreNotShown() {
+    fun fetchedNotificationsFlaggedForRemovalTakeTheShownPromptDown() {
         fetchResults += { listOf(fetched.copy(isActive = true)) }
         route.route(GMS_GCM_NOTIFICATIONS, tickle())
 
         assertTrue(shownFor.isEmpty())
-        assertTrue(dismissed.isEmpty())
-        assertEquals(listOf("stage=fetched"), logs.filter { it.startsWith("event=already_active") }.map { it.substringAfterLast(' ') })
+        assertEquals(listOf(uniqueId), dismissed)
+        assertTrue(logs.last(), logs.last().contains("event=dismissed_remote") && logs.last().contains("stage=fetched"))
     }
 
     @Test
@@ -284,11 +284,11 @@ class TwoStepRouteTest {
         assertFalse(promptExpired(null, server))
     }
 
-    private fun routeWithClock(now: Long, expiryUs: Long?, timeouts: MutableList<Long>) = TwoStepRoute<String>(
+    private fun routeWithClock(now: Long, expiryUs: Long?, timeouts: MutableList<Long>, fetchServerTime: Long? = null) = TwoStepRoute<String>(
         diagnostics = diagnostics,
         enabled = { true },
         accounts = { accounts },
-        fetch = { _, _ -> listOf(fetched.copy(expiryTime = expiryUs)) },
+        fetch = { _, _ -> GnotsFetch(listOf(fetched.copy(expiryTime = expiryUs)), fetchServerTime) },
         setReadState = { _, _, _ -> },
         show = { _, _, timeout -> timeouts += timeout; ShowResult.SHOWN },
         dismiss = { 0 },
@@ -313,6 +313,21 @@ class TwoStepRouteTest {
         routeWithClock(server + 6 * 60_000, (server + 5 * 60_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
         assertEquals(listOf(5 * 60_000L), timeouts)
         assertEquals("shown", events().last())
+    }
+
+    @Test
+    fun aLateDeliveredPushIsJudgedByTheFetchsServerTime() {
+        val sent = 1_792_800_000_000L
+        val fetchedAt = sent + 4 * 60_000 + 55_000
+        val timeouts = mutableListOf<Long>()
+        // Valid for five minutes when sent, delivered 4m55s later: the fetch's server time says 5 s are left.
+        routeWithClock(fetchedAt, (sent + 5 * 60_000) * 1000, timeouts, fetchServerTime = fetchedAt).route(GMS_GCM_NOTIFICATIONS, tickle(), sent)
+        assertTrue(timeouts.isEmpty())
+        assertEquals("expired", events().last())
+        // Two minutes late: shown, timing out after the three minutes left.
+        logs.clear()
+        routeWithClock(sent + 2 * 60_000, (sent + 5 * 60_000) * 1000, timeouts, fetchServerTime = sent + 2 * 60_000).route(GMS_GCM_NOTIFICATIONS, tickle(), sent)
+        assertEquals(listOf(3 * 60_000L), timeouts)
     }
 
     @Test

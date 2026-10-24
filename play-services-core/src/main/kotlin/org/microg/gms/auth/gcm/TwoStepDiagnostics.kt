@@ -25,8 +25,6 @@ internal enum class TwoStepEvent {
     IGNORED,
     /** The GNOTS payload was missing or could not be decoded. */
     MALFORMED,
-    /** A fetched notification is flagged for removal (field 3), so it is not shown. */
-    ALREADY_ACTIVE,
     /** No single local account matches the notification's Google user id. */
     ACCOUNT_NOT_MATCHED,
     FETCH_FAILED,
