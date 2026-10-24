@@ -7,9 +7,10 @@ import { execFileSync, spawn } from 'node:child_process';
 const [S, ...checks] = process.argv.slice(2);
 if (!S || checks.length === 0) { console.error('usage: node observe.mjs SERIAL CHECK...'); process.exit(2); }
 const sh = c => execFileSync('adb', ['-s', S, 'shell', c]).toString();
-// Ids of the prompt notifications currently posted (the active list only, not the notification history).
+// The prompt notifications currently posted (the active list only, not the history), by their NotificationRecord
+// object: every post makes a new one, even when GmsCore reuses a numeric id after a restart.
 const promptIds = () => new Set([...sh('dumpsys notification --noredact | sed -n "/Notification List:/,/Notification attention state:/p"')
-  .matchAll(/id=(\d+) tag=two_step_verification/g)].map(m => m[1]));
+  .matchAll(/NotificationRecord\((0x[0-9a-f]+): pkg=com\.google\.android\.gms [^\n]*tag=two_step_verification/g)].map(m => m[1]));
 
 const before = promptIds();
 const lines = [];
