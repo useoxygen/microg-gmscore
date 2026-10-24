@@ -78,6 +78,7 @@ class ContactsSyncActivity : ComponentActivity() {
         setContent {
             CyclonMaterialTheme {
                 var confirmation by remember { mutableStateOf<Account?>(null) }
+                var newContactsConfirmation by remember { mutableStateOf<Account?>(null) }
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -127,6 +128,15 @@ class ContactsSyncActivity : ComponentActivity() {
                                     }), modifier = Modifier.padding(top = 12.dp))
                                 }
                             }
+                            if (prefs.mode == SyncMode.TWO_WAY) {
+                                Row {
+                                    Checkbox(checked = prefs.uploadNewContacts, enabled = !busy, onCheckedChange = { enabled ->
+                                        if (enabled) newContactsConfirmation = account
+                                        else { prefs.uploadNewContacts = false; revision++ }
+                                    })
+                                    Text(stringResource(R.string.contacts_sync_upload_new), modifier = Modifier.padding(top = 12.dp))
+                                }
+                            }
                             if (prefs.mode != SyncMode.OFF) {
                                 Text(stringResource(when (prefs.status) {
                                     "success" -> R.string.contacts_sync_success
@@ -147,6 +157,21 @@ class ContactsSyncActivity : ComponentActivity() {
                             HorizontalDivider()
                         }
                     }
+                }
+                newContactsConfirmation?.let { account ->
+                    AlertDialog(onDismissRequest = { newContactsConfirmation = null },
+                        title = { Text(stringResource(R.string.contacts_sync_upload_new)) },
+                        text = { Text(stringResource(R.string.contacts_sync_upload_new_consent)) },
+                        confirmButton = { CyclonTextButton(onClick = {
+                            ContactSyncPreferences(this@ContactsSyncActivity, account).apply {
+                                uploadNewContacts = true
+                                refresh()
+                            }
+                            newContactsConfirmation = null; revision++
+                        }) { Text(stringResource(R.string.contacts_sync_enable)) } },
+                        dismissButton = { CyclonTextButton(onClick = { newContactsConfirmation = null }) {
+                            Text(stringResource(android.R.string.cancel))
+                        } })
                 }
                 confirmation?.let { account ->
                     AlertDialog(onDismissRequest = { confirmation = null },

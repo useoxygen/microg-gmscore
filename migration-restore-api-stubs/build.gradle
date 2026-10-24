@@ -1,0 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Cyclon
+// SPDX-License-Identifier: Apache-2.0
+apply plugin: 'java-library'
+java { sourceCompatibility = JavaVersion.VERSION_1_8; targetCompatibility = JavaVersion.VERSION_1_8 }

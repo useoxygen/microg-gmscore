@@ -13,6 +13,11 @@ class ContactSyncPreferences(context: Context, val account: Account) {
     var mode: SyncMode
         get() = runCatching { SyncMode.valueOf(prefs.getString(prefix + "mode", "OFF")!!) }.getOrDefault(SyncMode.OFF)
         private set(value) { check(prefs.edit().putString(prefix + "mode", value.name).commit()) }
+    // Separate from two-way edits: migration apps can insert rows into this account.
+    // An existing two-way choice must not silently authorize adopting those rows.
+    var uploadNewContacts: Boolean
+        get() = prefs.getBoolean(prefix + "uploadNewContacts", false)
+        set(value) { check(prefs.edit().putBoolean(prefix + "uploadNewContacts", value).commit()) }
     val adoptionFloor: Long get() = prefs.getLong(prefix + "adoptionFloor", Long.MAX_VALUE)
     var status: String
         get() = prefs.getString(prefix + "status", "")!!

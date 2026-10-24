@@ -131,3 +131,6 @@ include ':calendar-sync'
 include ':calendar-sync-android'
 // Optional, development-only OAuth/People API acceptance app; never shipped in GmsCore.
 if (hasModule("contactsLab", false)) include ':people-sync-lab'
+
+// Compile-only hidden framework signature; never include this module in an APK.
+include ':migration-restore-api-stubs'
