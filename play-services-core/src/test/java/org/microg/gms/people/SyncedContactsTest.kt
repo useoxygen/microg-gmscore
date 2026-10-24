@@ -128,4 +128,22 @@ class SyncedContactsTest {
         assertFalse(removal.isAlive); assertTrue(provider.ids("raw_contacts").isEmpty())
         client.close()
     }
+    @Test fun aStuckSyncMakesRemovalGiveUpAndRetryLater() {
+        val context = RuntimeEnvironment.getApplication()
+        val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }); contact(1, private) }
+        ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
+        val prefs = ContactSyncPreferences(context, account)
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
+        val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
+        val lock = ContactSyncLock.of(account)
+        val held = java.util.concurrent.CountDownLatch(1); val release = java.util.concurrent.CountDownLatch(1)
+        val stuck = Thread { lock.lock(); try { held.countDown(); release.await() } finally { lock.unlock() } }.apply { start() }
+        held.await()
+        assertThrows(SyncStillRunning::class.java) { SyncedContacts(client, account, prefs).remove(waitMillis = 200) }
+        assertTrue(prefs.pendingRemoval); assertEquals(setOf(1L), provider.ids("raw_contacts"))
+        release.countDown(); stuck.join()
+        SyncedContacts(client, account, prefs).remove(waitMillis = 200)
+        assertFalse(prefs.pendingRemoval); assertTrue(provider.ids("raw_contacts").isEmpty())
+        client.close()
+    }
 }

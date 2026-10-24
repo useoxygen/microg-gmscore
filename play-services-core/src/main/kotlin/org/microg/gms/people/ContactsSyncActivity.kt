@@ -83,6 +83,7 @@ class ContactsSyncActivity : ComponentActivity() {
                 busy = true
             }
         }
+        retryPendingRemovals()
         setContent {
             CyclonMaterialTheme {
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
@@ -262,6 +263,7 @@ class ContactsSyncActivity : ComponentActivity() {
         failure = null; retryChoice = null
         val prefs = ContactSyncPreferences(this, account)
         prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
+        prefs.pendingRemoval = true
         revision++
         busy = true
         lifecycleScope.launch {
@@ -270,6 +272,16 @@ class ContactsSyncActivity : ComponentActivity() {
             revision++
             Toast.makeText(this@ContactsSyncActivity, if (removed) R.string.contacts_sync_turn_off_done
                 else R.string.contacts_sync_turn_off_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // A removal that couldn't finish earlier (a sync was stuck) is retried quietly.
+    private fun retryPendingRemovals() {
+        val owed = AccountManager.get(this).getAccountsByType("com.google").filter {
+            ContactSyncPreferences(this, it).let { prefs -> prefs.mode == SyncMode.OFF && prefs.pendingRemoval }
+        }
+        if (owed.isNotEmpty()) lifecycleScope.launch(Dispatchers.IO) {
+            for (account in owed) runCatching { withSyncedContacts(account) { it.remove() } }
         }
     }
 

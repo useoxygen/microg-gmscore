@@ -14,6 +14,8 @@ import org.microg.gms.people.sync.PrivatePeopleApi
  * The contacts and labels this sync imported or adopted for one Google account, as Google's own
  * sync removes them when sync is turned off. Pre-existing rows of other origin are never touched.
  */
+class SyncStillRunning : IllegalStateException("A contacts sync of this account is still running")
+
 class SyncedContacts(private val provider: ContentProviderClient, private val account: Account,
     private val prefs: ContactSyncPreferences) {
     private val owners = listOf(PrivatePeopleApi.OWNER, AndroidContactStore.OWNER)
@@ -39,11 +41,13 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
      * Call only after sync is off. Waits for a running sync of this account to finish, so none of its
      * writes land after the removal. Clears the cursor so turning sync back on downloads everything again.
      */
-    fun remove() {
+    fun remove(waitMillis: Long = 120_000) {
         check(prefs.mode == org.microg.gms.people.sync.SyncMode.OFF)
         val lock = ContactSyncLock.of(account)
-        lock.lock()
-        try { removeLocked() } finally { lock.unlock() }
+        // Bounded and interruptible: a stalled sync must not block turn-off forever. The caller keeps
+        // prefs.pendingRemoval set and retries later; sync itself is already off.
+        if (!lock.tryLock(waitMillis, java.util.concurrent.TimeUnit.MILLISECONDS)) throw SyncStillRunning()
+        try { removeLocked(); prefs.pendingRemoval = false } finally { lock.unlock() }
     }
     private fun removeLocked() {
         check(prefs.mode == org.microg.gms.people.sync.SyncMode.OFF)

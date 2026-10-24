@@ -61,5 +61,5 @@
     <string name="contacts_sync_turn_off_confirm">Turn off</string>
     <string name="contacts_sync_cancel">Cancel</string>
     <string name="contacts_sync_turn_off_done">Sync turned off</string>
-    <string name="contacts_sync_turn_off_failed">Couldn\'t remove the synced contacts. Sync is off; try again later.</string>
+    <string name="contacts_sync_turn_off_failed">Sync is off. The synced contacts couldn\'t be removed yet; they\'ll be removed the next time you open this screen.</string>
 </resources>
