@@ -527,6 +527,12 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         if (status == "NOT_FOUND" && group == null && allowDeleted) return ContactGroup.parse(JSONObject().put("resourceName", resource)
             .put("metadata", JSONObject().put("deleted", true)))
         if (status != "OK" || error.isNotBlank() || group == null) throw UnreadableContact()
+        // Incremental lists report a deleted group as a nameless entry with attribute DELETED (seen live).
+        val attributes = group.optJSONArray("attribute")
+        if (attributes != null && (0 until attributes.length()).any { attributes.optJSONObject(it)?.optString("attribute") == "DELETED" }) {
+            if (!allowDeleted) throw UnreadableContact()
+            return ContactGroup.parse(JSONObject().put("resourceName", resource).put("metadata", JSONObject().put("deleted", true)))
+        }
         val type = text(group.getJSONObject("groupType"), "type")
         require(type in setOf("CONTACT_GROUP", "SYSTEM_CONTACT_GROUP"))
         require((id in SYSTEM_GROUPS) == (type == "SYSTEM_CONTACT_GROUP"))

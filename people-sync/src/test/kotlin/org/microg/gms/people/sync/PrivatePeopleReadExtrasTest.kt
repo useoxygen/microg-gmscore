@@ -72,6 +72,13 @@ class PrivatePeopleReadExtrasTest {
             if (expected) assertEquals("Label 42", group!!.name) else assertNull(group)
         }
     }
+    @Test fun incrementalListsReportDeletedGroupsByAttribute() {
+        val deleted = """{"result":{"id":{"id":"e73b1508d294a1b"},"updated":{"updatedMicros":"1"},"attribute":[{"attribute":"DELETED"}],"groupType":{"type":"CONTACT_GROUP"}}}"""
+        val api = PrivatePeopleApi(HttpTransport { _, _, _ -> HttpReply(200, """{"groups":[$deleted],"nextSyncToken":"next"}""") }, context)
+        val page = api.listGroups("old", null)
+        assertEquals(0, page.skipped)
+        assertTrue(page.groups.single().deleted); assertEquals(PrivatePeopleApi.groupResource("e73b1508d294a1b"), page.groups.single().resource)
+    }
     @Test fun intermediatePagesWithASyncTokenAreFollowedAndOnlyTheLastTokenIsKept() {
         val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
             if (query(url)["pageToken"] == null) HttpReply(200, """{"groups":[],"nextPageToken":"p2","nextSyncToken":"early"}""")
