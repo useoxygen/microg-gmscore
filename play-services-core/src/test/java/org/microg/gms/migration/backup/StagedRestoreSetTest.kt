@@ -80,6 +80,18 @@ class StagedRestoreSetTest {
             assertThrows(IllegalStateException::class.java) { reader.next() }
         }
     }
+    @Test fun largeSparseArchiveStreamsWithoutAllocatingItsFullSize() {
+        val root=files(); val size=700L*1024*1024
+        java.io.RandomAccessFile(File(root,app.name),"rw").use {
+            it.setLength(size); it.seek(size-2); it.write(byteArrayOf(71,12))
+        }
+        StagedRestoreSet(root).use { reader ->
+            assertTrue(reader.start(42,listOf(app))); assertEquals(app,reader.next())
+            val buffer=ByteArray(64*1024); var total=0L; var last=byteArrayOf()
+            while(true) { val count=reader.read(buffer); if(count<0)break; total+=count; last=buffer.copyOfRange(count-2,count) }
+            assertEquals(size,total); assertArrayEquals(byteArrayOf(71,12),last); assertNull(reader.next())
+        }
+    }
     @Test fun anEmptyKeyValueArtifactCompletesAtEof() {
         val root = files()
         File(root, app.name).writeBytes(byteArrayOf())

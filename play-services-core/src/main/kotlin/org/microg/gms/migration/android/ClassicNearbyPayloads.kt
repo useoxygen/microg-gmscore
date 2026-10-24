@@ -8,7 +8,8 @@ import java.io.OutputStream
 
 /** Bounded, sequential chunk delivery. Sinks are selected by a trusted owner, never by
  * peer-provided file names. Completion is emitted only after final size and sink close. */
-internal class ClassicNearbyPayloads(private val sink: Sink, private val maxBytes: Long) : Closeable {
+internal class ClassicNearbyPayloads(private val sink: Sink, private val maxPayloadBytes: Long) : Closeable {
+    init { require(maxPayloadBytes>=0) }
     interface Sink {
         fun open(header: PayloadTransferFrame.PayloadHeader): OutputStream
         fun progress(id: Long, bytes: Long)
@@ -20,7 +21,6 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
     private val pending = linkedMapOf<Long, Pending>()
     // A completed/cancelled ID cannot reopen a sink and overwrite an earlier artifact.
     private val seen = hashSetOf<Long>()
-    private var delivered = 0L
     private var closed = false
 
     @Synchronized fun receive(frame: PayloadTransferFrame) {
@@ -39,7 +39,7 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
         require(frame.packetType == PayloadTransferFrame.PacketType.DATA && frame.hasPayloadChunk())
         require(header.type in listOf(PayloadTransferFrame.PayloadHeader.PayloadType.BYTES,
             PayloadTransferFrame.PayloadHeader.PayloadType.FILE, PayloadTransferFrame.PayloadHeader.PayloadType.STREAM))
-        require(header.totalSize in -1..maxBytes)
+        require(header.totalSize in -1..maxPayloadBytes)
         if (header.type == PayloadTransferFrame.PayloadHeader.PayloadType.BYTES) require(header.totalSize in 0..ClassicParcelBytes.MAX_BYTES)
         val chunk = frame.payloadChunk
         try {
@@ -51,10 +51,10 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
             require(header == item.header && chunk.offset == item.size) { "Nearby payload is out of order or changed" }
             require((chunk.flags and 1.inv()) == 0 && chunk.body.size() <= 1048576)
             val length = chunk.body.size().toLong()
-            require(length <= maxBytes - delivered)
+            require(length <= maxPayloadBytes - item.size)
             require(header.totalSize == -1L || length <= header.totalSize - item.size)
             chunk.body.writeTo(item.stream)
-            item.size += length; delivered += length
+            item.size += length
             if ((chunk.flags and 1) != 0) {
                 require(header.totalSize == -1L || item.size == header.totalSize)
                 item.stream.close()

@@ -178,6 +178,35 @@ class AndroidD2dProtocolTest {
             assertEquals(0, sink.completions)
         }
     }
+    @Test fun completedFilesDoNotConsumeTheNextPayloadsBudget() {
+        val sink=PayloadSink()
+        // Scaled reproduction of twenty1GiB files with a16GiB per-file maximum.
+        ClassicNearbyPayloads(sink,16*1024).use { receiver ->
+            repeat(20) { id ->
+                receiver.receive(chunk(0,"x".repeat(1024),true,1024).toBuilder()
+                    .setPayloadHeader(chunk(0,"",total=1024).payloadHeader.toBuilder().setId(id.toLong())).build())
+            }
+        }
+        assertEquals(20,sink.completions); assertEquals(0,sink.failures)
+    }
+    @Test fun storageAdmissionUsesCurrentFreeSpaceAndCanRecover() {
+        var available=3L; val bytes=ByteArrayOutputStream()
+        ClassicStorageOutputStream(bytes) { available }.use { output ->
+            output.write(byteArrayOf(1,2)); available=1
+            assertThrows(IllegalArgumentException::class.java) { output.write(byteArrayOf(3,4)) }
+            available=2; output.write(byteArrayOf(3,4))
+        }
+        assertArrayEquals(byteArrayOf(1,2,3,4),bytes.toByteArray())
+    }
+    @Test fun unknownLengthStreamStillHasAPerPayloadLimit() {
+        val sink=PayloadSink()
+        ClassicNearbyPayloads(sink,3).use { receiver ->
+            fun stream(offset: Long, body: String)=chunk(offset,body,total=-1).toBuilder().setPayloadHeader(chunk(0,"",total=-1).payloadHeader.toBuilder().setType(PayloadTransferFrame.PayloadHeader.PayloadType.STREAM)).build()
+            receiver.receive(stream(0,"ab"))
+            assertThrows(IllegalArgumentException::class.java) { receiver.receive(stream(2,"cd")) }
+        }
+        assertEquals(0,sink.completions); assertEquals(1,sink.failures)
+    }
     @Test fun closingPayloadsReportsPartialAsFailed() {
         val sink = PayloadSink()
         ClassicNearbyPayloads(sink, 20).use { it.receive(chunk(0, "ab")) }

@@ -166,10 +166,10 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 headers[header.id] = header
                 return when(header.type) {
                     PayloadTransferFrame.PayloadHeader.PayloadType.BYTES -> ByteArrayOutputStream().also { bytes[header.id] = it }
-                    PayloadTransferFrame.PayloadHeader.PayloadType.FILE -> { val folder = File(context.cacheDir,"classic-nearby").apply { check(exists() || mkdirs()) }; val file = File.createTempFile("incoming-",".payload",folder); files[header.id] = file; session.cacheFiles.add(file)
+                    PayloadTransferFrame.PayloadHeader.PayloadType.FILE -> { val folder = File(context.cacheDir,"classic-nearby").apply { check(exists() || mkdirs()) }; require(header.totalSize<0 || header.totalSize<=folder.usableSpace-256L*1024*1024) { "Insufficient storage for Nearby file" }; val file = File.createTempFile("incoming-",".payload",folder); files[header.id] = file; session.cacheFiles.add(file)
                         val uri=androidx.core.content.FileProvider.getUriForFile(context,context.packageName+".migration.classic.files",file)
                         context.packageManager.getPackagesForUid(ownerUid)?.forEach { context.grantUriPermission(it,uri,android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-                        delivered(header,mapOf(4 to ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY),5 to file.absolutePath,8 to uri)); FileOutputStream(file) }
+                        delivered(header,mapOf(4 to ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY),5 to file.absolutePath,8 to uri)); ClassicStorageOutputStream(FileOutputStream(file)) { (folder.usableSpace-256L*1024*1024).coerceAtLeast(0) } }
                     PayloadTransferFrame.PayloadHeader.PayloadType.STREAM -> { val pipe = ParcelFileDescriptor.createPipe(); delivered(header,mapOf(4 to pipe[0])); DeadlineFdStreams.output(pipe[1]) }
                     else -> throw IOException("Unsupported payload")
                 }.also { session.outputs[header.id] = it }

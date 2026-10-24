@@ -46,6 +46,12 @@ Implemented on top of B#36 and C#37:
   ordinary/cloud backup, deletes source artifacts, or bypasses framework policy,
   signing identity, version checks or app agents. C owns cable/media/Play installs,
   Google-account contacts defaults and eSIM. Its newest contacts defaults are kept.
+  A process-wide restore lease blocks new batches, artifact publication and metadata
+  replacement until the active restore closes; Google's repeated token1 cannot
+  identify a batch. Already-staged archives stream through bounded buffers without
+  a512MiB ceiling, with overflow and size-change checks. Nearby's16GiB bound is per
+  payload; FILE admission separately checks current free storage with256MiB reserve,
+  so completed payloads do not consume a lifetime session quota.
 
 Google account/FIDO/bootstrap credentials require authorized Google server calls
 (gfui/get_bootstrap_challenges, gfuj/exchange_bootstrap_credentials,
