@@ -7,6 +7,9 @@ import { join } from 'node:path';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 export const EMAIL = process.env.GPROMPT_EMAIL || 'coraliss.mail@gmail.com';
+// Only --signin needs the password; it is read from the macOS Keychain item cyclon-test-google-cora.
+export const password = () =>
+  execFileSync('security', ['find-generic-password', '-s', process.env.GPROMPT_KEYCHAIN || 'cyclon-test-google-cora', '-w']).toString().trim();
 
 export async function openBrowser(port = 9333) {
   const dir = mkdtempSync(join(tmpdir(), 'gprompt-profile-'));

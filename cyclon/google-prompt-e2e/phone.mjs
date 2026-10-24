@@ -51,7 +51,7 @@ export function phone(serial) {
     }
     return null;
   }
-  return { sh, watchLog, top, unlock, nodes, tap, waitFor };
+  return { sh, watchLog, top, locked, unlock, nodes, tap, waitFor };
 }
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
