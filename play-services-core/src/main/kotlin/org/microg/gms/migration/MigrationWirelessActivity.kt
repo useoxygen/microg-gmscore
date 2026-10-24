@@ -42,10 +42,10 @@ class MigrationWirelessActivity : Activity() {
         if (launched && existing == null) { setResult(RESULT_CANCELED); finish(); return }
         controller = existing ?: DctSessions.create(this)
         if (!launched) {
-            val required = mutableListOf<String>()
+            // GmsCore also provides Wi-Fi network location, so its global Wi-Fi permission cannot assert neverForLocation.
+            val required = mutableListOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
             if (Build.VERSION.SDK_INT >= 31) required.addAll(listOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE))
             if (Build.VERSION.SDK_INT >= 33) required.add(Manifest.permission.NEARBY_WIFI_DEVICES)
-            else required.add(Manifest.permission.ACCESS_FINE_LOCATION)
             val missing = required.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
             if (missing.isEmpty()) startSession() else requestPermissions(missing.toTypedArray(), 700)
         }
@@ -55,7 +55,7 @@ class MigrationWirelessActivity : Activity() {
         super.onRequestPermissionsResult(request, permissions, grants)
         if (request == 700) {
             if (grants.isNotEmpty() && grants.all { it == PackageManager.PERMISSION_GRANTED }) startSession()
-            else { status.text = "Nearby devices permission is required to connect your iPhone."; controller?.close() }
+            else { status.text = "Allow Nearby devices and Location to connect your iPhone."; controller?.close() }
         }
     }
     private fun launchImporter() {

@@ -138,9 +138,10 @@ The main entry is in release source; the DUMP override and lab probes are debug
 only. The already-gated `CyclonAndroidSwitchWirelessSetupOverlay` points to this
 same setup alias. No Google internal service needs to be exported.
 
-Approve the app's Nearby devices permission prompt if shown. The build requests
-NEARBY_WIFI_DEVICES for Aware and the Bluetooth connect/advertise permissions;
-denial ends the session. The screen should show a QR only after real FC73 advertisement success. It must
+Approve the app's Nearby devices and precise Location prompts if shown. The build
+requests NEARBY_WIFI_DEVICES, Bluetooth connect/advertise and location permissions.
+GmsCore also provides Wi-Fi location, so its global Wi-Fi permission does not assert
+neverForLocation. Denial ends the session. The screen should show a QR only after real FC73 advertisement success. It must
 encode **`https://migrate.google/1/d#s=…&p=…`**. The values are session secrets;
 do not paste them into tickets/logs or save an unprotected screenshot.
 
