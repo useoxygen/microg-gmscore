@@ -169,7 +169,10 @@ and pull-deletion fences; unreadable direct-read isolation; extended field and
 date mappings; safe auth/API diagnostics; non-enabling scope checks; settings
 and selected-account editor entry points. The same draft now implements contact
 photo download/upload/delete, groups/labels, My Contacts and starred, including
-provider code and durable mutation recovery. See `people-sync/README.md` for the
+provider code and durable mutation recovery. A separate private REST authorization
+probe compares three single-scope candidates with actual and GMS-app-override
+identities; it performs only a bounded cursor-only GET and never enables sync.
+Private grant/transport acceptance remains unproven. See `people-sync/README.md` for the
 state layout and recovery rules.
 
 Photo download hints have independent per-row durable work. Pending photo
@@ -199,6 +202,15 @@ merge and acceptance. CYC-721 must not be described as full stock parity or a
 proven real-account activation fix.
 
 ## Validation receipt
+
+Private authorization probe follow-up: all 124 engine tests and three focused
+Android host tests passed, and the CI Mapbox Default Debug APK built successfully
+(`private-probe-verify.log`). Tests cover sanitized outcomes, bounded/one-page
+requests, denied grants, cancellation, effective identity fields, no token-cache
+writes, raw auth-parser log suppression, and the real private-check entry point
+with forbidden provider access and unchanged sync settings/scheduling. These are
+synthetic host checks; no authenticated private/public Google request or device
+acceptance is established. Provider instrumentation and Release were not rerun.
 
 Review follow-up: the combined metadata/photo recovery regression fails at
 `766cdf4c` because a pending photo journal allows the metadata checkpoint to

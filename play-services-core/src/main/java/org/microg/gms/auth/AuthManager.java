@@ -58,6 +58,27 @@ public class AuthManager {
     public boolean isGmsApp;
     public boolean ignoreStoredPermission = false;
     public boolean forceRefreshToken = false;
+    private boolean contactsProbe;
+    private String contactsProbeDiagnostic;
+
+    // Probe flags are accepted only for our own fixed private-scope candidates.
+    // Force a real request and never mix the alternate identity into token caches.
+    public void configureContactsProbe(boolean requested, boolean gmsIdentity) {
+        contactsProbe = requested && context.getPackageName().equals(packageName)
+                && org.microg.gms.people.sync.PrivatePeopleProbe.isPrivateService(service);
+        if (contactsProbe) {
+            forceRefreshToken = true;
+            isGmsApp = gmsIdentity;
+        }
+    }
+
+    public boolean isContactsProbe() { return contactsProbe; }
+    public String getContactsProbeDiagnostic() { return contactsProbeDiagnostic; }
+    private void recordContactsProbe(AuthRequest request, org.microg.gms.people.sync.ProbeAuthState state, Integer status, String error) {
+        if (!contactsProbe) return;
+        contactsProbeDiagnostic = org.microg.gms.people.sync.PrivatePeopleProbe.authReceipt(state, status, error,
+                request.app, request.appSignature, request.caller, request.callerSignature);
+    }
 
     public AuthManager(Context context, String accountName, String packageName, String service) {
         this.context = context;
@@ -235,7 +256,7 @@ public class AuthManager {
     }
 
     public void storeResponse(AuthResponse response) {
-        if (service.startsWith("weblogin:")) return;
+        if (contactsProbe || service.startsWith("weblogin:")) return;
         if (response.accountId != null)
             setUserData("GoogleUserId", response.accountId);
         if (response.Sid != null)
@@ -359,8 +380,7 @@ public class AuthManager {
             request.callerIsApp();
         }
         boolean contactsSelfRequest = context.getPackageName().equals(packageName) &&
-                ("oauth2:https://www.googleapis.com/auth/contacts".equals(service)
-                || "oauth2:https://www.googleapis.com/auth/contacts.readonly".equals(service));
+                org.microg.gms.people.sync.PrivatePeopleProbe.isContactsService(service);
         if (contactsSelfRequest) {
             // Public request identity only; PM may return a spoofed certificate.
             String signature = request.appSignature != null && request.appSignature.matches("[0-9a-fA-F]{40}")
@@ -368,23 +388,33 @@ public class AuthManager {
             String callerSignature = request.callerSignature != null && request.callerSignature.matches("[0-9a-fA-F]{40}")
                     ? request.callerSignature : "UNKNOWN";
             Log.i("GmsContactSync", "stage=authorization client=com.google.android.gms client_sig_presented=" + signature
-                    + " caller=com.google.android.gms caller_sig=" + callerSignature);
+                    + " caller=com.google.android.gms caller_sig=" + callerSignature + " is_gms_app=" + isGmsApp);
         }
+        request.suppressSensitiveLogs = contactsProbe;
+        recordContactsProbe(request, org.microg.gms.people.sync.ProbeAuthState.UNKNOWN, null, null);
         AuthResponse response;
         try {
             response = request.getResponse();
         } catch (NotOkayException error) {
             if (!contactsSelfRequest) throw error;
             String safeError = org.microg.gms.people.sync.ContactsDiagnostics.authError(error.getMessage());
+            recordContactsProbe(request, org.microg.gms.people.sync.ProbeAuthState.ERROR, error.getHttpStatus(), safeError);
             Log.w("GmsContactSync", "stage=authorization error=" + safeError + " http_status=" + error.getHttpStatus());
             // All subsequent resolver/consent paths may log exception messages.
             // Keep the structured diagnostic, never a response body or URL.
             throw new NotOkayException("Error=" + safeError, error.getHttpStatus());
+        } catch (IOException error) {
+            recordContactsProbe(request, org.microg.gms.people.sync.ProbeAuthState.NETWORK, null, null);
+            if (contactsSelfRequest) throw new IOException("Contacts authorization failed");
+            throw error;
         }
         if (contactsSelfRequest) Log.i("GmsContactSync", "stage=authorization http_status=200 token_present_server=" + (response.auth != null));
         if (!isPermitted() && !isTrustGooglePermitted(context)) {
+            recordContactsProbe(request, org.microg.gms.people.sync.ProbeAuthState.CONSENT_REQUIRED, 200, null);
             response.auth = null;
         } else {
+            recordContactsProbe(request, response.auth != null ? org.microg.gms.people.sync.ProbeAuthState.TOKEN
+                    : org.microg.gms.people.sync.ProbeAuthState.CONSENT_REQUIRED, 200, null);
             storeResponse(response);
         }
         return response;

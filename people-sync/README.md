@@ -147,14 +147,43 @@ contact-provider access, adoption baselines, `configure()`, or scheduling. They
 do not prove that creates/edits/deletes work; test those with disposable data.
 These checks do not cancel or pause sync that was already enabled independently.
 
+**Check private service access** is a separate diagnostic-only entry point.
+It tests `peopleapi.readonly`, `peopleapi.readwrite`, and
+`peopleapi.legacy.readwrite` individually, first with the actual PM-presented
+identity, then with the existing `isGmsApp` / `appIsGms` override as a labeled
+`GMS_APP` comparison. All token requests use the same microG AccountManager path,
+force a fresh request and do not persist probe responses/tokens. Local consent
+may be requested, but probe failures do not launch the shared remote challenge
+resolver. Private probe consent also skips owner-avatar fetching and raw payload
+logging. The legacy `fsnp` bundle's ten unrelated plus scopes are not requested.
+
+Each successful grant permits exactly one GET of
+`https://people-pa.googleapis.com/v2/people/sync` with `pageSize=1`,
+`syncParameters.fullSyncOption=FULL_SYNC_OK`,
+`mergedPersonSourceOptions.personModelParams.personModel=CONTACT_CENTRIC`,
+`requestMask.includeField=person.metadata`, and the response selector
+`fields=nextPageToken,nextSyncToken`. No cursor is followed or saved. HTTPS
+redirects/retries are disabled and response reads are capped at 64 KiB. The
+receipt contains only candidate/identity labels, sanitized auth status/error and
+HTTP status, effective app/caller SHA-1 fingerprints, allowlisted API status/reason,
+and token-presence booleans. Tokens and response bodies live only in RAM; logs,
+UI results and preferences never receive their values or contact content.
+
+The GET intentionally sends no borrowed API key or Spatula header. A successful
+REST read is evidence for that exact scope/identity/transport only; a denial may
+still reflect private-service/header policy, not just a refused scope. The normal
+public sync scopes, identity, stores and scheduling are unchanged. No private
+sync or write implementation is enabled by this check.
+
 Diagnostics under `GmsContactSync` include fixed stages, requested scope, numeric
 HTTP status, allowlisted auth/API reason/status codes and the public presented
 client/caller SHA-1 digests. A PackageManager-reported signature can differ from
 the APK signer on a signature-spoofing OS. Never enable HTTP body VERBOSE logging.
 No account identifiers, tokens, challenge URLs, consent blobs, contact contents,
 or arbitrary exception text are added to these diagnostics. Unknown reasons are
-reported as UNKNOWN. The underlying authorization behavior and identities are
-unchanged; retaining an HTTP status does not itself repair a grant.
+reported as UNKNOWN. Production authorization behavior and identities are unchanged; the separately
+labeled probe override is diagnostic only. Retaining an HTTP status does not
+itself repair a grant.
 
 Cyclon Contacts already uses an editable built-in GoogleAccountType, including
 phonetic fields and custom-field support. Adding duplicate primary metadata in

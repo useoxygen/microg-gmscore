@@ -38,4 +38,5 @@
     <string name="contacts_sync_last_success">Last successful sync: %1$s</string>
     <string name="contacts_sync_refresh">Sync now</string>
     <string name="contacts_sync_reconnect">Reconnect</string>
+    <string name="contacts_sync_check_private">Check private service access</string>
 </resources>
