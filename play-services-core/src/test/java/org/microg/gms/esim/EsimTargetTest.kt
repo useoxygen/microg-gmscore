@@ -123,6 +123,22 @@ class EsimTargetTest {
         assertEquals(16, assertThrows(EsimFailure::class.java) { engine.credential(profile(engine)) }.status)
         engine.close()
     }
+    @Test fun freshSessionUuidAfterProcessLossCannotReplayCarrierMutation() {
+        val operations = mutableListOf<String?>()
+        val entitlement = EsimEntitlement({ EsimTargetIdentity("123456789012345", "1".repeat(32)) }, EsimEntitlementHttp { url ->
+            operations += url.queryParameter("operation")
+            if (operations.size == 1) throw IOException("synthetic unknown carrier outcome")
+            200 to reply()
+        })
+        fun engine() = EsimTransferEngine(context, Process.myUid(), entitlement, { Peer() }, {123})
+        val first = engine(); start().use { first.start(it) }
+        val before = profile(first); val previousId = before.text(4)
+        assertEquals(7, assertThrows(EsimFailure::class.java) { first.credential(before) }.status)
+        first.close()
+        val second = engine(); start().use { second.start(it) }
+        val after = profile(second); assertNotEquals(previousId, after.text(4)); second.credential(after).close()
+        assertEquals(listOf("ManageSubscription", "AcquireConfiguration"), operations); second.close()
+    }
     @Test fun downloadReportMustMatchAuthenticatedSessionIccid() {
         val peer = Peer(); val engine = EsimTransferEngine(context, Process.myUid(), peerFactory = { peer }, carrierId = {123})
         start().use { engine.start(it) }

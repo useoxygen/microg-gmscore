@@ -53,7 +53,8 @@ internal class EsimTransferEngine(private val context: Context, private val owne
         }
     }
     private fun receipt(profile: EsimProfile): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(("$ownerUid:${profile.id}:${profile.iccid}").toByteArray())
+        // Session UUID changes after restart; it cannot identify a carrier mutation.
+        val digest = MessageDigest.getInstance("SHA-256").digest(("$ownerUid:${profile.carrierId}:${profile.iccid}:${profile.entitlementUrl}").toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }
     @Synchronized fun credential(record: EsimWireRecord): EsimWireRecord {
