@@ -22,6 +22,11 @@ import static org.microg.gms.common.HttpFormClient.RequestContent;
 import static org.microg.gms.common.HttpFormClient.RequestHeader;
 
 public class AuthRequest extends HttpFormClient.Request {
+    @Override
+    public boolean isSensitive() { return true; }
+    @Override
+    public int networkTimeoutMillis() { return service != null && service.startsWith("weblogin:") ? 15_000 : 0; }
+
     private static final String SERVICE_URL = "https://android.googleapis.com/auth";
     private static final String USER_AGENT = "GoogleAuth/1.4 (%s %s); gzip";
 

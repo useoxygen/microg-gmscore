@@ -18,6 +18,7 @@ import android.view.View
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
 import androidx.fragment.app.commit
@@ -29,8 +30,11 @@ import com.google.android.gms.fido.fido2.api.common.AuthenticationExtensionsPrfO
 import com.google.android.gms.fido.fido2.api.common.ErrorCode.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import org.microg.gms.common.GmsService
 import org.microg.gms.fido.core.*
+import org.microg.gms.fido.core.hybrid.HybridAccountRequests
 import org.microg.gms.fido.core.transport.Transport
 import org.microg.gms.fido.core.transport.Transport.*
 import org.microg.gms.fido.core.transport.TransportHandler
@@ -89,6 +93,8 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
     private lateinit var navHostFragment: NavHostFragment
     private var preselectedCredentialId: String? = null
     private var preselectedTransport: Transport? = null
+    private var accountChoiceOffered = false
+    private var accountRequestPending = false
 
     private inline fun <reified T : TransportHandler> getTransportHandler(): T? =
         transportHandlers.filterIsInstance<T>().firstOrNull { it.isSupported }
@@ -112,6 +118,7 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
                 return finishWithError(NOT_SUPPORTED_ERR, "FIDO2 API is not supported on devices below N")
             }
             val options = options ?: return finishWithError(DATA_ERR, "The request options are not valid")
+            if (source == SOURCE_HYBRID) HybridAccountRequests.verifyAuthenticator(this, options)
             this.callerPackage = callerPackage
             this.callerSignature = packageManager.getFirstSignatureDigest(callerPackage, "SHA-256")?.toBase64()
                 ?: return finishWithError(UNKNOWN_ERR, "Could not determine signature of app")
@@ -120,7 +127,7 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
                 runCatching { Transport.valueOf(it) }.getOrNull()
             }
 
-            Log.d(TAG, "onCreate caller=$callerPackage options=$options preselectedCredentialId=$preselectedCredentialId")
+            Log.d(TAG, "FIDO request received")
 
             // By default, we allow instants. This extra may be used by app using fido-core library
             // To avoid instant.
@@ -152,8 +159,8 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
         } catch (e: RequestHandlingException) {
             finishWithError(e.errorCode, e.message ?: e.errorCode.name)
         } catch (e: Exception) {
-            Log.w(TAG, e)
-            finishWithError(UNKNOWN_ERR, e.message ?: e.javaClass.simpleName)
+            Log.w(TAG, "FIDO request failed")
+            finishWithError(UNKNOWN_ERR, "FIDO request failed")
         }
     }
 
@@ -161,14 +168,36 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
     suspend fun handleRequest(options: RequestOptions, allowInstantLevel: AllowedInstantLevel = AllowedInstantLevel.INSTANT) {
         try {
             val origin = getOrigin(this, options, callerPackage)
-            options.checkIsValid(this, origin, callerPackage)
+            val backend = (application as? AccountPasskeyBackendProvider)?.accountPasskeyBackend
+            val delegatedPayment = source == SOURCE_BROWSER && backend?.delegatedBrowserRequest(this, options, callerPackage) == true
+            if (source == SOURCE_HYBRID) HybridAccountRequests.verifyAuthenticator(this, options)
+            else if (!delegatedPayment) options.checkIsValid(this, origin, callerPackage)
             val appName = getApplicationName(this, options, callerPackage)
             val callerName = packageManager.getApplicationLabel(callerPackage).toString()
 
             val requiresPrivilege =
                 callerPackage != packageName && options is BrowserRequestOptions && !database.isPrivileged(callerPackage, callerSignature)
 
-            Log.d(TAG, "origin=$origin, appName=$appName")
+            Log.d(TAG, "FIDO caller validated")
+
+            // The account backend independently verifies the browser's release signer and exact origin.
+            // Its owner confirmation does not create a local remembered-browser fido.db record.
+            if (!accountChoiceOffered && backend != null &&
+                backend.available(this, options, callerPackage, source.orEmpty())) {
+                accountChoiceOffered = true
+                makeOpaque()
+                if (chooseAccountPasskey()) {
+                    accountRequestPending = true
+                    startActivityForResult(backend.request(this, options, callerPackage, source.orEmpty()), REQUEST_ACCOUNT_PASSKEY)
+                    return
+                }
+            }
+            // Local transports have no PRF consumer. Never silently downgrade an advertised account PRF request.
+            if (source == SOURCE_HYBRID && options.authenticationExtensions?.prfExtension != null) {
+                finishWithError(NOT_SUPPORTED_ERR, "Account PRF passkey required"); return
+            }
+            // An SPC RP exception belongs exclusively to the account consumer, which rechecks stored opt-in.
+            if (delegatedPayment) { finishWithError(NOT_ALLOWED_ERR, "No payment passkey selected"); return }
 
             val noLocalUserForSignInstantBlock = options.type == RequestOptionsType.SIGN && database.getKnownRegistrationInfo(options.rpId).isEmpty()
 
@@ -259,27 +288,27 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
                     if (next != null) {
                         navGraph.setStartDestination(next)
                     }
-                    Log.d(TAG, "arguments=$arguments")
+                    Log.d(TAG, "FIDO transport selection ready")
                     navHostFragment.navController.setGraph(navGraph, arguments)
                 }
             }
         } catch (e: RequestHandlingException) {
             finishWithError(e.errorCode, e.message ?: e.errorCode.name)
         } catch (e: Exception) {
-            Log.w(TAG, e)
-            finishWithError(UNKNOWN_ERR, e.message ?: e.javaClass.simpleName)
+            Log.w(TAG, "FIDO request failed")
+            finishWithError(UNKNOWN_ERR, "FIDO request failed")
         }
     }
 
     fun finishWithError(errorCode: ErrorCode, errorMessage: String) {
-        Log.d(TAG, "Finish with error: $errorMessage ($errorCode)")
+        Log.d(TAG, "Finish with error code: $errorCode")
         finishWithCredential(
             PublicKeyCredential.Builder().setResponse(AuthenticatorErrorResponse(errorCode, errorMessage)).build()
         )
     }
 
     fun finishWithSuccessResponse(response: AuthenticatorResponse, transport: Transport, user: PublicKeyCredentialUserEntity? = null) {
-        Log.d(TAG, "Finish with success response: $response")
+        Log.d(TAG, "Finish with success response")
 
         val shouldPersist = transport != HYBRID
         if (options is BrowserRequestOptions && shouldPersist) {
@@ -298,14 +327,13 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
             database.insertKnownRegistration(rpId, id, transport, user?.toJson())
         }
 
-        val prfFirst = rawId?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it) }?.copyOf(32)
-        val prfOutputs = prfFirst?.let { AuthenticationExtensionsPrfOutputs(true, it, null) }
-
         val clientExtResults = AuthenticationExtensionsClientOutputs(
             null,
             null,
             AuthenticationExtensionsCredPropsOutputs(true),
-            prfOutputs,
+            // A public credential ID cannot serve as a secret PRF. This consumer
+            // has no authenticated PRF result, so leave the extension absent.
+            null,
             null
         )
 
@@ -321,6 +349,9 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
     }
 
     private fun finishWithCredential(publicKeyCredential: PublicKeyCredential, user: PublicKeyCredentialUserEntity? = null) {
+        if (source == SOURCE_HYBRID && runCatching { HybridAccountRequests.verifyAuthenticator(this, options ?: error("Missing options")) }.isFailure) {
+            finishWithError(NOT_ALLOWED_ERR, "Hybrid session expired"); return
+        }
         val intent = Intent()
         intent.putExtra(FIDO2_KEY_CREDENTIAL_EXTRA, publicKeyCredential.serializeToBytes())
         if (source == SOURCE_HYBRID && user != null) {
@@ -334,6 +365,29 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
         }
         setResult(RESULT_OK, intent)
         finish()
+    }
+
+    private suspend fun chooseAccountPasskey(): Boolean = suspendCancellableCoroutine { continuation ->
+        val dialog = AlertDialog.Builder(this).setTitle(R.string.fido_account_passkey_title)
+            .setPositiveButton(R.string.fido_account_passkey_use) { _, _ -> if (continuation.isActive) continuation.resume(true) }
+            .setNegativeButton(R.string.fido_account_passkey_other) { _, _ -> if (continuation.isActive) continuation.resume(false) }
+            .setOnCancelListener { if (continuation.isActive) continuation.cancel() }.create()
+        continuation.invokeOnCancellation { dialog.dismiss() }
+        dialog.show()
+    }
+
+    @Deprecated("Legacy FIDO activity result ABI")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_ACCOUNT_PASSKEY) return
+        if (!accountRequestPending) { finishWithError(NOT_ALLOWED_ERR, "Passkey request expired"); return }
+        accountRequestPending = false
+        val credential = if (resultCode == RESULT_OK) runCatching {
+            PublicKeyCredential.deserializeFromBytes(data?.getByteArrayExtra(FIDO2_KEY_CREDENTIAL_EXTRA))
+        }.getOrNull() else null
+        if (credential == null) finishWithError(NOT_ALLOWED_ERR, "Passkey request cancelled")
+        // Account results must bypass local transport bookkeeping and its unpartitioned fido.db.
+        else finishWithCredential(credential)
     }
 
     fun shouldStartTransportInstantly(transport: Transport): Boolean {
@@ -382,17 +436,17 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
                 .start(options, callerPackage, pinRequested, authenticatorPin, credentialIdString)
             finishWithSuccessResponse(result.response, transport, result.user)
         } catch (e: SecurityException) {
-            Log.w(TAG, e)
+            Log.w(TAG, "FIDO transport rejected")
             if (instant) {
                 handleRequest(options, AllowedInstantLevel.PRESELECT)
             } else {
                 finishWithError(SECURITY_ERR, e.message ?: e.javaClass.simpleName)
             }
         } catch (e: CancellationException) {
-            Log.w(TAG, e)
+            Log.w(TAG, "FIDO transport cancelled")
             // Ignoring cancellation here
         } catch (e: RequestHandlingException) {
-            Log.w(TAG, e)
+            Log.w(TAG, "FIDO transport refused")
             finishWithError(e.errorCode, e.message ?: e.errorCode.name)
         } catch (e: MissingPinException) {
             // Redirect the user to ask for a PIN code
@@ -402,13 +456,13 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
             Toast.makeText(baseContext, R.string.fido_wrong_pin, Toast.LENGTH_LONG).show()
             navHostFragment.navController.navigate(R.id.openPinFragment)
         } catch (e: Exception) {
-            Log.w(TAG, e)
-            finishWithError(UNKNOWN_ERR, e.message ?: e.javaClass.simpleName)
+            Log.w(TAG, "FIDO transport failed")
+            finishWithError(UNKNOWN_ERR, "FIDO transport failed")
         }
     }
 
     override fun onStatusChanged(transport: Transport, status: String, extras: Bundle?) {
-        Log.d(TAG, "$transport status set to $status ($extras)")
+        Log.d(TAG, "FIDO transport status changed")
         try {
             for (callback in navHostFragment.childFragmentManager.fragments.filterIsInstance<TransportHandlerCallback>()) {
                 try {
@@ -441,6 +495,7 @@ class AuthenticatorActivity : AppCompatActivity(), TransportHandlerCallback {
     }
 
     companion object {
+        private const val REQUEST_ACCOUNT_PASSKEY = 6801
         const val KEY_SERVICE = "service"
         const val KEY_SOURCE = "source"
         const val KEY_TYPE = "type"

@@ -21,6 +21,9 @@ import java.util.Locale;
 
 @PublicApi
 public class Credential extends AutoSafeParcelable {
+    public static final String EXTRA_KEY = "com.google.android.gms.credentials.Credential";
+
+    @Override public String toString() { return "Credential[redacted]"; }
 
     @Field(1000)
     private int versionCode = 1;

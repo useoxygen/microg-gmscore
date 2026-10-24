@@ -10,6 +10,7 @@ apply plugin: 'signing'
 
 dependencies {
     api project(':play-services-fido')
+    testImplementation 'junit:junit:4.13.2'
 
     implementation project(':play-services-base-core')
     implementation project(':play-services-safetynet')

@@ -189,6 +189,7 @@ public class AuthManager {
     }
 
     public String peekAuthToken() {
+        if (service.startsWith("weblogin:")) return null;
         Log.d(TAG, "peekAuthToken: " + buildTokenKey());
         return getAccountManager().peekAuthToken(getAccount(), buildTokenKey());
     }
@@ -217,6 +218,7 @@ public class AuthManager {
     }
 
     public void setAuthToken(String service, String auth) {
+        if (service.startsWith("weblogin:")) return;
         getAccountManager().setAuthToken(getAccount(), buildTokenKey(service), auth);
         if (SDK_INT >= 26 && packageName != null && auth != null) {
             // Make account persistently visible as we already granted access
