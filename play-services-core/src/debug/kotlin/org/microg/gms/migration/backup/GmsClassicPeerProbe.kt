@@ -96,10 +96,10 @@ object GmsClassicPeerProbe {
                 val discovery = callback("IDiscoveryListener") { code,data -> if(code==2) { val record = requireNotNull(DctRecord.nullable(data,ClassicSchemas.found)); val endpoint = record.text(1)!!; targetPeer.set(endpoint); record.close(); call(target!!,2005,DctRecord(ClassicSchemas.request,mapOf(1 to result,4 to "Synthetic target",5 to endpoint,7 to targetLifecycle,8 to "Synthetic target".toByteArray()))) } }
                 call(target!!,2003,DctRecord(ClassicSchemas.discovery,mapOf(1 to result,3 to service,5 to DctRecord(ClassicSchemas.options,mapOf(1 to DctRecord(ClassicSchemas.strategy,mapOf(3 to 1,4 to 3)))),6 to discovery)))
                 check(targetConnected.await(45,TimeUnit.SECONDS)) { "Production GMS to Cyclon LAN connection timed out" }
-                call(target!!,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(targetPeer.get()),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to 712001L,2 to 1)+ClassicParcelBytes.fields(context.cacheDir,fixture)))))
+                call(target!!,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(targetPeer.get()),3 to DctRecord(ClassicSchemas.payload,mapOf<Int,Any>(1 to 712001L,2 to 1)+ClassicParcelBytes.fields(context.cacheDir,fixture)))))
                 // Target peer ID is captured from discovery, distinct from sourceEndpoint.
                 check(received.await(15,TimeUnit.SECONDS) && sourceBytesComplete.await(5,TimeUnit.SECONDS)) { "GMS did not receive exact synthetic bytes" }
-                call(source,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(sourceEndpoint.get()),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to 712002L,2 to 1)+ClassicParcelBytes.fields(context.cacheDir,fixture)))))
+                call(source,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(sourceEndpoint.get()),3 to DctRecord(ClassicSchemas.payload,mapOf<Int,Any>(1 to 712002L,2 to 1)+ClassicParcelBytes.fields(context.cacheDir,fixture)))))
                 check(echoed.await(15,TimeUnit.SECONDS) && targetBytesComplete.await(5,TimeUnit.SECONDS)) { "Cyclon did not receive exact synthetic bytes" }
                 fun streamTo(binder: IBinder, endpoint: String, id: Long) {
                     val pipe=ParcelFileDescriptor.createPipe(); val completion=ParcelFileDescriptor.createPipe()
