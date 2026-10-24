@@ -36,6 +36,10 @@ class ImportedContactConsentTest {
         assertTrue(ContactMigrationPrivacy(context).held)
         val api = ContactSyncService.contactsApi("synthetic-never-sent") { !ContactMigrationPrivacy(context).held }
         assertThrows(UploadDisabled::class.java) { api.create(JSONObject()) }
+        assertThrows(UploadDisabled::class.java) { api.delete("people/synthetic") }
+        assertThrows(UploadDisabled::class.java) {
+            api.update(org.microg.gms.people.sync.Person("people/synthetic", JSONObject()), setOf("names"), JSONObject())
+        }
         privacy.ownerResume(); assertFalse(ContactMigrationPrivacy(context).held)
     }
     @Test fun disabledImportUploadStopsAtTheActualHttpBoundary() {
