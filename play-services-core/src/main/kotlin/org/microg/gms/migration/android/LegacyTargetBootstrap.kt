@@ -126,7 +126,7 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
     private val payload = callback("IPayloadListener") { code,data ->
         if(code == 2) DctRecord.nullable(data,ClassicSchemas.received)?.use { value ->
             val content=value.obj(2)!!; require(content.int(2)==1)
-            val bytes=requireNotNull(content.bytes(3)).copyOf()
+            val bytes=ClassicParcelBytes.body(content)
             worker.execute { try {
                 val state=exchange.receive(bytes)
                 if(state == 2 || state == 4) {

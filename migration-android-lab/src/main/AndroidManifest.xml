@@ -12,5 +12,11 @@
     <application android:label="Synthetic migration lab" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".BootstrapActivity" android:exported="true" android:permission="android.permission.DUMP" />
         <activity android:name=".ProbeActivity" android:exported="true" android:permission="android.permission.DUMP" />
+
+        <provider android:name="org.microg.gms.migration.android.ClassicFileProvider"
+            android:authorities="${applicationId}.migration.classic.files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/classic_nearby_paths" />
+        </provider>
     </application>
 </manifest>

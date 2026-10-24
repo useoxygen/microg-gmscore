@@ -1691,6 +1691,12 @@
             android:exported="true" android:permission="android.permission.BACKUP">
             <intent-filter><action android:name="com.google.android.gms.smartdevice.OS_MIGRATION_CANCELLED" /></intent-filter>
         </receiver>
+
+        <provider android:name="org.microg.gms.migration.android.ClassicFileProvider"
+            android:authorities="${applicationId}.migration.classic.files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/classic_nearby_paths" />
+        </provider>
     </application>
 
 </manifest>

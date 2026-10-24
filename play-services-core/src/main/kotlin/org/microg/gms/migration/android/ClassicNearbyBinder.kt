@@ -31,7 +31,7 @@ internal object ClassicSchemas {
     val endpoint = mapOf(1 to S)
     val reject = mapOf(1 to C, 2 to S)
     val cancel = mapOf(1 to C, 2 to L)
-    val payload = mapOf(1 to L, 2 to I, 3 to B, 4 to DctRecord.Kind.Fd, 5 to S, 6 to L, 7 to DctRecord.Kind.Fd, 11 to obj { org.microg.gms.migration.nearby.DctSchemas.parcelBytes })
+    val payload = mapOf(1 to L, 2 to I, 3 to B, 4 to DctRecord.Kind.Fd, 5 to S, 6 to L, 7 to DctRecord.Kind.Fd, 8 to DctRecord.Kind.UriValue, 11 to obj { org.microg.gms.migration.nearby.DctSchemas.parcelBytes })
     val send = mapOf(1 to C, 2 to DctRecord.Kind.Strings, 3 to obj { payload })
     val started = mapOf(1 to I, 2 to S)
     val found = mapOf(1 to S, 2 to S, 3 to S, 5 to B, 6 to I)
@@ -48,6 +48,7 @@ internal object ClassicSchemas {
  * actual medium; connection success follows both UKEY2 acceptances. */
 internal class ClassicNearbyBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
     private val closed = AtomicBoolean(false)
+    private val ownerUid=uid
     private val workers = ThreadPoolExecutor(10,10,0,TimeUnit.MILLISECONDS,ArrayBlockingQueue(64),ThreadPoolExecutor.AbortPolicy())
     private val timer = Executors.newSingleThreadScheduledExecutor()
     private var radio: ClassicRadio? = null
@@ -163,7 +164,10 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 headers[header.id] = header
                 return when(header.type) {
                     PayloadTransferFrame.PayloadHeader.PayloadType.BYTES -> ByteArrayOutputStream().also { bytes[header.id] = it }
-                    PayloadTransferFrame.PayloadHeader.PayloadType.FILE -> { val folder = File(context.cacheDir,"classic-nearby").apply { check(exists() || mkdirs()) }; val file = File.createTempFile("incoming-",".payload",folder); files[header.id] = file; session.cacheFiles.add(file); delivered(header,mapOf(4 to ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY),5 to file.absolutePath)); FileOutputStream(file) }
+                    PayloadTransferFrame.PayloadHeader.PayloadType.FILE -> { val folder = File(context.cacheDir,"classic-nearby").apply { check(exists() || mkdirs()) }; val file = File.createTempFile("incoming-",".payload",folder); files[header.id] = file; session.cacheFiles.add(file)
+                        val uri=androidx.core.content.FileProvider.getUriForFile(context,context.packageName+".migration.classic.files",file)
+                        context.packageManager.getPackagesForUid(ownerUid)?.forEach { context.grantUriPermission(it,uri,android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                        delivered(header,mapOf(4 to ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY),5 to file.absolutePath,8 to uri)); FileOutputStream(file) }
                     PayloadTransferFrame.PayloadHeader.PayloadType.STREAM -> { val pipe = ParcelFileDescriptor.createPipe(); delivered(header,mapOf(4 to pipe[0])); DeadlineFdStreams.output(pipe[1]) }
                     else -> throw IOException("Unsupported payload")
                 }.also { session.outputs[header.id] = it }
@@ -242,11 +246,20 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
         if(type !in 1..3) { result(callback,ClassicStatus.PAYLOAD_TYPE); return }
         val wrapper=if(type==1)payload.obj(11)?.fields?.get(1) as? ParcelFileDescriptor else null
         val inline=if(type==1 && wrapper==null)requireNotNull(payload.bytes(3)).also { require(it.size<=ClassicParcelBytes.MAX_BYTES) } else null
-        val input: InputStream=if(inline!=null)ByteArrayInputStream(inline) else DeadlineFdStreams.input(ParcelFileDescriptor.dup(requireNotNull(wrapper ?: payload.fields[4] as? ParcelFileDescriptor).fileDescriptor))
+        val fileDescriptor=wrapper ?: payload.fields[4] as? ParcelFileDescriptor
+        val input: InputStream=if(inline!=null)ByteArrayInputStream(inline) else if(fileDescriptor!=null)DeadlineFdStreams.input(ParcelFileDescriptor.dup(fileDescriptor.fileDescriptor)) else {
+            val uri=payload.fields[8] as? android.net.Uri
+            if(type!=2 || uri?.scheme!="content") { result(callback,ClassicStatus.PAYLOAD_TYPE); return }
+            val provider=context.packageManager.resolveContentProvider(requireNotNull(uri.authority),0)
+            if(provider?.applicationInfo?.uid!=ownerUid && context.checkUriPermission(uri,-1,ownerUid,android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)!=android.content.pm.PackageManager.PERMISSION_GRANTED) { result(callback,13); return }
+            val owned=try { context.contentResolver.openFileDescriptor(uri,"r") } catch(_: Exception) { null }
+            if(owned==null) { result(callback,8013); return }
+            DeadlineFdStreams.input(owned)
+        }
         val completion=if(type==3)(payload.fields[7] as? ParcelFileDescriptor)?.let { DeadlineFdStreams.input(ParcelFileDescriptor.dup(it.fileDescriptor)) } else null
         val outgoing=Outgoing(input,completion)
         if(transfers.putIfAbsent(id,outgoing)!=null) { outgoing.close(); result(callback,ClassicStatus.PAYLOAD_UNKNOWN); return }
-        val declared=payload.long(6).takeIf { it>=0 } ?: -1
+        val declared=(payload.fields[6] as? Long)?.takeIf { it>=0 } ?: -1
         try { workers.execute {
             var offset=0L; var total=-1L
             val builder=PayloadTransferFrame.PayloadHeader.newBuilder().setId(id).setType(PayloadTransferFrame.PayloadHeader.PayloadType.forNumber(type))
