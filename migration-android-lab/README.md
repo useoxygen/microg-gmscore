@@ -28,3 +28,24 @@ tokens. `app_process` cannot substitute for an installed registered SDK client.
 This is a real production GMS wire peer on one device, **not** a stock
 SmartDevice bootstrap, Android Switch copy, installed Cyclon target, physical
 USB/BLE/WFD/hotspot, or BackupManager app restore test.
+
+
+A separate `BootstrapActivity` exercises the real stock-GMS SmartDevice source
+UI against our actual legacy target producer (NC_ID / PointToPoint). On the owned
+Google Play source emulator, start the lab Activity, wait for advertising, then
+open Google's normal exported setup entry:
+
+```sh
+adb -s AUTHORIZED_SERIAL shell am start -W -n org.microg.migration.lab/.BootstrapActivity
+adb -s AUTHORIZED_SERIAL shell am start -W -a com.google.android.gms.settings.SMART_DEVICE_DISCOVERY -p com.google.android.gms
+```
+
+Choose the synthetic target and confirm **only after comparing the code shown
+by both peers**. The lab keeps a private SHA256 diagnostic of its displayed code,
+never a raw token/secret log. `files/bootstrap-result.txt` reports stages, with
+`ACKNOWLEDGED_PERSISTED` after the actual source configuration and
+`SOURCE_COMPLETED` after the source's terminal message. No caller-supplied
+session or secret is injected. This passed on the account-free API35 Google Play
+emulator with production GMS26.41.31. It is still not an installed Switch copy or
+a Google-account transfer. Non-null unsolicited Wi-Fi provisioning and unsupported
+credential payloads fail honestly; JSON null is an absent nullable field.

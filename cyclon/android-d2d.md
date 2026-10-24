@@ -21,6 +21,7 @@ Implemented on top of B#36 and C#37:
   requires NETWORK_SETUP_WIZARD (debug DUMP). It creates a pairing, then opens
   Switch's Wi-Fi copy entry. **The setup host must launch this for a new Android
   pairing**: ACTION_LAUNCH_WIFI_D2D alone expects an existing retained session.
+  The child Switch intent forwards its real result and extras to the setup host.
   Pairing does not imply Google accounts or app data were transferred.
 - Classic Nearby200x routing remains separate from B's DCT300x path. Actual NSD
   LAN advertising/discovery, TCP, RFCOMM listeners/connections, regular FEF3 BLE
@@ -31,6 +32,8 @@ Implemented on top of B#36 and C#37:
   completion pipe, cancellation/error controls, client-death cleanup, deadlines
   and crypto sequence checks. FILE is announced before completion; its SUCCESS
   update gates consumption. BYTES uses a whole first DATA and separate empty LAST.
+  Large BYTES uses field11 ParcelByteArray; FILE supplies readable content URI8;
+  the optional producer status pipe uses0 for success and1 for failure.
 - Peer-offered LAN, Wi-Fi Direct and hotspot bandwidth upgrade joins, preserving
   UKEY2 encryption/counters through introduction/ACK and LAST_WRITE/SAFE_TO_CLOSE.
   Failure before handoff retains the old medium; failure after handoff closes it.
@@ -67,7 +70,10 @@ Known deviations and unverified gates:
 - Legacy Android200x is implemented; arbitrary classic use of v3/300x is not.
   Mixing classic and DCT in an active client is rejected. Payload ACK/safe-disconnect
   v2 and multiplexed sockets are not advertised; legacy encrypted sequencing stays.
-- No full real SmartDevice→Switch data copy, physical USB roles, genuine Google
+- The no-account SmartDevice bootstrap completed against Google's ordinary source
+  Discovery UI, with matching code and persisted acknowledgement. It does not
+  establish Switch's subsequent tx13/14/15/17 session or copy on an installed image.
+  No full SmartDevice→Switch data copy, physical USB roles, genuine Google
   account transfer, or installed app-agent restore has passed. Contacts/SMS/MMS,
   call logs, media, Wi-Fi/settings and app installs still need per-class receipts.
   Google Messages/RCS custom app API is separate from ordinary SMS/MMS import.
