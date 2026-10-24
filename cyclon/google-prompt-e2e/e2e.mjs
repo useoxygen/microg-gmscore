@@ -167,6 +167,8 @@ try {
     await page.getByText(/tap yes|get a notification|google prompt/i).first().click({ timeout: 10000 });
   }
   await page.getByText(/check your phone/i).first().waitFor({ timeout: 15000 });
+  // The challenge page's URL, read before the phone answers: Google may move on before the tap returns.
+  const promptUrl = page.url().split('?')[0];
   step('prompt requested', { url: page.url().split('?')[0], text: (await text(page)).match(/Google sent[^\n]*/)?.[0] });
 
   // Phone: one message's session goes received -> fetched -> shown. Other sessions (removal tickles, ignored
@@ -217,7 +219,6 @@ try {
   step('answered');
 
   // Browser: approval moves past "Check your phone"; denial ends on Google's refusal page.
-  const promptUrl = page.url().split('?')[0];
   let body;
   for (const end = Date.now() + 30000; Date.now() < end && !report.ok; await sleep(1000)) {
     body = await text(page);
