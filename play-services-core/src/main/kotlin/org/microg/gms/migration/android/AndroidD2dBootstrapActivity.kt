@@ -73,6 +73,7 @@ class AndroidD2dBootstrapActivity : Activity() {
         bootstrap?.close(); bootstrap=null
         try {
             startActivity(Intent("com.google.android.apps.restore.ACTION_LAUNCH_WIFI_D2D").setPackage(SWITCH_PACKAGE)
+                .addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
                 .putExtra("is_quick_start",true).putExtra("after_account",true))
             finish()
         } catch(_: Exception) { message.setText(com.google.android.gms.R.string.android_d2d_missing_switch) }
