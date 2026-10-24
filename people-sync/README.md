@@ -26,8 +26,10 @@ No unrelated research version, API key, Spatula header, cookie or custom user ag
 is copied. Reads/photos/groups/deletes use root context. **Create and UpdatePerson
 use only `getPeopleRequest.context.*`; root context makes UpdatePerson fail.**
 
-Rejected client requests (INVALID_ARGUMENT/400 or HTTP426) report **needs update**
-and pause automatic calls for that context without I/O retry failures. A changed
+A fixed read rejected with INVALID_ARGUMENT/400, or an explicit HTTP426 upgrade
+response, reports **needs update** and pauses automatic calls for that context
+without I/O retry failures. Mutation validation failures instead clear the journal,
+report a conflict and keep the dirty edit available for correction. A changed
 binding or explicit Sync now/enable permits one new attempt. Known expired cursors
 are handled first and restart a full read. Raw error bodies are never logged.
 
@@ -55,7 +57,10 @@ The mapper covers names/phonetics, phone/email, addresses, organizations, notes,
 birthdays, nicknames, websites, relations, events, IM/SIP and custom fields, plus
 photos, groups, memberships/My Contacts and starred. Unknown attributes in a
 changed repeated field, product/delegated memberships and merged-source updates
-are held for review rather than lost during whole-array replacement.
+are held for review rather than lost during whole-array replacement. Per-field
+generated annotations (including phone canonicalizedForm/uri and name display
+variants) do not block edits or enter write payloads; writable email displayName
+and free-form address formatting remain mapped.
 
 ## Two-way mutations and recovery
 
@@ -104,9 +109,13 @@ marker (the name is historical). Queries and mutations are scoped by account,
 type, dataset, owner and row version. Imports are read-only in Download only and
 editable in Two-way; system group metadata remains read-only. Separate durable
 private adoption floors exclude pre-existing unowned rows. Only new source-less
-rows for the enabled account above its floor can be adopted. Device/app rows and
-legacy public-owned rows/journals remain separate; no migration or relinking is
-guessed. Existing legacy imports may require explicit migration acceptance.
+rows for the enabled account above its floor can be adopted. Device/app rows
+remain separate. On the first private sync, clean legacy public-owned contacts and
+groups are removed atomically as the sync adapter, and cursors reset for a full
+private download. Any dirty/pending legacy row pauses import with **needs review**;
+no old edits or journals are discarded. Concurrent edits or group members outside
+the cleanup also prevent deletion. No remote identity matching/relinking is guessed.
+Public activation never succeeded in the live tests, so such imports are hypothetical.
 
 Contact and group cursors are independent and bound to the backend/projection.
 Production stages both cursors until the entire group/contact/photo pass finishes
@@ -148,11 +157,20 @@ behavior. Merged-source edits and unrepresented field edits deliberately hold;
 transformed lost photo replies remain uncertain. No atomic precondition was
 established for contact/photo deletion or photo replacement after the fresh read.
 
-File-as/linking (CYC-727), authenticated push (CYC-728), legacy migration and full
+File-as/linking (CYC-727), authenticated push (CYC-728) and full
 stock-GMS parity are outside this continuation. The owner-level default contact
 account is unchanged. No phones, installs, releases or merges were used here.
 
 ## Tests
+
+Review round 2 adds failing-before/passing-after coverage for generated private
+readback fields and contact/group validation rejections: **178 engine tests and
+11 focused Android host tests pass**, zero failures/errors/skips. Four host provider
+tests execute the actual cleanup assertions/deletes on synthetic rows, covering
+clean replacement, dirty/pending service refusal, a concurrent edit and protected
+group members. The combined MapboxDefaultDebug app/provider fixture assemblies and
+both Debug lint targets passed (`/tmp/cyc721-r2-final.log`). These tests do not
+execute the native ContactsProvider on a device.
 
 October 24, 2026 (PT), implementation head `8d4185b49`: **175 engine tests and
 7 focused ContactsPrivateProbeTest Android host tests passed**, zero failures,

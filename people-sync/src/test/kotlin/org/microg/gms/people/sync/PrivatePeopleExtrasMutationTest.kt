@@ -222,4 +222,20 @@ class PrivatePeopleExtrasMutationTest {
         assertEquals(1, uploads); assertTrue(store.row.contact.pending!!.getBoolean("conflict"))
     }
 
+    @Test fun mutationValidationRejectionClearsGroupJournalAndCorrectedNameCanSync() {
+        val store = GroupStoreMemory(); var reject = true; var writes = 0
+        val transport = HttpTransport { method, _, body ->
+            if (method == "GET") HttpReply(200, """{"nextSyncToken":"next"}""")
+            else {
+                writes++
+                if (reject) HttpReply(400, """{"error":{"status":"INVALID_ARGUMENT","message":"Invalid group name"}}""")
+                else groupReply(group(JSONObject(body!!).getJSONArray("groups").getJSONObject(0).getJSONObject("group").getJSONObject("name").getString("value")))
+            }
+        }
+        fun sync() = GroupsSync(PrivatePeopleApi(transport, context, { true }), store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, sync().conflicts); assertNull(store.row.pending); assertTrue(store.row.dirty); assertNull(store.token)
+        reject = false; store.row = store.row.copy(name = "Corrected name")
+        assertEquals(1, sync().uploaded); assertNull(store.row.pending); assertFalse(store.row.dirty); assertEquals(2, writes)
+    }
+
 }

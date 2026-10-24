@@ -26,6 +26,11 @@ class ContactSyncPreferences(context: Context, val account: Account) {
         if (!prefs.contains(prefix + "privateGroupAdoptionFloor")) edit.putLong(prefix + "privateGroupAdoptionFloor", groups)
         check(edit.commit())
     }
+    val privateLegacyCleanupComplete: Boolean get() = prefs.getBoolean(prefix + "privateLegacyCleanupComplete", false)
+    fun completePrivateLegacyCleanup() {
+        check(prefs.edit().putBoolean(prefix + "privateLegacyCleanupComplete", true)
+            .remove(prefix + "privateGroupBinding").remove(prefix + "privateGroupCheckpoint").commit())
+    }
     var groupCheckpoint: String?
         get() = prefs.getString(prefix + "groupCheckpoint-v1", null)
         set(value) { check(prefs.edit().putString(prefix + "groupCheckpoint-v1", value).commit()) }

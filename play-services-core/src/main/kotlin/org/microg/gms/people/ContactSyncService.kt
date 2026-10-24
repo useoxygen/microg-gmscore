@@ -34,6 +34,11 @@ class ContactSyncService : Service() {
                 var usedToken: String? = null
                 try {
                     val mode = prefs.mode
+                    if (!AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
+                            checkpointBinding = privatePeopleContext.binding).preparePrivateSync()) {
+                        prefs.status = "needs_review"
+                        return
+                    }
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
                     val currentMode = { if (prefs.mode == mode) mode else SyncMode.OFF }
