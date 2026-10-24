@@ -254,6 +254,10 @@ class TwoStepRouteTest {
         assertEquals(PROMPT_DEFAULT_TIMEOUT_MILLIS, promptTimeoutMillis(now + 30L * 24 * 3600_000, now))
         assertEquals(PROMPT_MIN_TIMEOUT_MILLIS, promptTimeoutMillis(now - 60_000, now))
         assertEquals(PROMPT_MAX_TIMEOUT_MILLIS, promptTimeoutMillis(now + 5 * 3600_000L, now))
+        // Only a usable expiry counts as used in the shown event.
+        assertNull(promptExpiryRemainingMillis(0, now))
+        assertNull(promptExpiryRemainingMillis(now + 30L * 24 * 3600_000, now))
+        assertEquals(-60_000L, promptExpiryRemainingMillis(now - 60_000, now))
     }
 
     @Test

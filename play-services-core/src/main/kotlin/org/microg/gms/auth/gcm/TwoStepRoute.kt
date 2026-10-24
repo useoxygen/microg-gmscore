@@ -29,18 +29,22 @@ internal const val PROMPT_MAX_TIMEOUT_MILLIS = 60 * 60 * 1000L
  * was never answered stayed until another prompt for the account was completed. The field's unit is not documented,
  * so seconds, milliseconds and microseconds since the epoch are told apart by size. A missing or implausible expiry
  * falls back to [PROMPT_DEFAULT_TIMEOUT_MILLIS]; the result is kept within one minute and one hour, so a skewed clock
- * neither hides a fresh prompt at once nor keeps it all day.
+ * neither hides a fresh prompt at once nor keeps it all day. Android applies the timeout from Android 8 (API 26); on
+ * older versions an unanswered prompt still stays until another prompt for the account is completed.
  */
-internal fun promptTimeoutMillis(expiryTime: Long?, nowMillis: Long): Long {
+internal fun promptTimeoutMillis(expiryTime: Long?, nowMillis: Long): Long =
+    promptExpiryRemainingMillis(expiryTime, nowMillis)?.coerceIn(PROMPT_MIN_TIMEOUT_MILLIS, PROMPT_MAX_TIMEOUT_MILLIS)
+        ?: PROMPT_DEFAULT_TIMEOUT_MILLIS
+
+/** Milliseconds until `expiryTime`, or null if it is missing or implausible (more than a day away). */
+internal fun promptExpiryRemainingMillis(expiryTime: Long?, nowMillis: Long): Long? {
     val expiryMillis = when {
-        expiryTime == null || expiryTime <= 0 -> return PROMPT_DEFAULT_TIMEOUT_MILLIS
+        expiryTime == null || expiryTime <= 0 -> return null
         expiryTime >= 100_000_000_000_000L -> expiryTime / 1000
         expiryTime >= 100_000_000_000L -> expiryTime
         else -> expiryTime * 1000
     }
-    val remaining = expiryMillis - nowMillis
-    if (remaining > 24 * PROMPT_MAX_TIMEOUT_MILLIS) return PROMPT_DEFAULT_TIMEOUT_MILLIS
-    return remaining.coerceIn(PROMPT_MIN_TIMEOUT_MILLIS, PROMPT_MAX_TIMEOUT_MILLIS)
+    return (expiryMillis - nowMillis).takeIf { it <= 24 * PROMPT_MAX_TIMEOUT_MILLIS }
 }
 
 internal enum class MatchFailure { NO_USER_ID, NO_ACCOUNT, AMBIGUOUS }
@@ -143,8 +147,10 @@ internal class TwoStepRoute<A>(
             when (show(account, notification)) {
                 ShowResult.SHOWN -> {
                     // Whole minutes until the notification times out, so a device test can see the expiry was used.
+                    // `expiry` says whether Google's expiry was usable or the default timeout applied.
                     val timeoutMinutes = promptTimeoutMillis(notification.expiryTime, now()) / 60_000
-                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMinutes, "expiry" to (notification.expiryTime != null))
+                    val expiryUsed = promptExpiryRemainingMillis(notification.expiryTime, now()) != null
+                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMinutes, "expiry" to expiryUsed)
                     // Upstream reports READY then COMPLETE right after display; COMPLETE is sent again when Google's
                     // page closes. Kept as is: the statuses' server meaning is not established (report §4).
                     reportReadState(session, account, notification, NOTIFICATION_STATUS_READY)
