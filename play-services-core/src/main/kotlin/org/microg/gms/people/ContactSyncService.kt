@@ -93,6 +93,27 @@ class ContactSyncService : Service() {
             return result.getString(AccountManager.KEY_AUTHTOKEN)?.takeIf { it.isNotBlank() }
                 ?: throw AuthenticatorException("Contacts authorization required")
         }
+        /** Fixed diagnostic GET. No provider/store, retries, redirects or borrowed API key. */
+        fun privatePeopleProbeGet(token: String, url: String): HttpReply {
+            require(url == PrivatePeopleProbe.url)
+            val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
+                .callTimeout(45, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
+            val request = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+            http.newCall(request).execute().use { response ->
+                val body = response.body ?: return HttpReply(response.code, "")
+                if (body.contentLength() > PrivatePeopleProbe.MAX_RESPONSE_BYTES) throw ProbeResponseTooLarge(response.code)
+                val out = java.io.ByteArrayOutputStream()
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(4096)
+                    while (true) {
+                        val count = input.read(buffer); if (count < 0) break
+                        if (out.size() + count > PrivatePeopleProbe.MAX_RESPONSE_BYTES) throw ProbeResponseTooLarge(response.code)
+                        out.write(buffer, 0, count)
+                    }
+                }
+                return HttpReply(response.code, out.toString("UTF-8"))
+            }
+        }
         fun contactsApi(token: String, canUpload: () -> Boolean): PeopleApi {
             val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
                 .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()

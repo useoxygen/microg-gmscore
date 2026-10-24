@@ -39,6 +39,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.microg.gms.people.sync.PrivatePeopleProbe
+import org.microg.gms.people.sync.PrivatePeopleVariant
+import org.microg.gms.people.sync.ProbeGrant
+import org.microg.gms.people.sync.ProbeIdentity
+import org.microg.gms.people.sync.HttpReply
 import org.microg.gms.people.sync.ContactsDiagnostics
 import org.microg.gms.people.sync.ActivationFailure
 import org.microg.gms.people.sync.ActivationStage
@@ -59,6 +64,8 @@ class ContactsSyncActivity : ComponentActivity() {
     private var failure: ActivationFailure? by mutableStateOf(null)
     private var revision by mutableStateOf(0)
     private var accessCheckResult by mutableStateOf<String?>(null)
+    internal var privateProbeAuthorization: (suspend (Account, PrivatePeopleVariant) -> ProbeGrant)? = null
+    internal var privateProbeGet: (suspend (String, String) -> HttpReply)? = null
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         waitingForPermission = false
         val choice = pending
@@ -141,6 +148,9 @@ class ContactsSyncActivity : ComponentActivity() {
                                     Text(stringResource(R.string.contacts_sync_check_two_way))
                                 }
                             }
+                            CyclonOutlinedButton(onClick = { checkPrivateAccess(account) }, enabled = !busy) {
+                                Text(stringResource(R.string.contacts_sync_check_private))
+                            }
                             if (prefs.mode != SyncMode.OFF) {
                                 Text(stringResource(when (prefs.status) {
                                     "partial" -> R.string.contacts_sync_partial
@@ -209,16 +219,45 @@ class ContactsSyncActivity : ComponentActivity() {
         }
         else authorize(account, mode)
     }
-    private suspend fun authToken(account: Account, mode: SyncMode): String = suspendCancellableCoroutine { continuation ->
-        Log.i("GmsContactSync", "stage=authorization oauth2:" + ContactSyncService.scope(mode))
-        val future = AccountManager.get(this).getAuthToken(account, "oauth2:" + ContactSyncService.scope(mode), null, this, { result ->
-            if (continuation.isActive) try {
-                val token = result.result.getString(AccountManager.KEY_AUTHTOKEN)
-                if (token.isNullOrBlank()) throw android.accounts.AuthenticatorException("Contacts authorization required")
-                continuation.resume(token)
-            } catch (e: Exception) { continuation.resumeWithException(e) }
+    private suspend fun authResult(account: Account, service: String, options: Bundle? = null): Bundle = suspendCancellableCoroutine { continuation ->
+        val future = AccountManager.get(this).getAuthToken(account, service, options, this, { result ->
+            if (continuation.isActive) try { continuation.resume(result.result) }
+            catch (e: Exception) { continuation.resumeWithException(e) }
         }, null)
         continuation.invokeOnCancellation { future.cancel(false) }
+    }
+    private suspend fun authToken(account: Account, mode: SyncMode): String {
+        Log.i("GmsContactSync", "stage=authorization oauth2:" + ContactSyncService.scope(mode))
+        return authResult(account, "oauth2:" + ContactSyncService.scope(mode)).getString(AccountManager.KEY_AUTHTOKEN)
+            ?.takeIf { it.isNotBlank() } ?: throw android.accounts.AuthenticatorException("Contacts authorization required")
+    }
+    // A separate entry point: no activation, provider, preferences or scheduling
+    // capability is passed into this diagnostic-only runner.
+    internal fun checkPrivateAccess(account: Account) {
+        failure = null; accessCheckResult = null; retryChoice = null; busy = true
+        lifecycleScope.launch {
+            try {
+                PrivatePeopleProbe.run(authorize = { variant ->
+                    try {
+                        withTimeout(60000) {
+                            privateProbeAuthorization?.invoke(account, variant) ?: run {
+                                val result = authResult(account, "oauth2:" + variant.scope.scope, Bundle().apply {
+                                    putBoolean(PrivatePeopleProbe.OPTION_PROBE, true)
+                                    putBoolean(PrivatePeopleProbe.OPTION_GMS_APP, variant.identity == ProbeIdentity.GMS_APP)
+                                })
+                                ProbeGrant(result.getString(AccountManager.KEY_AUTHTOKEN), result.getString(PrivatePeopleProbe.RESULT_AUTH))
+                            }
+                        }
+                    } catch (error: TimeoutCancellationException) { ProbeGrant(null, null) }
+                    catch (error: OperationCanceledException) { throw CancellationException("Private access check cancelled") }
+                }, get = { token, url ->
+                    privateProbeGet?.invoke(token, url) ?: withContext(Dispatchers.IO) { ContactSyncService.privatePeopleProbeGet(token, url) }
+                }, emit = { safe ->
+                    Log.i("GmsContactSync", safe)
+                    accessCheckResult = listOfNotNull(accessCheckResult, safe).joinToString("\n")
+                })
+            } finally { busy = false }
+        }
     }
     private fun checkAccess(account: Account, mode: SyncMode) {
         failure = null
