@@ -65,7 +65,7 @@ internal class EsimWireRecord private constructor(private val bytes: ByteArray) 
     override fun toString() = "EsimWireRecord[redacted]"
     override fun close() { bytes.fill(0) }
     companion object {
-        val CREATOR = object : Parcelable.Creator<EsimWireRecord> {
+        @JvmField val CREATOR = object : Parcelable.Creator<EsimWireRecord> {
             override fun createFromParcel(source: Parcel): EsimWireRecord {
                 val start = source.dataPosition(); val end = Reader.readObjectHeader(source)
                 require(end >= start && end <= source.dataSize() && end - start <= 256 * 1024)
