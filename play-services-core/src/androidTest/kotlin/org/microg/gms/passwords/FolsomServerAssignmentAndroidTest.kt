@@ -28,10 +28,10 @@ class FolsomServerAssignmentAndroidTest {
             check(com.google.android.gms.BuildConfig.DEBUG && Build.VERSION.SDK_INT >= 28 && Application.getProcessName() == "com.google.android.gms:ui")
             val run = arguments.getString("passwordAcceptanceRun") ?: throw SecurityException()
             PasswordAcceptanceAccounts.checked(run, "primary")
-            val selected = PasswordAcceptanceAccounts.resolve(context, run, "primary")
+            val selected = FolsomFlagsAcceptanceAccount.resolve(context, run)
             fun authorize() {
                 LegacyPasskeyTicketStore.system(context)
-                val current = PasswordAcceptanceAccounts.resolve(context, run, "primary")
+                val current = FolsomFlagsAcceptanceAccount.resolve(context, run)
                 check(current.accountId == selected.accountId && current.account == selected.account)
                 PasswordAcceptanceAccounts.verify(context, selected)
                 val lock = context.getSystemService(KeyguardManager::class.java)
