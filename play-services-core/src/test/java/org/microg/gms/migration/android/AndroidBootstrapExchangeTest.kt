@@ -78,6 +78,26 @@ class AndroidBootstrapExchangeTest {
         }
         assertNull(AndroidSessionStore(root).load(uid).hint())
     }
+    @Test fun binderBoundBeforeBootstrapReloadsNewSessionWithoutDeletingIt() {
+        val root=temp.newFolder(); val uid=Binder.getCallingUid()
+        val serviceStore=AndroidSessionStore(root)
+        AndroidTargetDeviceBinder(uid,serviceStore.load(uid),reload={ serviceStore.load(uid) }).use { target ->
+            AndroidSessionStore(root).commit(uid,AndroidPostSetupState.VerifiedBootstrap("111",ByteArray(32) { 7 }))
+            assertEquals("111",query(target,13,1,AndroidSetupSchemas.hint)!!.text(2))
+            assertNotNull(AndroidSessionStore(root).load(uid).hint())
+            AndroidSessionStore(root).commit(uid,AndroidPostSetupState.VerifiedBootstrap("222",ByteArray(32) { 8 }))
+            assertEquals("222",query(target,13,1,AndroidSetupSchemas.hint)!!.text(2))
+        }
+    }
+    @Test fun expiredReaderCannotDeleteAReplacementPairing() {
+        val root=temp.newFolder(); var clock=1000000L; val store=AndroidSessionStore(root) { clock }
+        store.commit(42,AndroidPostSetupState.VerifiedBootstrap("111",ByteArray(32) { 7 }))
+        val stale=store.load(42)
+        clock+=AndroidSessionStore.TTL+1
+        store.commit(42,AndroidPostSetupState.VerifiedBootstrap("222",ByteArray(32) { 8 }))
+        assertNull(stale.hint())
+        assertEquals("222",store.load(42).use { it.hint()!!.text(2) })
+    }
     @Test fun wrongPeerReplayOrUnacknowledgedRequestCannotPersistASecret() {
         var commits = 0
         AndroidBootstrapExchange(token) { commits++; it.close() }.use { exchange ->

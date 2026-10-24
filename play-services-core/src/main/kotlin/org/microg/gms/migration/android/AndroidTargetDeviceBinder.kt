@@ -25,7 +25,13 @@ internal class AndroidTargetDeviceBinder(
     override fun dispatch(transaction: Int, data: Parcel, reply: Parcel?): Boolean {
         val code = if (direct) when (transaction) { 1 -> 10; 2 -> 11; else -> return false } else transaction
         if (code !in setOf(1, 2, 3, 4, 5, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)) return false
-        if(code in listOf(13,14,15,17) && state.hint() == null && reload != null) { state.close(); state = reload.invoke() }
+        if(reload != null && (code==13 || (code in listOf(14,15,17) && state.hint()==null))) {
+            val latest=reload.invoke()
+            val old=state.hint(); val fresh=latest.hint()
+            val same=old?.text(2)==fresh?.text(2) && java.security.MessageDigest.isEqual(old?.bytes(3),fresh?.bytes(3))
+            old?.bytes(3)?.fill(0); fresh?.bytes(3)?.fill(0)
+            if(same)latest.close() else { state.close(); state=latest }
+        }
         if (code == 4) {
             data.skipSafeParcelable(); data.skipApiMetadata(); data.requireEnd()
             reply?.writeNoException(); reply?.writeString(bootstrap?.name ?: advertisingName())

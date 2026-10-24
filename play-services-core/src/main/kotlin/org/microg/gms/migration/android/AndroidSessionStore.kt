@@ -10,8 +10,8 @@ import java.io.*
  * Files contain secrets and must not be copied into diagnostics or logged. */
 internal class AndroidSessionStore(private val directory: File, private val now: () -> Long = System::currentTimeMillis) {
     private fun file(uid: Int): AtomicFile { require(uid >= 0); return AtomicFile(File(directory,"session-$uid")) }
-    @Synchronized fun clear(uid: Int) { file(uid).delete() }
-    @Synchronized fun load(uid: Int): AndroidPostSetupState {
+    fun clear(uid: Int) = synchronized(LOCK) { file(uid).delete() }
+    fun load(uid: Int): AndroidPostSetupState = synchronized(LOCK) {
         var expiryTime = 0L
         val retained = runCatching {
             val f = file(uid); require(f.baseFile.length() in 1..256)
@@ -24,9 +24,9 @@ internal class AndroidSessionStore(private val directory: File, private val now:
                 try { AndroidPostSetupState.VerifiedBootstrap(id,secret) } finally { secret.fill(0) }
             }
         }.getOrElse { clear(uid); null }
-        return AndroidPostSetupState(retained, { clear(uid) }, { now() < expiryTime })
+        AndroidPostSetupState(retained, { clear(uid) }, { now() < expiryTime })
     }
-    @Synchronized fun commit(uid: Int, session: AndroidPostSetupState.VerifiedBootstrap) {
+    fun commit(uid: Int, session: AndroidPostSetupState.VerifiedBootstrap) = synchronized(LOCK) {
         check(directory.exists() || directory.mkdirs())
         val hint = session.hint(); val secret = requireNotNull(hint.bytes(3)); val id = requireNotNull(hint.text(2)); require(id.toLong() > 0)
         val target = file(uid); val stream = target.startWrite()
@@ -38,6 +38,9 @@ internal class AndroidSessionStore(private val directory: File, private val now:
         } catch(e: Throwable) { target.failWrite(stream); target.delete(); throw e }
         finally { secret.fill(0); session.close() }
     }
-    companion object { // GMS26.41.31 keev.n: shared_secret_valid_seconds=432000.
+    companion object {
+        // Activity and service use different store instances in the same process.
+        private val LOCK=Any()
+        // GMS26.41.31 keev.n: shared_secret_valid_seconds=432000.
         const val TTL = 432000L*1000 }
 }

@@ -18,7 +18,7 @@ internal class AndroidPostSetupState(private var session: VerifiedBootstrap? = n
         override fun close() { closed = true; secret.fill(0) }
     }
     private var handshake: PostSetupTargetHandshake? = null
-    @Synchronized fun hint(): DctRecord? { if(!valid()) clearRetained(); return session?.hint() }
+    @Synchronized fun hint(): DctRecord? { if(session!=null && !valid()) close(); return session?.hint() }
     @Synchronized fun start(): ByteArray? {
         if(hint() == null) return null
         val retained = session ?: return null
