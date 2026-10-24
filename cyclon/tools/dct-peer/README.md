@@ -47,3 +47,39 @@ Other debug-only probe modes: omit `mode` for bounded local PAKE TLS1.3 loopback
 session-only prototype with no active radio/data flow. The activity requires
 DUMP at its exported entry, refuses `user` OS builds, and is absent from release
 APKs. Credentials are not written to logs or persisted.
+
+## PAKE TLS and HTTP harness (round 2)
+
+`pake-peer.cc` implements a bounded, real SPAKE2+ TLS1.3 proxy using only the
+public BoringSSL APIs at the spec pin. It does not copy Google's implementation.
+Clone BoringSSL outside the checkout, check out
+`90c6b370770adce64ff435789bfd1940067df415`, then build with two workers:
+
+```sh
+cyclon/tools/dct-peer/build-pake.sh /absolute/boringssl /absolute/output
+python3 cyclon/tools/dct-peer/http-peer.py --self-test
+python3 cyclon/tools/dct-peer/http-peer.py --self-test --pake-peer /absolute/output/pake-peer
+```
+
+The native self-test checks a correct PAKE TLS1.3 exchange and rejects wrong
+password, server identity, context and ordinary certificate TLS. The HTTP test
+checks control/capability framing, challenge/token/ACK **shapes**, notification
+replay until ACK, empty POST, application paths and multipart metadata/bytes. The
+second test carries those bytes through two real PAKE TLS proxies. Apple
+attestation and the test token in this host fixture are explicitly synthetic;
+no token verdict or iPhone acceptance is verified.
+
+A credentials file has exactly the six-character synthetic session on line1 and
+password on line2, with permissions0600. The proxy refuses broader permissions
+and never receives credentials on its command line. `--server` listens for PAKE
+and forwards decrypted HTTP to a local fixture; `--client` listens for local
+cleartext HTTP and connects to a PAKE server. Both need explicit numeric listen
+address/port and target host/port. Runs stop accepting after60seconds, bound
+concurrency/handshake attempts, and close failed connections.
+
+See [the device test script](../../android-switch-wireless-test.md) for the
+`MigrationLabActivity --es mode peer` adb-reverse probe and negative platform-PAKE
+probe. These are debug-only and use public synthetic credentials. They bridge
+Android's actual platform PAKE provider to this Mac peer without pretending that
+macOS supplies iPhone Bluetooth IPv6 or Wi-Fi Aware APIs. Radio/Aware and real
+Apple enforcement still require the iPhone.
