@@ -25,21 +25,25 @@ internal enum class TwoStepEvent {
     IGNORED,
     /** The GNOTS payload was missing or could not be decoded. */
     MALFORMED,
-    /** The notification is flagged active; this route does not show those (behaviour inherited from upstream). */
-    ALREADY_ACTIVE,
     /** No single local account matches the notification's Google user id. */
     ACCOUNT_NOT_MATCHED,
     FETCH_FAILED,
     FETCHED,
     /** The fetched notification lacks the content or the confirmation page's intent. */
     NOT_SHOWABLE,
+    /** Google's expiry leaves too little time to answer, so the prompt is not shown (as Google Play services does). */
+    EXPIRED,
     /** The owner blocked this app's notifications or the prompt channel. */
     NOTIFICATIONS_BLOCKED,
     SHOWN,
     /** Reporting a read state to GNOTS failed; the notification itself was shown. */
     READ_STATE_FAILED,
-    /** Google's confirmation page closed and the shown notifications were completed. */
-    COMPLETED,
+    /** The owner opened a prompt; it was reported as opened and taken down. */
+    OPENED,
+    /** The owner swiped a prompt away; it was reported as dismissed. */
+    DISMISSED,
+    /** Google asked to take a prompt down (answered elsewhere or withdrawn); `count` is how many were removed. */
+    DISMISSED_REMOTE,
     /** GmsCore's own push message could not be handed to the route. */
     DISPATCH_DROPPED,
 }

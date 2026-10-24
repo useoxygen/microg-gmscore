@@ -34,15 +34,17 @@ class TwoStepRouteTest {
     private val fetchedFor = mutableListOf<String>()
     private val shownFor = mutableListOf<String>()
     private val readStates = mutableListOf<Pair<String, Int>>()
+    private val dismissed = mutableListOf<String>()
     private val sleeps = mutableListOf<Long>()
 
     private val route = TwoStepRoute<String>(
         diagnostics = diagnostics,
         enabled = { enabled },
         accounts = { accounts },
-        fetch = { account, _ -> fetchedFor += account; fetchResults.removeAt(0)() },
+        fetch = { account, _ -> fetchedFor += account; GnotsFetch(fetchResults.removeAt(0)(), null) },
         setReadState = { account, _, status -> readStates += account to status },
-        show = { account, _ -> shownFor += account; showResult },
+        show = { account, _, _ -> shownFor += account; showResult },
+        dismiss = { id -> dismissed += id; 1 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         sleep = { sleeps += it },
     )
@@ -69,7 +71,8 @@ class TwoStepRouteTest {
 
         assertEquals(listOf(ownerEmail), fetchedFor)
         assertEquals(listOf(ownerEmail), shownFor)
-        assertEquals(listOf(ownerEmail to NOTIFICATION_STATUS_READY, ownerEmail to NOTIFICATION_STATUS_COMPLETE), readStates)
+        // Like Google Play services: one "shown" report; upstream's 2 then 5 told Google the prompt was dismissed.
+        assertEquals(listOf(ownerEmail to NOTIFICATION_STATUS_SHOWN), readStates)
         assertEquals(listOf("received", "fetched", "shown"), events())
         val session = logs.first().substringAfter("session=").substringBefore(' ')
         assertTrue(logs.all { it.contains("session=$session") })
@@ -163,14 +166,23 @@ class TwoStepRouteTest {
     }
 
     @Test
-    fun activeNotificationsAreSkippedAndRecorded() {
+    fun aRemovalTickleTakesTheShownPromptDown() {
         route.route(GMS_GCM_NOTIFICATIONS, tickle(active = true))
+
+        assertEquals(listOf(uniqueId), dismissed)
+        assertTrue(fetchedFor.isEmpty())
+        assertEquals(listOf("received", "dismissed_remote"), events())
+        assertTrue(logs.last().endsWith("count=1"))
+    }
+
+    @Test
+    fun fetchedNotificationsFlaggedForRemovalTakeTheShownPromptDown() {
         fetchResults += { listOf(fetched.copy(isActive = true)) }
         route.route(GMS_GCM_NOTIFICATIONS, tickle())
 
-        assertEquals(1, fetchedFor.size)
         assertTrue(shownFor.isEmpty())
-        assertEquals(listOf("stage=tickle", "stage=fetched"), logs.filter { it.startsWith("event=already_active") }.map { it.substringAfterLast(' ') })
+        assertEquals(listOf(uniqueId), dismissed)
+        assertTrue(logs.last(), logs.last().contains("event=dismissed_remote") && logs.last().contains("stage=fetched"))
     }
 
     @Test
@@ -220,13 +232,16 @@ class TwoStepRouteTest {
     }
 
     @Test
-    fun readStatesFollowUpstream() {
-        val complete = readStateItems(fetched, NOTIFICATION_STATUS_COMPLETE)!!.single()
-        assertEquals(NOTIFICATION_STATUS_COMPLETE, complete.status)
-        assertNull(complete.state)
-        assertEquals("approve", readStateItems(fetched, NOTIFICATION_STATUS_READY)!!.single().state)
-        assertNull(readStateItems(fetched.copy(content = fetched.content!!.copy(actionButtons = emptyList())), NOTIFICATION_STATUS_READY))
-        assertNull(readStateItems(fetched.copy(identifier = NotificationIdentifier(uniqueId = "")), NOTIFICATION_STATUS_COMPLETE))
+    fun readStatesFollowGooglePlayServices() {
+        for (status in listOf(NOTIFICATION_STATUS_SHOWN, NOTIFICATION_STATUS_OPENED, NOTIFICATION_STATUS_DISMISSED)) {
+            val item = readStateItems(fetched.identifier, status)!!.single()
+            assertEquals(status, item.status)
+            assertEquals(uniqueId, item.notification?.uniqueId)
+            assertNull(item.state)
+        }
+        assertEquals(listOf(4, 2, 5), listOf(NOTIFICATION_STATUS_SHOWN, NOTIFICATION_STATUS_OPENED, NOTIFICATION_STATUS_DISMISSED))
+        assertNull(readStateItems(NotificationIdentifier(uniqueId = ""), NOTIFICATION_STATUS_SHOWN))
+        assertNull(readStateItems(null, NOTIFICATION_STATUS_SHOWN))
     }
 
     @Test
@@ -238,6 +253,90 @@ class TwoStepRouteTest {
         assertFalse(mayGrantOwnPushPermission(gms, gms, twoStepOn = false, gcmEnabled = true, knownToMicroG = false))
         assertFalse(mayGrantOwnPushPermission(gms, gms, twoStepOn = true, gcmEnabled = false, knownToMicroG = false))
         assertFalse(mayGrantOwnPushPermission(gms, gms, twoStepOn = true, gcmEnabled = true, knownToMicroG = true))
+    }
+
+    @Test
+    fun promptsTimeOutAtGooglesExpiry() {
+        val now = 1_792_800_000_000L
+        val inFiveMinutesUs = (now + 5 * 60_000) * 1000
+        // Microseconds, as Google Play services reads the field.
+        assertEquals(5 * 60_000L, promptTimeoutMillis(inFiveMinutesUs, now))
+        // Missing or implausible values (wrong unit, decades off, a month ahead) fall back to the default.
+        for (expiry in listOf(null, 0L, 1L, (now + 5 * 60_000) / 1000, now + 5 * 60_000, (now + 30L * 24 * 3600_000) * 1000)) {
+            assertEquals("$expiry", PROMPT_DEFAULT_TIMEOUT_MILLIS, promptTimeoutMillis(expiry, now))
+        }
+        // Recently expired or far but plausible values are clamped.
+        assertEquals(PROMPT_MIN_TIMEOUT_MILLIS, promptTimeoutMillis((now - 60_000) * 1000, now))
+        assertEquals(PROMPT_MAX_TIMEOUT_MILLIS, promptTimeoutMillis((now + 5 * 3600_000L) * 1000, now))
+        assertNull(promptExpiryRemainingMillis(1, now))
+        assertEquals(-60_000L, promptExpiryRemainingMillis((now - 60_000) * 1000, now))
+    }
+
+    @Test
+    fun onlyGooglesServerTimeDecidesThatAPromptExpired() {
+        val server = 1_792_800_000_000L
+        assertTrue(promptExpired((server + 5_000) * 1000, server))
+        assertTrue(promptExpired((server + 10_000) * 1000, server))
+        assertFalse(promptExpired((server + 10_001) * 1000, server))
+        // Without server time nothing is skipped, and an implausible expiry is never "expired".
+        assertFalse(promptExpired((server - 60_000) * 1000, null))
+        assertFalse(promptExpired(1, server))
+        assertFalse(promptExpired(null, server))
+    }
+
+    private fun routeWithClock(now: Long, expiryUs: Long?, timeouts: MutableList<Long>, fetchServerTime: Long? = null) = TwoStepRoute<String>(
+        diagnostics = diagnostics,
+        enabled = { true },
+        accounts = { accounts },
+        fetch = { _, _ -> GnotsFetch(listOf(fetched.copy(expiryTime = expiryUs)), fetchServerTime) },
+        setReadState = { _, _, _ -> },
+        show = { _, _, timeout -> timeouts += timeout; ShowResult.SHOWN },
+        dismiss = { 0 },
+        decodeBase64 = { Base64.getUrlDecoder().decode(it) },
+        now = { now },
+    )
+
+    @Test
+    fun theShownEventRecordsTheTimeoutInMinutes() {
+        val server = 1_792_800_000_000L
+        val timeouts = mutableListOf<Long>()
+        routeWithClock(server, (server + 3 * 60_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
+        assertEquals(listOf(3 * 60_000L), timeouts)
+        assertTrue(logs.last(), logs.last().endsWith("timeout_min=3 expiry=true server_time=true"))
+    }
+
+    @Test
+    fun aPhoneClockRunningAheadNeitherHidesNorShortensAPrompt() {
+        val server = 1_792_800_000_000L
+        val timeouts = mutableListOf<Long>()
+        // Five minutes of real validity, phone six minutes ahead: shown, and timed out after five minutes.
+        routeWithClock(server + 6 * 60_000, (server + 5 * 60_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
+        assertEquals(listOf(5 * 60_000L), timeouts)
+        assertEquals("shown", events().last())
+    }
+
+    @Test
+    fun aLateDeliveredPushIsJudgedByTheFetchsServerTime() {
+        val sent = 1_792_800_000_000L
+        val fetchedAt = sent + 4 * 60_000 + 55_000
+        val timeouts = mutableListOf<Long>()
+        // Valid for five minutes when sent, delivered 4m55s later: the fetch's server time says 5 s are left.
+        routeWithClock(fetchedAt, (sent + 5 * 60_000) * 1000, timeouts, fetchServerTime = fetchedAt).route(GMS_GCM_NOTIFICATIONS, tickle(), sent)
+        assertTrue(timeouts.isEmpty())
+        assertEquals("expired", events().last())
+        // Two minutes late: shown, timing out after the three minutes left.
+        logs.clear()
+        routeWithClock(sent + 2 * 60_000, (sent + 5 * 60_000) * 1000, timeouts, fetchServerTime = sent + 2 * 60_000).route(GMS_GCM_NOTIFICATIONS, tickle(), sent)
+        assertEquals(listOf(3 * 60_000L), timeouts)
+    }
+
+    @Test
+    fun promptsAboutToExpireAreNotShown() {
+        val server = 1_792_800_000_000L
+        val timeouts = mutableListOf<Long>()
+        routeWithClock(server, (server + 5_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
+        assertTrue(timeouts.isEmpty())
+        assertEquals(listOf("received", "fetched", "expired"), events())
     }
 
     @Test

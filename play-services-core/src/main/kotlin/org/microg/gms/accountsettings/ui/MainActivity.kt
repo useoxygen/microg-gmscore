@@ -1,4 +1,5 @@
-// Modified by Cyclon in 2026: log extra names only; prompt extras and account names stay out of logs.
+// Modified by Cyclon in 2026: log extra names only; prompt extras and account names stay out of logs; a Google prompt
+// is reported as opened once, when its page opens.
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -49,6 +50,7 @@ import org.microg.gms.accountsettings.ui.bridge.OcUdcBridge
 import org.microg.gms.accountsettings.ui.bridge.OcUiBridge
 import org.microg.gms.auth.AuthConstants
 import org.microg.gms.auth.gcm.ACTION_GCM_NOTIFY_COMPLETE
+import org.microg.gms.auth.gcm.EXTRA_GNOTS_IDENTIFIER
 import org.microg.gms.common.Constants
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.gcm.EXTRA_NOTIFICATION_ACCOUNT
@@ -59,6 +61,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 private const val TAG = "AccountSettings"
+private const val STATE_VERIFY_NOTIFICATION_REPORTED = "verifyNotificationReported"
 
 // TODO: There likely is some API to figure those out...
 private val SCREEN_ID_TO_URL = hashMapOf(
@@ -210,6 +213,10 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "No account, going without!")
         }
 
+        // Opened from a Google prompt notification: report it as opened now, as Google Play services does on tap.
+        verifyNotificationReported = savedInstanceState?.getBoolean(STATE_VERIFY_NOTIFICATION_REPORTED) ?: false
+        intent.getStringExtra(EXTRA_ACCOUNT_NAME)?.let { updateVerifyNotification(it) }
+
         if (screenId in SCREEN_ID_TO_URL) {
             val screenUrl = screenUrl ?: SCREEN_ID_TO_URL[screenId]?.run {
                 if (screenId == 547 && !product.isNullOrEmpty()) {
@@ -329,13 +336,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
+    private var verifyNotificationReported = false
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_VERIFY_NOTIFICATION_REPORTED, verifyNotificationReported)
+    }
+
+    /** Reports the Google prompt this page was opened from as opened, once; later calls (page close) do nothing. */
     fun updateVerifyNotification(accountName: String) {
         val notificationId = intent.getIntExtra(KEY_NOTIFICATION_ID, -1)
         Log.d(TAG, "updateVerifyNotification: notificationId: $notificationId")
-        if (notificationId == -1) return
+        if (notificationId == -1 || verifyNotificationReported) return
+        verifyNotificationReported = true
         Intent(ACTION_GCM_NOTIFY_COMPLETE).apply {
             setPackage(GMS_PACKAGE_NAME)
             putExtra(EXTRA_NOTIFICATION_ACCOUNT, accountName)
+            putExtra(KEY_NOTIFICATION_ID, notificationId)
+            putExtra(EXTRA_GNOTS_IDENTIFIER, intent.getStringExtra(EXTRA_GNOTS_IDENTIFIER))
         }.let { sendBroadcast(it) }
     }
 }

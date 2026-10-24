@@ -1457,6 +1457,7 @@
             <intent-filter>
                 <action android:name="org.microg.gms.gcm.MESSAGE_RECEIVE" />
                 <action android:name="org.microg.gms.gcm.NOTIFY_COMPLETE" />
+                <action android:name="org.microg.gms.gcm.TWO_STEP_DISMISSED" />
             </intent-filter>
         </receiver>
 
