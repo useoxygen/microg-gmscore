@@ -14,6 +14,13 @@ class ContactSyncPreferences(context: Context, val account: Account) {
         get() = runCatching { SyncMode.valueOf(prefs.getString(prefix + "mode", "OFF")!!) }.getOrDefault(SyncMode.OFF)
         private set(value) { check(prefs.edit().putString(prefix + "mode", value.name).commit()) }
     val adoptionFloor: Long get() = prefs.getLong(prefix + "adoptionFloor", Long.MAX_VALUE)
+    val groupAdoptionFloor: Long? get() = if (prefs.contains(prefix + "groupAdoptionFloor")) prefs.getLong(prefix + "groupAdoptionFloor", Long.MAX_VALUE) else null
+    fun initializeGroupFloor(floor: Long) {
+        if (groupAdoptionFloor == null) check(prefs.edit().putLong(prefix + "groupAdoptionFloor", floor).commit())
+    }
+    var groupCheckpoint: String?
+        get() = prefs.getString(prefix + "groupCheckpoint-v1", null)
+        set(value) { check(prefs.edit().putString(prefix + "groupCheckpoint-v1", value).commit()) }
     var status: String
         get() = prefs.getString(prefix + "status", "")!!
         set(value) { prefs.edit().putString(prefix + "status", value).apply() }
@@ -24,11 +31,12 @@ class ContactSyncPreferences(context: Context, val account: Account) {
         get() = prefs.getLong(prefix + "lastSuccess", 0)
         set(value) { prefs.edit().putLong(prefix + "lastSuccess", value).apply() }
 
-    fun configure(value: SyncMode, floor: Long) {
+    fun configure(value: SyncMode, floor: Long, groupFloor: Long? = null) {
         // Pre-existing unowned account rows are never adopted by enabling sync.
         if (value != SyncMode.OFF && !prefs.contains(prefix + "adoptionFloor")) {
             check(prefs.edit().putLong(prefix + "adoptionFloor", floor).commit())
         }
+        if (value != SyncMode.OFF && groupFloor != null) initializeGroupFloor(groupFloor)
         mode = value
         ContentResolver.setIsSyncable(account, AUTHORITY, if (value == SyncMode.OFF) 0 else 1)
         ContentResolver.setSyncAutomatically(account, AUTHORITY, value != SyncMode.OFF)

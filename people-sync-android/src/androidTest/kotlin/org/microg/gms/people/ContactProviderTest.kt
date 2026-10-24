@@ -7,7 +7,6 @@ import android.accounts.AccountManager
 import android.content.pm.PackageManager
 import android.content.ContentUris
 import android.content.ContentValues
-import android.os.Build
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
@@ -23,7 +22,6 @@ import org.junit.runner.RunWith
 import org.junit.rules.ExternalResource
 import org.microg.gms.people.sync.*
 import java.util.UUID
-import java.io.File
 
 /** Real Contacts Provider, mock remote service; physical devices require explicit serial opt-in. */
 @RunWith(AndroidJUnit4::class)
@@ -73,27 +71,8 @@ class ContactProviderTest {
         }
         override fun delete(resource: String) { writes++; remote = null; afterWrite?.invoke() }
     }
-    private fun approvedDevice(): Boolean {
-        if (Build.HARDWARE in listOf("ranchu", "goldfish")) return true
-        // Default runs still refuse physical phones. The caller must supply the
-        // exact connected serial, and the phone must be a development build.
-        if (Build.TYPE !in listOf("userdebug", "eng") || Build.VERSION.SDK_INT < 29) return false
-        val arguments = InstrumentationRegistry.getArguments()
-        val expected = arguments.getString("physicalDeviceSerial")
-            ?.takeIf { it.isNotBlank() } ?: return false
-        val nonce = arguments.getString("physicalDeviceNonce")?.takeIf { it.isNotBlank() } ?: return false
-        // The serial-pinned host runner reads ro.serialno through ADB and writes
-        // a fresh, one-run proof into this debug APK's private storage. Avoid
-        // UiAutomation entirely so another agent can retain its screen connection.
-        return runCatching {
-            val proof = JSONObject(File(context.filesDir, "physical-device-authorization.json").readText())
-            val age = System.currentTimeMillis() - proof.getLong("createdAt")
-            proof.getString("serial") == expected && proof.getString("nonce") == nonce &&
-                proof.getString("fingerprint") == Build.FINGERPRINT && age in 0..300_000
-        }.getOrDefault(false)
-    }
     @Before fun setup() {
-        check(context.packageName == "org.microg.gms.people.sync.android.test" && approvedDevice()) {
+        check(context.packageName == "org.microg.gms.people.sync.android.test" && FixtureDeviceApproval.approved(context)) {
             "Fixture tests require an emulator or an explicitly selected development phone"
         }
         account = Account("fixture-" + UUID.randomUUID(), "org.microg.gms.contacts.fixture")

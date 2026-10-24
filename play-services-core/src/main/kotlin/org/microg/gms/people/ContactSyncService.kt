@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.SyncResult
 import android.os.Bundle
 import android.util.Log
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -35,9 +36,14 @@ class ContactSyncService : Service() {
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
                     val api = contactsApi(token) { prefs.mode == SyncMode.TWO_WAY && mode == SyncMode.TWO_WAY }
-                    val store = AndroidContactStore(provider, account, prefs)
+                    val groups = AndroidGroupStore(provider, account, prefs)
+                    groups.initialize()
+                    val groupReport = GroupsSync(api, groups) { prefs.mode }.sync()
+                    val store = AndroidContactStore(provider, account, prefs, groups, api)
                     store.configureMode()
-                    val report = ContactsSync(api, store) { prefs.mode }.sync()
+                    val contactReport = ContactsSync(api, store) { prefs.mode }.sync()
+                    val photoReport = PhotosSync(api, api, store) { prefs.mode }.sync()
+                    val report = groupReport + contactReport + photoReport
                     result.stats.numEntries += report.downloaded
                     result.stats.numUpdates += report.uploaded
                     result.stats.numParseExceptions += report.skipped
@@ -99,7 +105,26 @@ class ContactSyncService : Service() {
                     HttpReply(response.code, response.body?.string().orEmpty(),
                         response.header("Retry-After")?.toLongOrNull()?.coerceAtLeast(0) ?: 0)
                 }
-            }, canUpload)
+            }, canUpload, PhotoTransport { url ->
+                // Photo URLs are Google-hosted, but account bearer credentials
+                // belong only on the People API origin. Redirects stay disabled.
+                val photoUrl = url.toHttpUrl().newBuilder().setQueryParameter("sz", "1024").build()
+                http.newCall(Request.Builder().url(photoUrl).get().build()).execute().use { response ->
+                    if (response.code in listOf(403, 404)) throw UnreadableContact()
+                    if (!response.isSuccessful) throw ApiException(response.code)
+                    val body = response.body ?: throw UnreadableContact()
+                    if (body.contentLength() > ContactPhotos.MAX_BYTES) throw UnreadableContact()
+                    body.byteStream().use { input ->
+                        val out = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer); if (count < 0) break
+                            if (out.size() + count > ContactPhotos.MAX_BYTES) throw UnreadableContact()
+                            out.write(buffer, 0, count)
+                        }
+                        out.toByteArray()
+                    }
+                }
+            })
         }
     }
 }

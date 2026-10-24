@@ -99,7 +99,7 @@ class PeopleApiTest {
     @Test fun unsafeResourceAndUnsupportedFieldMaskAreRejected() {
         val api = PeopleApi(HttpTransport { _, _, _ -> error("Unexpected transport") }) { true }
         assertThrows(IllegalArgumentException::class.java) { api.delete("people/a?access_token=x") }
-        assertThrows(IllegalArgumentException::class.java) { api.update(person(), setOf("memberships"), JSONObject()) }
+        assertThrows(IllegalArgumentException::class.java) { api.update(person(), setOf("photos"), JSONObject()) }
     }
     @Test fun profileOnlyOrMissingEtagIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {

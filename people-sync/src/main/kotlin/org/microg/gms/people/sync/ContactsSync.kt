@@ -9,7 +9,7 @@ import java.util.UUID
 typealias Fields = Map<String, String>
 data class LocalContact(val id: Long, val version: Long, val resource: String?, val etag: String?,
     val fields: Fields, val baseline: Fields, val dirty: Boolean, val deleted: Boolean,
-    val pending: JSONObject? = null, val unsupported: Boolean = false)
+    val pending: JSONObject? = null, val unsupported: Boolean = false, val hasPhoto: Boolean = false, val photoRevision: String? = null)
 
 interface ContactStore {
     fun checkpoint(): String?
@@ -118,6 +118,7 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
 
         for (existing in store.contacts().filter { it.dirty || it.pending != null }) try {
             if (existing.resource in snapshot.unreadable || existing.deleted && skipped > 0) continue
+            if (existing.pending?.optString("kind") == "photo") continue // PhotosSync owns this durable operation.
             if (existing.pending != null) {
                 val pending = existing.pending
                 val resolved = when (pending.getString("kind")) {
@@ -149,7 +150,8 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
             }
             if (mode() != SyncMode.TWO_WAY) { conflicts++; continue }
             if (existing.unsupported && !existing.deleted) { conflicts++; continue }
-            if (!existing.deleted && existing.fields.values.all { it == "[]" }) { conflicts++; continue }
+            if (!existing.deleted && existing.fields.filterKeys { it != "memberships" }.values.all { it == "[]" } && !existing.hasPhoto &&
+                (existing.resource == null || existing.baseline.filterKeys { it != "memberships" }.values.any { it != "[]" })) { conflicts++; continue }
             if (existing.resource == null && existing.deleted) {
                 store.remove(existing) // A never-uploaded local tombstone.
                 continue
@@ -164,8 +166,9 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
             }.toSet()
             if (latest != null) {
                 val remoteFields = store.project(latest)
-                if (existing.deleted && latest.etag != existing.etag || changed.any {
-                    (remoteFields[it] ?: "[]") != (existing.baseline[it] ?: "[]") &&
+                if (existing.deleted && (latest.etag != existing.etag || existing.photoRevision != null &&
+                    ContactPhotos.revision(latest) != existing.photoRevision) || changed.any {
+                    it != "memberships" && (remoteFields[it] ?: "[]") != (existing.baseline[it] ?: "[]") &&
                         (remoteFields[it] ?: "[]") != (existing.fields[it] ?: "[]")
                 }) { conflicts++; continue }
                 if (!existing.deleted && changed.isEmpty()) {
@@ -176,14 +179,19 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
             val kind = if (existing.deleted) "delete" else if (latest == null) "create" else "update"
             var payload = fieldsJson(existing.fields, if (kind == "create") existing.fields.keys else changed)
             if (kind == "update") {
-                try { payload = PeopleApi.retainUnmapped(latest!!, changed, payload) }
-                catch (e: UnsupportedContactEdit) { conflicts++; continue }
+                try {
+                    if ("memberships" in changed) payload.put("memberships", JSONArray(Memberships.merge(
+                        existing.baseline["memberships"], existing.fields["memberships"], store.project(latest!!)["memberships"])))
+                    payload = PeopleApi.retainUnmapped(latest!!, changed, payload)
+                } catch (e: UnsupportedContactEdit) { conflicts++; continue }
             }
             val creationId = UUID.randomUUID().toString()
             if (kind == "create") payload.put("clientData", JSONArray().put(JSONObject()
                 .put("key", Person.CREATE_KEY).put("value", creationId)))
+            val expected = existing.fields.toMutableMap()
+            if ("memberships" in changed && payload.has("memberships")) expected["memberships"] = Memberships.field(Memberships.resources(Person("", payload)))
             val pending = JSONObject().put("kind", kind).put("creationId", creationId)
-                .put("resource", existing.resource).put("expected", fieldsJson(existing.fields, changed))
+                .put("resource", existing.resource).put("expected", fieldsJson(expected, changed))
                 .put("local", fieldsJson(existing.fields, existing.fields.keys))
             val journaled = store.begin(existing, pending)
             try {

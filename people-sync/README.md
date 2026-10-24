@@ -25,7 +25,9 @@ that account whose IDs exceed the initial opt-in baseline. Existing unowned
 rows, Device imports, and other apps' raw contacts remain outside this set.
 Remote identifiers, etags, baselines, and pending uploads are stored in the
 owned raw contacts' sync columns. Provider updates assert the observed row
-version and use `CALLER_IS_SYNCADAPTER`; checkpoints advance only after writes.
+version and use `CALLER_IS_SYNCADAPTER`. Contact and group metadata checkpoints
+advance after durable provider writes; per-row photo work and photo journals
+remain retryable independently of those metadata checkpoints.
 
 ## Sync and recovery
 
@@ -52,6 +54,57 @@ version and use `CALLER_IS_SYNCADAPTER`; checkpoints advance only after writes.
   implementation checks the latest etag before deleting, but cannot make that
   read and remote deletion atomic against another client.
 
+## Photos and groups
+
+`ContactSyncService` runs group metadata/lifecycle sync, contact fields and
+memberships, then photos, serially for the authenticated account.
+
+Photos use the documented `updateContactPhoto` / `deleteContactPhoto` endpoints,
+not the ordinary person update mask. Only non-default CONTACT-source images
+are managed; public profile/default avatars are not written back. Downloads
+accept HTTPS Google image origins with redirects disabled and never send the
+People API bearer token to an image host. Reads are bounded to 4 MiB. Downloads
+request 1024 pixels; bounded decoding and JPEG encoding keep the provider photo
+blob at most 256 KiB. An atomic provider batch asserts the raw-contact version,
+replaces the photo and records its baseline; ContactsProvider generates the
+display image/thumbnail. Uploads read the provider display-photo stream, with a
+thumbnail fallback. Provider row nonce/DATA_VERSION baselines distinguish a
+user edit from provider recompression. Source revisions and image hashes detect
+changes even when Google reuses a URL, while text-only changes avoid image rewrites.
+After a confirmed mutation, canonical-image read failure leaves a pending read,
+not a pending mutation or a reason to replay the upload.
+
+Each photo mutation is journaled in the raw-contact SYNC3 column before dispatch,
+with the action, submitted image hash and local row token. A reply acknowledges
+only the sent token, retaining subsequent local photo/text edits and contact
+tombstones. Lost delete replies reconcile against fresh absence; lost upload
+replies reconcile against exact image-byte equality. **If Google transforms the
+bytes and equality cannot prove the result, the operation remains uncertain;
+it is never automatically replayed over a possible cloud edit.** Photo endpoints
+have no etag precondition, so a direct read/conflict check cannot eliminate the
+race with another client between that read and the mutation. These are explicit
+acceptance limits, not a claim of atomic remote photo writes.
+
+Groups use their own paginated/incremental checkpoint and provider Groups
+SYNC1–4 columns for etag, title baseline, mutation journal and ownership. New
+local groups are adopted only after a separate per-account group-ID baseline;
+existing unowned groups are not name-matched or adopted. Creates include a
+unique clientData marker. Unknown create replies reconcile only against one
+matching marker in a complete read, never by label name and never by a second
+POST. Renames preserve concurrent local changes. Deletion explicitly sends
+`deleteContacts=false`; local cascading removal atomically refuses edited,
+pending or unowned member rows, including members added after discovery.
+
+Owned system groups are read-only: My Contacts maps AUTO_ADD and starred maps
+FAVORITES / raw-contact STARRED. Contact memberships use account-scoped group
+IDs and public resource names. A missing group can be resolved by direct get
+when a list lags. Independent membership additions/removals merge as sets,
+including edits made during upload; a merge removing every membership is held
+as a conflict. Removing the last local label falls back to My Contacts because
+the public API requires at least one membership. Pre-mapping owned rows with
+unrepresented native membership edits remain preserved for review rather than
+being silently interpreted or uploaded.
+
 ## Current scope and release acceptance
 
 Mapped fields are names, phone numbers, email addresses, postal addresses,
@@ -59,9 +112,9 @@ organizations, plain-text notes, complete or year-less birthdays, nicknames,
 websites, relations, events/anniversaries, IM clients/protocols, SIP addresses,
 and user-defined fields, including preferred-value flags. Dates remain ASCII
 ISO strings regardless of the device locale; invalid or partially represented
-events cannot be silently replaced by another event edit. Photo and label
-synchronization, file-as, contact merge/alias handling, and guided conflict
-resolution remain future work.
+events cannot be silently replaced by another event edit. Contact photos,
+labels, My Contacts membership and starred state are also mapped. File-as,
+contact merge/alias handling and guided conflict resolution remain future work.
 Unmapped cloud fields are excluded from update masks. Unsupported local edits
 are preserved rather than acknowledged as uploaded. Imported Device contacts
 are not automatically migrated or retired.
@@ -110,8 +163,8 @@ account in two-way mode. The editor remains responsible for the user's default
 account choice. Existing hourly periodic scheduling and OS dirty-row uploads
 remain; private Chime/GCM registration is not implemented.
 
-Required remaining work is photos, label/group lifecycle and starred mapping,
-remote linking/file-as, a supported push trigger, actual Google grants/round trips,
+Required remaining work is remote linking/file-as, a supported push trigger,
+actual Google grants/round trips,
 and device/provider/editor acceptance. Device/SIM backup and Google-only portal,
 consent migrations, social fields and calling-card services are outside the
 basic account sync implementation. No Device contacts are imported automatically.
@@ -124,7 +177,7 @@ basic account sync implementation. No Device contacts are imported automatically
 ./gradlew :people-sync-android:assembleDebugAndroidTest
 ```
 
-`ContactProviderTest` runs on an isolated emulator with a standalone library
+`ContactProviderTest` and `ContactExtrasProviderTest` run on an isolated emulator with a standalone library
 test APK and synthetic `org.microg.gms.contacts.fixture` accounts. GmsCore uses
 the same Android library for its provider integration. Fixture tests use a mock
 remote service, write the real Android Contacts Provider, and refuse physical phones by default.
@@ -173,3 +226,8 @@ does not replace the installed GmsCore or enable account sync.
 - [Delete contacts](https://developers.google.com/people/api/rest/v1/people/deleteContact)
 - [Android Contacts Provider](https://developer.android.com/identity/providers/contacts-provider)
 - [Android authorization](https://developer.android.com/identity/authorization)
+
+- [Contact photos](https://developers.google.com/people/api/rest/v1/people/updateContactPhoto)
+- [Contact groups](https://developers.google.com/people/api/rest/v1/contactGroups)
+- [Membership semantics](https://developers.google.com/people/api/rest/v1/people#ContactGroupMembership)
+- [AOSP photo version and provider processing](https://android.googlesource.com/platform/packages/providers/ContactsProvider/+/refs/heads/main/src/com/android/providers/contacts/ContactsDatabaseHelper.java)

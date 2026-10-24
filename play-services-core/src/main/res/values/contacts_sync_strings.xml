@@ -6,7 +6,7 @@
     <string name="contacts_sync_off">Off</string>
     <string name="contacts_sync_download">Download only</string>
     <string name="contacts_sync_two_way">Two-way sync</string>
-    <string name="contacts_sync_two_way_consent">Allow changes to contacts in this Google account to be uploaded, including new contacts and deletions. Existing Device contacts will not be uploaded. Names, numbers, email addresses, postal addresses, organizations, notes, birthdays, events, relations, IM, SIP, custom fields, nicknames and websites are supported. Photos and labels are not yet synchronized. Conflicting edits are kept for review.</string>
+    <string name="contacts_sync_two_way_consent">Allow changes to contacts in this Google account to be uploaded, including new contacts and deletions. Existing Device contacts will not be uploaded. Names, numbers, email addresses, postal addresses, organizations, notes, birthdays, events, relations, IM, SIP, custom fields, nicknames and websites are supported. Photos, labels, My Contacts membership and starred contacts are also synchronized. Conflicting edits are kept for review.</string>
     <string name="contacts_sync_enable">Enable</string>
     <string name="contacts_sync_no_accounts">Add a Google account in microG first.</string>
     <string name="contacts_sync_enable_failed">Contacts access could not be enabled. Check the permission request, Google authorization and connection, then try again.</string>

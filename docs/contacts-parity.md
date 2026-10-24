@@ -164,37 +164,62 @@ The actual grant and backend remedy remain unproven until that check is run.
 
 ## Implementation status of this draft
 
-Implemented: per-entry quarantine and partial reports; held checkpoints and pull
-deletion fences; unreadable direct-read isolation; extended relations/events/IM/
-SIP/user-defined mappings; ASCII and validated dates; safe auth/API status/reason
-diagnostics; minimal-GET-only scope checks before configuration; settings intent
-entry points; new-contact editor with selected-account extra. Journaling, unique
-create markers, no automatic replay of uncertain creates, row-version checks,
-actual requesting identity and separate opt-in modes are retained. Expanding the
-read mask invalidates old checkpoints through the existing stored-mask check.
+Implemented: per-entry quarantine and partial reports; held metadata checkpoints
+and pull-deletion fences; unreadable direct-read isolation; extended field and
+date mappings; safe auth/API diagnostics; non-enabling scope checks; settings
+and selected-account editor entry points. The same draft now implements contact
+photo download/upload/delete, groups/labels, My Contacts and starred, including
+provider code and durable mutation recovery. See `people-sync/README.md` for the
+state layout and recovery rules.
 
-Not implemented in this draft: private FSA2 wire client or a grant/root-cause fix,
-photos, groups/labels/starred, remote merge/alias semantics, file-as writes, and
-authenticated Chime/GCM registration. These remain required CYC-721 scope; this
-draft must not be used as a parity or device-acceptance verdict. A backend choice
-cannot be justified by the missing incident log or by the disposable master-login
-failure. Photo/group mutation design still needs journaling, unknown-outcome
-recovery and provider/editor tests for the selected backend.
+Photo operations have independent per-row durable work: metadata checkpoints
+can advance after their provider writes while a photo hint or upload journal
+remains pending. Photo mutations use dedicated endpoints, bounded images,
+provider display-photo reads and atomic photo/baseline writes. Unknown upload
+replies require exact readback equality; transformed or different readback stays
+uncertain without automatic replay. The endpoint has no etag precondition, so
+the direct preflight check does not eliminate concurrent-cloud-write races.
 
-Remaining work is tracked under CYC-721 in CYC-725 (photos), CYC-726
-(labels/starred), CYC-727 (file-as/linking), CYC-728 (push), and CYC-729
-(real grants and device acceptance). CYC-645 is addressed by the quarantine
-implementation but is not complete until that change is reviewed and merged.
+Group creates carry unique clientData markers; loss recovery never name-matches
+or repeats a create. Group metadata has a separate checkpoint and journal.
+Deleting a label never requests contact deletion. Provider group deletion guards
+its cascading member changes atomically and preserves edited/unowned rows.
+Memberships and starred merge as sets, including concurrent local/cloud changes;
+pre-mapping native edits and invalid empty membership merges remain preserved.
+All mutation paths keep mode checks, actual client identity, row assertions,
+no transparent retries and separate read-only/two-way consent. Expanded read
+masks invalidate old metadata checkpoints through the existing mask check.
+
+Not implemented: private FSA2 wire client or a grant/root-cause fix; remote
+merge/alias and file-as writes (CYC-727); authenticated Chime/GCM registration
+(CYC-728). Actual grants and device/provider/editor acceptance remain CYC-729.
+CYC-725/726 now have implementation on PR #39 and remain subject to review,
+merge and acceptance. CYC-721 must not be described as full stock parity or a
+proven real-account activation fix.
 
 ## Validation receipt
 
-61 engine/API JVM tests passed with zero failures/errors/skips. The two-check
-isolated original-source harness failed both cases at 57b45c03 and passed both
-against this implementation. The CI MapboxDefaultDebug APK and the provider-test
-APK assembled. The first full APK packaging attempt failed without a diagnostic
-cause; the stacktrace retry and final verification succeeded. Android provider
-instrumentation was compiled, not executed. No phone/emulator or live Google
-API was accessed by this implementation task; no grant/root-cause, signed
-delivery, installation or device acceptance is established. Logs and proof
-sources are under `/Users/thomas/research/cyc721-contacts/` (`verification.log`,
-`build-final.log`, `baseline-proof/`).
+Final photo/group validation is recorded in
+`/Users/thomas/research/cyc721-contacts/photos-groups-final-verification.log`.
+All 117 engine tests passed (zero failures/errors/skips); the CI Mapbox Default
+Debug app and provider instrumentation APK built successfully. All 21 provider
+fixtures were compiled only. The prior two-check original-source harness fails at 57b45c03 and passes after
+the quarantine fix (`baseline-proof/`). New fixtures cover provider photos,
+version baselines, loss/restart/concurrent edits, group IDs and lifecycle,
+My Contacts/starred, protected members and pre-mapping preservation. Provider
+instrumentation is compiled, not executed. No phone/emulator or live Google
+API was accessed by this implementation task; no grant/root-cause, release
+signing, installation or device acceptance is established.
+
+The API extension was checked against current official People v1 discovery
+schemas (`people-v1-discovery.json` in the research folder) and documentation:
+- https://developers.google.com/people/api/rest/v1/people/updateContactPhoto
+- https://developers.google.com/people/api/rest/v1/people/deleteContactPhoto
+- https://developers.google.com/people/api/rest/v1/contactGroups
+- https://developers.google.com/people/api/rest/v1/people#ContactGroupMembership
+
+AOSP provider evidence is saved under `provider-source/`: data rows initialize
+DATA_VERSION to 0 and increment on updates; Photo handling preprocesses images
+before insertion and creates the display file/thumbnail. Group insertion and raw
+insertion suppress app auto-membership behavior for sync-adapter calls. The
+implementation still replaces memberships explicitly within its guarded batch.

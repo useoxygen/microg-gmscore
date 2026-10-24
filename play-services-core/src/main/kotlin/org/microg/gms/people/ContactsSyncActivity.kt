@@ -257,11 +257,16 @@ class ContactsSyncActivity : ComponentActivity() {
                             "${RawContacts._ID} DESC")?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
                             ?: throw IllegalStateException("Contacts provider unavailable")
                     }
+                    val groupFloor = withContext(Dispatchers.IO) {
+                        contentResolver.query(ContactsContract.Groups.CONTENT_URI, arrayOf(ContactsContract.Groups._ID), null, null,
+                            "${ContactsContract.Groups._ID} DESC")?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                            ?: throw IllegalStateException("Contacts groups unavailable")
+                    }
                     // Return to the lifecycle-owned coroutine before committing the choice.
                     // A cancelled/recreated screen must not enable scheduling from an old IO task.
                     if (!AccountManager.get(this@ContactsSyncActivity).getAccountsByType(account.type).contains(account))
                         throw ActivationAccountRemoved()
-                    ContactSyncPreferences(this@ContactsSyncActivity, account).configure(mode, floor)
+                    ContactSyncPreferences(this@ContactsSyncActivity, account).configure(mode, floor, groupFloor)
                 }
                 retryChoice = null
                 revision++
