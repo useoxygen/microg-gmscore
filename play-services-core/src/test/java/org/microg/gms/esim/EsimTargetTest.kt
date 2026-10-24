@@ -60,6 +60,9 @@ class EsimTargetTest {
             val changed = wire.replace(mapOf(1 to { parcel -> Writer.write(parcel, 1, "changed", false) }))
             changed.use { assertEquals("future-carrier-field", it.text(199)); assertEquals("changed", it.text(1)); assertFalse(it.toString().contains("changed")) }
         }
+        EsimWireRecord.build { it.writeInt(0xffff0002.toInt()); it.writeInt(4); it.writeInt(Int.MAX_VALUE) }.use { malicious ->
+            assertThrows(IllegalArgumentException::class.java) { malicious.list(2) }
+        }
         val parcel = Parcel.obtain()
         try { parcel.writeInt(0xffff4f45.toInt()); parcel.writeInt(Int.MAX_VALUE); parcel.setDataPosition(0)
             assertThrows(RuntimeException::class.java) { EsimWireRecord.CREATOR.createFromParcel(parcel) } }

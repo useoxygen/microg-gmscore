@@ -28,7 +28,18 @@ internal class EsimWireRecord private constructor(private val bytes: ByteArray) 
     fun int(id: Int, default: Int = 0): Int = field(id, default) { p, h -> Reader.readInt(p, h) }
     fun long(id: Int, default: Long = 0): Long = field(id, default) { p, h -> Reader.readLong(p, h) }
     fun bool(id: Int): Boolean = field(id, false) { p, h -> Reader.readBool(p, h) }
-    fun list(id: Int): List<EsimWireRecord> = field(id, emptyList<EsimWireRecord>()) { p, h -> Reader.readParcelableList(p, h, CREATOR) ?: emptyList() }
+    fun list(id: Int): List<EsimWireRecord> = field(id, emptyList<EsimWireRecord>()) { p, h ->
+        val original = p.dataPosition()
+        val size = if (h ushr 16 == 0xffff) p.readInt() else h ushr 16
+        if (size != 0) {
+            require(size >= 4)
+            val count = p.readInt()
+            // Bound allocation before Parcel.createTypedArrayList sees peer-controlled count.
+            require(count in -1..1024 && count.coerceAtLeast(0) <= (size - 4) / 4)
+        }
+        p.setDataPosition(original)
+        Reader.readParcelableList(p, h, CREATOR) ?: emptyList()
+    }
     fun obj(id: Int): EsimWireRecord? = field(id, null as EsimWireRecord?) { p, h -> Reader.readParcelable(p, h, CREATOR) }
     fun replace(fields: Map<Int, (Parcel) -> Unit>): EsimWireRecord {
         val source = Parcel.obtain()
