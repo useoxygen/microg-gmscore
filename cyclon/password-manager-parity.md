@@ -5,6 +5,160 @@ This is a development implementation. It is not a full-parity or deployment verd
 The machine-readable inventory is [password-manager-parity.json](password-manager-parity.json).
 No decompiled proprietary sources, APKs, account identifiers or credentials are checked in.
 
+## Latest gathered result: R11, October 24, 2026
+
+Services runtime `3c9f9eef` / test source `c2a1eb33` passed **878 host tests**
+(434 password-sync, 13 FIDO Core, 372 Services Core, 42 people, 17 calendar),
+zero failures/errors/skips, all four Debug/Release Services/vending lint tasks
+with zero errors, and both APK builds. The primary three-module count is 819.
+Existing warnings remain 2,074/2,068 for Services and 84 each for vending; minSdk19,
+permissions and runtime enforcement were retained, with no lint baseline.
+Receipt: `/tmp/cyc689-parity-r11-20261023/services-gathered-results.json`.
+
+The signed Services product is **installed and hash-verified**, SHA-256
+`dc642be89cdf2c04e1accffb95509d5982ef68d439cf544fb2833e1ae7b666c1`,
+132,356,981 bytes. Its matching signed test APK is SHA-256
+`154c06a97abcb9623b11762f5ddf3253064e98b08208d6a36e84d71a0a927625`,
+2,113,688 bytes. Expected certificates and all 3,286/85 non-META-INF entries
+match the tested unsigned product/test payloads. A first streamed installation
+timed out; the old hash/bytes and absence of active sessions were reconciled before
+an explicit no-streaming retry passed. This was not an automatic resend of an
+unknown installation outcome.
+
+Physical R11 instrumentation passed **26/26 methods**: 22 ordinary Android fixtures
+and four flags-authority regressions, zero failures/skips. The separate cached
+inventory passed: one stable candidate scanned; zero readable enabled vaults,
+approved fixtures, sharing fixtures, blocked or unreadable caches. That does not
+prove peer absence. Cached flags admission refused before provider calls or vault
+enablement; no real Google assignment was accepted. These outcomes are separately
+scoped in `/tmp/cyc689-parity-r11-20261023/android-gathered-results.json`; they do
+not turn the admission refusal into a pass or establish provider interoperability.
+The preserved R10 `97f5`/`e9b...` and `0c376a85` receipts below are unchanged.
+
+A separate chat reported a GMS remove/reinstall at **11:44 PM PT on October 23**, with UID `10143` → `10237` and all GMS local accounts/check-in/push/settings/credential-provider data erased; a same-label account was readded at 11:54 PM PT. This preceded R11. Its account-label reuse does not establish stable cloud identity, and no GMS-data or provider-state continuity from R10 is claimed. R11 inventory zeros describe post-reset local readiness, not cloud-password absence or proof about a second account. The owner/five-setting comparisons below apply only within R11.
+
+Core PR `0ba6bb459` is pushed, merging main `d0be4887a` and repairing the stale
+generated tools inventory. Clean **3,175 JVM cases** passed (20 protocol,
+1,988 runtime, 111 Core, 1,056 Shell), plus **196 Core Python cases in 567.827s**,
+85 Shell Python, two ShellUi Python, 21 coverage cases and the capability ledger.
+Selected hosted Select/Python/cloud/timing-bench/final CI is green; skipped Android
+lanes are covered by the separate manual JVM run. These results are distinct from
+R10's 3,168/3,169 plus focused repair.
+
+The complete controller built with pinned Kotlin2.2.21, 1,051,311 bytes, SHA-256
+`9f63cd0d2c48e5c0f9df57df352fd02829466a2afaf31f918c50350ea0cc2701`.
+Core32/r5 is **signed but not installed**, SHA-256
+`8b7eaa2ddda01fba8e3d52b7e68f5547e6d604fa34b1c445406578a6680f46af`,
+29,706,896 bytes; all 136 non-META-INF entries match its tested unsigned APK.
+Read-only guarded preflight from Core31 to Core32 passed the expected privileged
+image, signer and grant checks. This is not installation or paired-component
+acceptance. Full signing receipt: `/tmp/cyc689-parity-r11-20261023/verified-artifacts.json`.
+
+The exact `a348f600b` controller TE compiled in the donor's full lynx
+`selinux_policy` target in **7m32s**, normal neverallows enforced with no ignore/`-N`
+waiver. TE SHA-256 `fede8ef656e794df3f9a5440cb8e38ce968610724b33a3f53001fbe6287eba20`
+is unchanged in `0ba6bb459`. Product CIL
+`aeae3df449020a6b1170f3070995e8ef19f72ccc2f28f8317cfe52553ba37822` contains both
+service-find additions; combined policy SHA-256 is
+`c4dc0a44c13d4d8cde95f49d1c6fbaba7f1f82a450207de844446a052fe30cbd`.
+The earlier framework/vendor mismatch names were samples: the exact archived
+baseline comparison found **31 donor differences**. The archived lynx manifest's
+1,246 pins, signed target-files fingerprint and controller were verified; all 30
+missing pins are covered by 36 generation/SHA-pinned bundles with base objects
+available. A matching-image build plan was investigated, but **no matching image
+was assembled or accepted and no physical policy overlay was applied**. Donor
+compilation is host proof only; never flash Akita artifacts on lynx.
+
+Final readback at **12:21:36 AM PT** verified new Services retained, Core31 and the
+original `3b32...` controller unchanged, owner status 181 bytes/SHA-256 `6ff4...`
+and all five raw settings unchanged, the same R11 boot, adbd2000, enforcing SELinux
+and verity, and all test packages absent. No Core/controller/policy change or R11
+native-fill attempt occurred. Readback: `/tmp/cyc689-parity-r11-20261023/device-after.json`.
+Claims `c6d133b`, `c21ca12` and `a50b6b5` were released; claim status is empty.
+Core32/controller pairing and physical fill remain open. Research PR #1166 merged
+as `335c8a47` on October 23 at 11:57 PM PT after 14 fresh tests and `go vet`;
+broad CYC-651 remains In Progress. Five private RPC contracts, real cohorts,
+provider/official-client, family and cross-device acceptance remain open.
+Full parity is false.
+
+## Preserved R10 gathered and physical receipt: late October 23, 2026
+
+The following is the completed R10 snapshot, not a fresh R11 device readback or
+validation of the newer Services/Core32 artifacts. Its sources and outcomes remain
+separately scoped.
+
+Services runtime `97f5` passed **809 host tests**: 434 password-sync, 13 FIDO Core
+and 362 Services Core, with both Services APK builds passing. Matching test source
+`97f5` passed the **22 physical Android fixtures**; later test-only source
+`0c376a85` adds the separately recorded flags-selection checks. The cached peer
+inventory passed with **zero enabled/readable candidates**; blocked, disabled or
+unreadable caches are not proof that no eligible account or peer exists. Four
+flags-selection regressions passed. The one cached-only account admission attempt
+failed before HTTP or vault enablement, so no Google server assignment was fetched
+or accepted.
+
+Physical native framework save to **On this device** now passed. Exact local
+cleanup positively deleted one matching synthetic row, then a recreated row was
+finally deleted with count one again. Unrelated local entries stayed unchanged,
+and the exact row is absent at this snapshot. These are positive local save/delete
+receipts, separate from the historical count-zero cleanup below.
+
+Physical Core commands were dispatched, but native **PREPARE** refused with
+`precondition_failed`, effect `none`, and the fixed diagnostic `service_lookup`.
+No picker or credential delivery followed. Missing-service log lines were not
+scoped to the controller PID and remain supporting clues, not conclusive causal
+proof. Installed-policy inspection found direct user/power/window lookup grants
+and no explicit trust/notification lookup grants. The positive fill, observation/
+screenshot privacy and receiving-process restart-fence receipt remains the earlier
+owned-emulator R9 result; physical native fill is still unaccepted.
+
+Core code source `de4af35bd` (documentation head `a348f600b`) includes the
+37-scenario staged diagnostics, explicit `native_password_v1` capability health
+guard, a bounded capability probe, and two source-only image policy
+lookup additions. The offline official API 37 SDK's extracted `framework.jar`
+has SHA-256 `cfd8c422620cf584b5f190d8e5a211b83468a5ffd2bdb5cad1e0e410a22f30d8`.
+Its `KeyguardManager` eagerly looks up trust and notification services during
+construction; the recovered class also calls TrustManager for `isDeviceLocked`.
+Whole-class JADX reported one error, so this is proof from the cited recovered
+fields/methods, not a clean whole-class decompile. The new `trust_service` and
+`notification_service` find grants require a matching image: no image policy build,
+physical policy overlay or matching-image acceptance occurred. An APK/JAR update
+cannot supply these grants.
+
+The clean Core compatibility composite `77ee09217` preserves the exact installed
+Core 29 `70ab` / PR #1231 baseline. The earlier full Core Python run passed
+**195 cases in 430.108 seconds**. The gathered 3,169-case JVM run had **3,168 passes
+and one stale `ui.collect` description-fixture failure**; regenerated compatibility
+source `61bc` then passed the normal focused case. That is a focused repair result,
+not a repeated clean 3,169-case run or a coverage-floor waiver. The capability
+checks passed: two Python cases covering 45 native scenarios and five Java-producer
+scenarios. The final focused run passed 12 runtime cases and the normal catalog
+fixture; the Core 31 release APK built. The bounded probe tests cover hung
+connections, overlapping requests, endpoint replacement and interruption; a late
+reply cannot make a failed probe positive or create queued probe work.
+
+Core 31 `0.17.0-cyc689-password-parity-r4` was signed and installed with APK SHA-256
+`6569ae37c5d9cc22e63fda39dcdbb394c5c6bc0c2dba5676711f890a2e82b0a4`.
+All 136 non-META-INF entries match the tested unsigned APK. On the restored
+original controller, its default catalog omits `security.password.fill`; the
+all-tools catalog reports `missing_grant` for `ui_controller:native_password_v1`
+only. Owner status and the previously failed operation receipt remain unchanged.
+This accepts legacy-controller capability refusal, not physical native fill.
+
+The phone's original image controller
+`3b32bfed839417edd052f3248b3d21284e03e65eedb2cbad5f934e60265d0457`, enforcing
+verity, enforcing SELinux and adbd UID 2000 were restored and verified. Five raw
+settings match their captured values. The password probe, Services test APK,
+Core-status fixture and our CorePump directory were removed and their absence
+verified. Core 31 remains installed. All of this chat's phone claims were released;
+the final scoped claim was released at 11:04 PM PT.
+
+Broader Google-provider/official-client, family, cross-device, the five private Passwords
+RPC contracts and real server-assignment acceptance remain open. Full parity is
+false. Earlier records below retain their original sources and scopes.
+
+## Historical validation and the 8:15 PM PT physical handoff
+
 The password-branch Services runtime batch passed **799 host tests** at source
 `e2246006` (Services 049): 434 password-sync, 13 FIDO Core and 352 Services Core
 cases. The six document-start shim fixtures and both product/instrumentation APK
@@ -26,8 +180,8 @@ HSM-signed product payload matched the tested debug artifact. A later test-only 
 at `068c7924` added the local probe guard; that combined product/test pair passed the
 22 isolated cases plus the one absence preflight on the owned API36 emulator. There
 is no new combined-build native-fill success claim, and this combined product was
-not installed on the physical phone. The password-branch runtime remains `e2246006`;
-PR source `c22687a5` adds only the new local cleanup instrumentation class.
+not installed on the physical phone. That historical password-branch runtime was
+`e2246006`; PR source `c22687a5` added only the local cleanup instrumentation class.
 
 The earlier ordinary debug APK pair passed **22/22 isolated Android fixtures** at
 `77a2f400` on the fresh owned API36 AOSP emulator
@@ -116,7 +270,7 @@ actual privileged grant and package-specific system-API access. Full physical fi
 Google-provider, family and cross-device acceptance remain open. Historical acceptance
 below remains tied to its recorded sources.
 
-Current Services 049 ordinary debug product SHA-256:
+Historical Services 049 ordinary debug product SHA-256:
 `1c69a349ee7495a6ddf30fc84befee5ebeb212b383df8735306bd1bf2ef8df8b`.
 The HSM microG-signed product used for the updated factory run is
 `2b3c079dd635f20fa53950ff2a23bbe181e285145ed6f73df76ae88d676245a0`;
@@ -687,8 +841,8 @@ No password or preference cloud writes ran in that historical review round.
 | Family sharing | Exact family eligibility, enrolled authenticated HPKE keys, fresh-recipient checks and launch receipts are connected. Incoming background policy matches the pinned default: import new, preserve conflicts, skip invalid siblings, consume processed invitations; same-sender updates default off. Get/CreateMetadata and committed Nigori keybag behavior match the reference; no separate sharing-key registry RPC was found. Second-family-account acceptance is CYC-690. |
 | Synced passkeys | Account-bound Credential Manager, legacy GMS FIDO and authenticated caBLE hybrid create/get use the real vault with current owner/domain authority. Native rename/delete, missing-secret PRF migration, bounded blob creation/read/write and Chrome-delegated payment are connected. Hybrid leases bind transcript, original request and immutable options with immediate disconnect/shutdown revocation. The gathered host batch passed; CYC-687/CYC-688/CYC-689/CYC-691 interoperability acceptance remains pending. |
 | Wi-Fi | Explicit account opt-in, encrypted cloud adapter, owned-network native consumer and durable uncertain-outcome fences are connected. READ_WIFI_CREDENTIAL requires the companion privileged image grant; old images refuse. The current target-29 caller also requires owner-granted precise location, enabled Location and allowed precise-location/Wi-Fi-scan app-ops. NETWORK_SETTINGS is signature-only, not a privapp image grant. Native/image acceptance remains CYC-689. |
-| Core agent fill | `security.password.fill` takes empty inputs and returns only `filled`; private native delivery targets the retained field. A durable receiving-app observation/input/capture fence is implemented until authoritative UID process death or reboot. R9 on the private API36 factory/manual-root setup passed exact local synthetic fill, observation/screenshot refusal and retained receiving-process fencing across a controller restart. Old-input refusal was `stale_observation`, not direct input-fence proof. Physical init-domain startup/reboot and enforcing-policy checks passed, but no physical fill was dispatched. Owner-assisted native fields only; browser/WebView origins are refused. Physical fill and Google-provider acceptance remain CYC-689. |
-| Phone | The physical Pixel passed 22 isolated Android methods plus two exact-local probe safeguards across separate invocations. Core 28 / Services 049 remain installed with Core owner status unchanged. The temporary candidate controller passed init-domain startup/reboot checks, then the original controller and enforcing verity were restored; temporary APKs/JARs were removed and the phone released. No credential was created and no physical fill was dispatched. Earlier emulator R9 fill/restart evidence and synthetic cleanup remain separate. CYC-689 tracks physical fill and Google-provider acceptance. |
+| Core agent fill | `security.password.fill` takes empty inputs and returns only `filled`; private IPC targets the retained field behind durable observation/input/capture fences. R9 emulator fill/privacy/restart and R10 Core31 legacy-controller refusal remain separately scoped; old-input `stale_observation` is not direct input-fence proof. R11 Core `0ba6bb459` passed clean host validation; signed Core32 passed read-only update preflight but was not installed, and no R11 native-fill attempt occurred. Donor policy compiled, while 31 source differences still separate it from the exact archived baseline. No matching image or paired Core32/controller acceptance; browser/WebView targets remain refused. |
+| Phone | R11 installed hash-verified Services `dc642be...` and passed 26 fixtures (22 ordinary +4 flags authority). Separate inventory passed with one candidate and zero readable/approved/sharing/blocked/unreadable counts, not peer-absence proof; cached admission refused before provider/enablement. At 12:21:36 AM PT Core31/original controller `3b32...`, owner/five settings/R11 boot, adbd2000 and enforcing SELinux/verity were unchanged; test packages absent. All three claims released, status empty. No Core/controller/policy change or R11 Core fill. Physical fill/provider/family/cross-device acceptance remains open. |
 | Official interoperability | Metadata reading passed historically, but official exact-secret reading and producer note/write round trips remain unaccepted under CYC-653. Self-written/self-read is insufficient. |
 
 ## Reproduce the checks
@@ -710,19 +864,24 @@ The earlier ordinary debug run passed on a fresh owned API36 AOSP emulator with 
 Google account or privileged image grants. The updated Services 049 factory setup also
 passed 22 cases, in a 21-case run plus
 `org.microg.gms.passwords.HybridPrfParcelAndroidTest` under its corrected selector.
-The physical Services 049 batch also passed these 22 cases. Its two explicitly gated
+The historical physical Services 049 batch also passed these 22 cases. Its two explicitly gated
 `PasswordLocalProbeCleanupAndroidTest` methods passed separately, with no Google account
 vault or network access; the cleanup found no exact probe entry to delete and verified
 unrelated local entries unchanged. The compatibility `5af4d461` / test `068c7924` pair
 separately passed 22 cases plus the absence preflight on the owned API36 emulator.
-None of those fixture results establishes physical native fill or Google-provider
-acceptance. The companion Core host evidence is also
+The late matching `97f5` product/test batch passed the same 22 physical cases.
+Later test-only `0c376a85` supplied the separately scoped flags and final local-cleanup
+checks stated above. The positive exact
+cleanup is distinct from that historical count-zero receipt. None of these fixture
+results establishes physical native fill or Google-provider acceptance. The historical companion Core host evidence is also
 split: full 3,169 JVM cases at `bc551b8f5`, 194 unique Python passes across discovery
 and repaired modules, and the later one-case/16-scenario actual-controller regression
 at `3d71613ce` (Core PR `8ec5d0630`). See the
 [native acceptance runbook](testing/password-parity-acceptance.md) for the scoped drivers
-and completed cleanup. R9's positive fill/restart result remains emulator-only;
-physical native fill and Google-provider checks remain open.
+and the separately scoped R10/R11 cleanup receipts. R11 host, signed-artifact,
+Services26-fixture and final phone-readback results are recorded at the top.
+Core32 remains uninstalled; R9's positive Core fill/restart remains emulator-only.
+Physical native fill and Google-provider checks remain open.
 For a physical run, check the installed signer and preserve the current APK/data first.
 Never uninstall/clear physical GmsCore data or
 replace a phone reserved by another active task. Sign test artifacts with the existing
