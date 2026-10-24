@@ -29,9 +29,9 @@ class ContactSyncPreferences(private val context: Context, val account: Account)
 
     fun ensureDefaults() {
         // Do not override a saved owner choice, including OFF/download-only.
-        if (!prefs.contains(prefix + "mode")) configure(SyncMode.TWO_WAY, 0)
+        if (!prefs.contains(prefix + "mode")) configure(SyncMode.TWO_WAY, 0, requestImmediate = false)
     }
-    fun configure(value: SyncMode, floor: Long) {
+    fun configure(value: SyncMode, floor: Long, requestImmediate: Boolean = true) {
         // Preserve the optional developer fixture floor; normal Google behavior adopts account rows.
         if (value != SyncMode.OFF && !prefs.contains(prefix + "adoptionFloor")) {
             check(prefs.edit().putLong(prefix + "adoptionFloor", floor).commit())
@@ -44,7 +44,8 @@ class ContactSyncPreferences(private val context: Context, val account: Account)
             ContentResolver.removePeriodicSync(account, AUTHORITY, Bundle.EMPTY)
         } else {
             ContentResolver.addPeriodicSync(account, AUTHORITY, Bundle.EMPTY, 3600)
-            refresh()
+            // Account/boot initialization follows automatic sync and the master-sync switch.
+            if (requestImmediate) refresh()
         }
     }
     fun refresh() {
