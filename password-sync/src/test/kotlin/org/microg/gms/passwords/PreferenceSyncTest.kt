@@ -214,7 +214,7 @@ class PreferenceSyncTest {
         val reopened = VaultState.decode(store.bytes)
         assertEquals(1, reopened.preferenceMutations.size)
         assertEquals("true", engine(server, store).value("credentials_enable_service"))
-        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 7)) }
+        assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 8)) }
     }
 
     @Test fun unknownFieldsSurviveValueEditsAndAChangedVaultCannotReceiveOldQueuedSettings() {

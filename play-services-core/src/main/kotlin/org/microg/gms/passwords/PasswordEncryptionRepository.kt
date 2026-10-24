@@ -303,7 +303,9 @@ internal class PasswordEncryptionRepository(context: Context, private val accoun
             }
             token = response.optional(2)?.takeIf { it.isNotEmpty() }
             if (token == null) return entries
-            if (!tokens.add(SyncedPasskey.hex(token!!))) throw ProtocolException()
+            val tokenDigest = MessageDigest.getInstance("SHA-256").digest(token!!)
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            if (!tokens.add(tokenDigest)) throw ProtocolException()
         }
         throw ProtocolException()
     }
