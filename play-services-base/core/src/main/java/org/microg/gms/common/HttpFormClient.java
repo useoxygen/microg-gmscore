@@ -81,7 +81,7 @@ public class HttpFormClient {
         }
 
         // Bodies carry account and session tokens; log them only when explicitly enabled (setprop log.tag.TAG VERBOSE).
-        if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Request --\n" + content);
+        if (!request.suppressSensitiveLogs && Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Request --\n" + content);
         String replace = content.toString().trim().replace("\n", "");
         OutputStream os = connection.getOutputStream();
         os.write(replace.trim().getBytes());
@@ -94,12 +94,12 @@ public class HttpFormClient {
             } catch (IOException e) {
                 // Ignore
             }
-            throw new NotOkayException(error);
+            throw new NotOkayException(error, connection.getResponseCode());
         }
 
         String result = new String(Utils.readStreamToEnd(connection.getInputStream()));
-        if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Response --\n" + result);
-        return parseResponse(tClass, connection, result);
+        if (!request.suppressSensitiveLogs && Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "-- Response --\n" + result);
+        return parseResponse(tClass, connection, result, request.suppressSensitiveLogs);
     }
 
     private static String valueFromBoolVal(String value, Boolean boolVal, boolean truePresent, boolean falsePresent) {
@@ -126,7 +126,7 @@ public class HttpFormClient {
         }
     }
 
-    private static <T> T parseResponse(Class<T> tClass, HttpURLConnection connection, String result) throws IOException {
+    private static <T> T parseResponse(Class<T> tClass, HttpURLConnection connection, String result, boolean suppressSensitiveLogs) throws IOException {
         Map<String, List<String>> headerFields = connection.getHeaderFields();
         T response;
         try {
@@ -137,6 +137,7 @@ public class HttpFormClient {
         String[] entries = result.split("\n");
         for (String s : entries) {
             String[] keyValuePair = s.split("=", 2);
+            if (suppressSensitiveLogs && keyValuePair.length < 2) continue;
             String key = keyValuePair[0].trim();
             String value = keyValuePair[1].trim();
             boolean matched = false;
@@ -158,9 +159,9 @@ public class HttpFormClient {
                     }
                 }
             } catch (Exception e) {
-                Log.w(TAG, e);
+                if (!suppressSensitiveLogs) Log.w(TAG, e);
             }
-            if (!matched) {
+            if (!matched && !suppressSensitiveLogs) {
                 Log.w(TAG, "Response line '" + s + "' not processed");
             }
         }
@@ -181,7 +182,7 @@ public class HttpFormClient {
                         field.setInt(response, Integer.parseInt(value));
                     }
                 } catch (Exception e) {
-                    Log.w(TAG, e);
+                    if (!suppressSensitiveLogs) Log.w(TAG, e);
                 }
             }
             if (field.isAnnotationPresent(ResponseStatusCode.class) && field.getType() == int.class) {
@@ -189,7 +190,7 @@ public class HttpFormClient {
                     field.setAccessible(true);
                     field.setInt(response, connection.getResponseCode());
                 } catch (IllegalAccessException e) {
-                    Log.w(TAG, e);
+                    if (!suppressSensitiveLogs) Log.w(TAG, e);
                 }
             }
             if (field.isAnnotationPresent(ResponseStatusText.class) && field.getType() == String.class) {
@@ -197,7 +198,7 @@ public class HttpFormClient {
                     field.setAccessible(true);
                     field.set(response, connection.getResponseMessage());
                 } catch (IllegalAccessException e) {
-                    Log.w(TAG, e);
+                    if (!suppressSensitiveLogs) Log.w(TAG, e);
                 }
             }
         }
@@ -216,6 +217,9 @@ public class HttpFormClient {
     }
 
     public static abstract class Request {
+        // Diagnostic-only auth requests must never print raw bodies or fields,
+        // even with VERBOSE logging explicitly enabled on the shared transport.
+        public boolean suppressSensitiveLogs;
         protected void prepare() {
         }
     }
