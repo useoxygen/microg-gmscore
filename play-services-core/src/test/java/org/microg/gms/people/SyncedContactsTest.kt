@@ -1,0 +1,108 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package org.microg.gms.people
+
+import android.accounts.Account
+import android.app.Application
+import android.content.ContentProvider
+import android.content.ContentUris
+import android.content.ContentValues
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
+import android.net.Uri
+import android.provider.ContactsContract
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.microg.gms.people.sync.PrivatePeopleApi
+import org.microg.gms.people.sync.SyncMode
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowContentResolver
+
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, application = Application::class, sdk = [28])
+class SyncedContactsTest {
+    private val account = Account("synced-fixture@invalid", "com.google")
+    private val other = Account("other-fixture@invalid", "com.google")
+    private val private = PrivatePeopleApi.OWNER
+    private val legacy = AndroidContactStore.OWNER
+
+    /** Evaluates the real SQL selections against synthetic rows. */
+    private class Provider : ContentProvider() {
+        val db: SQLiteDatabase = SQLiteDatabase.create(null).apply {
+            execSQL("CREATE TABLE raw_contacts (_id INTEGER PRIMARY KEY, account_name TEXT, account_type TEXT, data_set TEXT, " +
+                "sourceid TEXT, sync3 TEXT, sync4 TEXT, dirty INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0)")
+            execSQL("CREATE TABLE groups (_id INTEGER PRIMARY KEY, account_name TEXT, account_type TEXT, data_set TEXT, " +
+                "sourceid TEXT, sync3 TEXT, sync4 TEXT, system_id TEXT, dirty INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0)")
+        }
+        var state: ByteArray? = null
+        override fun onCreate() = true
+        override fun getType(uri: Uri): String? = null
+        private fun table(uri: Uri) = uri.pathSegments.first()
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor =
+            db.query(table(uri), projection, selection, args, null, null, sort)
+        override fun insert(uri: Uri, values: ContentValues?): Uri {
+            assertEquals("syncstate", table(uri)); state = values!!.getAsByteArray(ContactsContract.SyncState.DATA)
+            return ContentUris.withAppendedId(uri, 1)
+        }
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?): Int = error("Unexpected update")
+        override fun delete(uri: Uri, selection: String?, args: Array<out String>?): Int {
+            assertEquals("true", uri.getQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER))
+            return db.delete(table(uri), selection, args)
+        }
+        fun ids(table: String): Set<Long> = db.rawQuery("SELECT _id FROM $table", null).use { c ->
+            buildSet { while (c.moveToNext()) add(c.getLong(0)) }
+        }
+    }
+
+    private fun Provider.contact(id: Long, owner: String?, account: Account = this@SyncedContactsTest.account, sourceId: String? = null,
+        dirty: Boolean = false, pending: String? = null, dataSet: String? = null) = db.insert("raw_contacts", null, ContentValues().apply {
+        put("_id", id); put("account_name", account.name); put("account_type", account.type); put("data_set", dataSet)
+        put("sourceid", sourceId); put("sync3", pending); put("sync4", owner); put("dirty", if (dirty) 1 else 0)
+    })
+    private fun Provider.group(id: Long, owner: String?, systemId: String? = null, dirty: Boolean = false) = db.insert("groups", null, ContentValues().apply {
+        put("_id", id); put("account_name", account.name); put("account_type", account.type)
+        put("sync4", owner); put("system_id", systemId); put("dirty", if (dirty) 1 else 0)
+    })
+
+    @Test fun removesOnlyWhatSyncImportedOrAdoptedAndReportsUnsyncedChanges() {
+        val context = RuntimeEnvironment.getApplication()
+        val provider = Provider().apply {
+            attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY })
+            contact(1, private)                               // downloaded: removed
+            contact(2, legacy)                                // older sync: removed
+            contact(3, null)                                  // existed before sync was enabled: kept
+            contact(11, null, dirty = true)                   // created here after enabling, not uploaded yet: removed, unsynced
+            contact(12, null, sourceId = "other-adapter")     // another sync adapter's contact: kept
+            contact(13, private, dataSet = "plugin")          // other data set: kept
+            contact(14, private, account = other)             // other account: kept
+            contact(15, private, pending = "{\"kind\":\"update\"}") // upload in flight: removed, unsynced
+            group(1, private, systemId = "Contacts")          // system group: kept
+            group(2, private)                                 // synced label: removed
+            group(3, null)                                    // existed before sync: kept
+            group(25, null, dirty = true)                     // label created here, not uploaded: removed, unsynced
+        }
+        ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
+        val prefs = ContactSyncPreferences(context, account)
+        prefs.initializePrivateFloors(10, 20)
+        prefs.configure(SyncMode.TWO_WAY, 10, 20)
+        prefs.privateGroupCheckpoint("binding", "token")
+        val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
+        val synced = SyncedContacts(client, account, prefs)
+
+        assertEquals(3, synced.unsyncedChanges())
+        assertEquals(4, synced.count())
+        assertThrows(IllegalStateException::class.java) { synced.remove() } // Never while sync can still write.
+
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE)
+        synced.remove()
+        assertEquals(setOf(3L, 12L, 13L, 14L), provider.ids("raw_contacts"))
+        assertEquals(setOf(1L, 3L), provider.ids("groups"))
+        assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
+        assertNull(prefs.privateGroupCheckpoint("binding"))
+        assertEquals(0, synced.unsyncedChanges())
+        client.close()
+    }
+}

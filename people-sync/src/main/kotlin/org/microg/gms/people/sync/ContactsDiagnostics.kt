@@ -6,6 +6,9 @@ import java.util.Locale
 
 /** Diagnostics are vocabulary, never server messages or exception text. */
 object ContactsDiagnostics {
+    /** Token types requested by contacts sync; their auth errors are logged only in sanitized form. */
+    @JvmStatic fun isContactsService(service: String?): Boolean = PrivatePeopleScope.values().any { service == "oauth2:" + it.scope } ||
+        service in setOf("oauth2:https://www.googleapis.com/auth/contacts", "oauth2:https://www.googleapis.com/auth/contacts.readonly")
     private val apiReasons = setOf("EXPIRED_SYNC_TOKEN", "INVALID_PAGE_TOKEN", "SERVICE_DISABLED", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "ACCESS_TOKEN_EXPIRED",
         "CREDENTIALS_MISSING", "ACCESS_TOKEN_TYPE_UNSUPPORTED", "CONSUMER_INVALID", "USER_PROJECT_DENIED",
         "RATE_LIMIT_EXCEEDED", "QUOTA_EXCEEDED", "SECURITY_POLICY_VIOLATED", "API_KEY_SERVICE_BLOCKED",

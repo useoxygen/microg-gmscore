@@ -138,23 +138,19 @@ public class AskPermissionActivity extends AccountAuthenticatorActivity {
         nm.cancel(data.packageName.hashCode());
 
         authManager = new AuthManager(this, data.accountName, data.packageName, data.service);
-        authManager.configureContactsProbe(getIntent().getBooleanExtra(org.microg.gms.people.sync.PrivatePeopleProbe.OPTION_PROBE, false),
-                getIntent().getBooleanExtra(org.microg.gms.people.sync.PrivatePeopleProbe.OPTION_GMS_APP, false));
 
-        if (!authManager.isContactsProbe()) {
-            Bitmap profileIcon = PeopleManager.getOwnerAvatarBitmap(this, data.accountName, false);
+        Bitmap profileIcon = PeopleManager.getOwnerAvatarBitmap(this, data.accountName, false);
 
-            // receive profile icon
-            if (profileIcon != null) {
-                ((ImageView) findViewById(R.id.account_photo)).setImageBitmap(profileIcon);
-            } else {
-                new Thread(() -> {
-                    final Bitmap profileIcon1 = PeopleManager.getOwnerAvatarBitmap(AskPermissionActivity.this, data.accountName, true);
-                    runOnUiThread(() -> ((ImageView) findViewById(R.id.account_photo)).setImageBitmap(profileIcon1));
-                }).start();
-            }
-
+        // receive profile icon
+        if (profileIcon != null) {
+            ((ImageView) findViewById(R.id.account_photo)).setImageBitmap(profileIcon);
+        } else {
+            new Thread(() -> {
+                final Bitmap profileIcon1 = PeopleManager.getOwnerAvatarBitmap(AskPermissionActivity.this, data.accountName, true);
+                runOnUiThread(() -> ((ImageView) findViewById(R.id.account_photo)).setImageBitmap(profileIcon1));
+            }).start();
         }
+
         ((ImageView) findViewById(R.id.app_icon)).setImageDrawable(data.appIcon);
         if (isOAuth()) {
             ((TextView) findViewById(R.id.title)).setText(getString(R.string.ask_scope_permission_title, data.appLabel));
@@ -175,8 +171,7 @@ public class AskPermissionActivity extends AccountAuthenticatorActivity {
         new Thread(() -> {
             Bundle result = null;
             try {
-                AuthResponse response = authManager.isContactsProbe() ? authManager.requestAuth(data.fromAccountManager)
-                        : authManager.requestAuthWithBackgroundResolution(data.fromAccountManager);
+                AuthResponse response = authManager.requestAuthWithBackgroundResolution(data.fromAccountManager);
                 result = new Bundle();
                 result.putString(KEY_AUTHTOKEN, response.auth);
                 result.putString(KEY_ACCOUNT_NAME, data.accountName);
@@ -184,16 +179,7 @@ public class AskPermissionActivity extends AccountAuthenticatorActivity {
                 result.putString(KEY_ANDROID_PACKAGE_NAME, data.packageName);
                 result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, true);
             } catch (IOException e) {
-                if (authManager.isContactsProbe()) Log.w("GmsContactSync", "stage=authorization probe=PRIVATE_PEOPLE result=FAILED");
-                else Log.w(TAG, e);
-            } catch (RuntimeException e) {
-                if (!authManager.isContactsProbe()) throw e;
-                Log.w("GmsContactSync", "stage=authorization probe=PRIVATE_PEOPLE result=FAILED");
-            }
-            if (authManager.isContactsProbe()) {
-                if (result == null) result = new Bundle();
-                result.putString(org.microg.gms.people.sync.PrivatePeopleProbe.RESULT_AUTH, authManager.getContactsProbeDiagnostic());
-                result.putBoolean(AccountManager.KEY_BOOLEAN_RESULT, result.getString(KEY_AUTHTOKEN) != null);
+                Log.w(TAG, e);
             }
             final Bundle finalResult = result;
             runOnUiThread(() -> {

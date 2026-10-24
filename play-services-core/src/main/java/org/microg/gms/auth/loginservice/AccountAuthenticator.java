@@ -108,7 +108,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
     @Override
     public Bundle getAuthToken(AccountAuthenticatorResponse response, Account account, String authTokenType, Bundle options) throws NetworkErrorException {
         options.keySet();
-        boolean contactsRequest = org.microg.gms.people.sync.PrivatePeopleProbe.isContactsService(authTokenType);
+        boolean contactsRequest = org.microg.gms.people.sync.ContactsDiagnostics.isContactsService(authTokenType);
         if (!contactsRequest) Log.d(TAG, "getAuthToken: " + account + ", " + authTokenType + ", " + options);
         String app = options.getString(KEY_ANDROID_PACKAGE_NAME);
         app = PackageUtils.getAndCheckPackage(context, app, options.getInt(KEY_CALLER_UID), options.getInt(KEY_CALLER_PID));
@@ -146,34 +146,26 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
             authManager = new AuthManager(context, account.name, app, authTokenType);
         }
         authManager.setAccountType(account.type);
-        authManager.configureContactsProbe(context.getPackageName().equals(app)
-                        && options.getBoolean(org.microg.gms.people.sync.PrivatePeopleProbe.OPTION_PROBE),
-                options.getBoolean(org.microg.gms.people.sync.PrivatePeopleProbe.OPTION_GMS_APP));
         try {
-            // Diagnostic errors are results, not invitations to launch a shared
-            // resolver which may log challenge/consent payloads.
-            AuthResponse res = authManager.isContactsProbe() ? authManager.requestAuth(true)
-                    : requestAuthForAccountManager(authManager, account, true);
+            AuthResponse res = requestAuthForAccountManager(authManager, account, true);
             if (contactsRequest) Log.i("GmsContactSync", "stage=authorization token_present=" + (res.auth != null));
             if (res.auth != null) {
                 Bundle result = new Bundle();
                 result.putString(KEY_ACCOUNT_TYPE, account.type);
                 result.putString(KEY_ACCOUNT_NAME, account.name);
                 result.putString(KEY_AUTHTOKEN, res.auth);
-                if (authManager.isContactsProbe()) result.putString(org.microg.gms.people.sync.PrivatePeopleProbe.RESULT_AUTH, authManager.getContactsProbeDiagnostic());
                 return result;
             } else {
                 Bundle result = new Bundle();
                 Intent i = new Intent(context, AskPermissionActivity.class);
                 i.putExtras(options);
-                if (authManager.isContactsProbe()) i.putExtra(AskPermissionActivity.EXTRA_FROM_ACCOUNT_MANAGER, true);
                 i.putExtra(KEY_ACCOUNT_AUTHENTICATOR_RESPONSE, response);
                 i.putExtra(KEY_ANDROID_PACKAGE_NAME, app);
                 i.putExtra(KEY_ACCOUNT_TYPE, account.type);
                 i.putExtra(KEY_ACCOUNT_NAME, account.name);
                 i.putExtra(KEY_AUTHTOKEN, authTokenType);
                 try {
-                    if (!authManager.isContactsProbe() && res.consentDataBase64 != null)
+                    if (res.consentDataBase64 != null)
                         i.putExtra(AskPermissionActivity.EXTRA_CONSENT_DATA, Base64.decode(res.consentDataBase64, Base64.URL_SAFE));
                 } catch (Exception e) {
                     Log.w(TAG, "Can't decode consent data: ", e);
@@ -186,12 +178,6 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
             else Log.w(TAG, "Re-authentication required for account " + account.name, e);
             return createReAuthIntentResult(response, account, options);
         } catch (Exception e) {
-            if (authManager.isContactsProbe()) {
-                Bundle result = new Bundle();
-                result.putString(org.microg.gms.people.sync.PrivatePeopleProbe.RESULT_AUTH, authManager.getContactsProbeDiagnostic());
-                result.putBoolean(KEY_BOOLEAN_RESULT, false);
-                return result;
-            }
             if (contactsRequest) {
                 Log.w("GmsContactSync", "stage=authorization error=UNKNOWN");
                 throw new NetworkErrorException("Contacts authorization failed");
@@ -205,7 +191,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         try {
             return authManager.requestAuth(legacy);
         } catch (NotOkayException e) {
-            if (org.microg.gms.people.sync.PrivatePeopleProbe.isContactsService(authManager.getService())) {
+            if (org.microg.gms.people.sync.ContactsDiagnostics.isContactsService(authManager.getService())) {
                 String safeError = org.microg.gms.people.sync.ContactsDiagnostics.authError(e.getMessage());
                 Log.w("GmsContactSync", "stage=authorization error=" + safeError + " http_status=" + e.getHttpStatus());
                 // The shared resolver logs its argument. Never hand it an auth
