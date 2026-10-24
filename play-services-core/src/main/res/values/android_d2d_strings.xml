@@ -1,0 +1,10 @@
+<resources>
+    <string name="android_d2d_prepare">Preparing to connect to your Android phone…</string>
+    <string name="android_d2d_continue">Continue copying</string>
+    <string name="android_d2d_find">On your old Android phone, open Google’s “Set up my device” and look for %1$s. Keep both phones nearby and unlocked.</string>
+    <string name="android_d2d_compare">Check that this code matches the code on your old phone: %1$s. Confirm the match on your old phone.</string>
+    <string name="android_d2d_ready">Your phones have exchanged pairing information. Continue to choose what to copy. Google accounts cannot be copied yet; sign in on this phone afterwards.</string>
+    <string name="android_d2d_disconnected">The connection ended. Open this step again to try pairing.</string>
+    <string name="android_d2d_unavailable">This setup step could not finish. If your phones have paired, you can continue copying and sign in again afterwards.</string>
+    <string name="android_d2d_missing_switch">Android Switch is unavailable. Ask your device administrator to check the setup installation.</string>
+</resources>

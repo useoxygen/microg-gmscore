@@ -48,6 +48,20 @@ class AndroidBootstrapExchangeTest {
         val session = wifi.getLong("SESSION_ID").toString(); val secret = Base64.decode(wifi.getString("shared_secret"),Base64.URL_SAFE)
         assertNull(store.load(uid).hint())
         exchange.receivedAuthenticatedResponse(response(session))
+        assertPostSetup(root,uid,session,secret)
+    }
+    @Test fun legacySourceAcknowledgementPersistsThen13_14_15_17AgreesWithPeer() {
+        val root=temp.newFolder(); val uid=Binder.getCallingUid(); val store=AndroidSessionStore(root)
+        LegacyBootstrapExchange(DctRecord(LegacyBootstrapExchange.schema,mapOf(18 to 128L))) { store.commit(uid,it) }.use { exchange ->
+            val options=JSONObject(exchange.initial("Cyclon (712)").toString(Charsets.UTF_8)).getJSONObject("bootstrapOptions")
+            val secret=Base64.decode(options.getString("SharedSecret"),Base64.DEFAULT)
+            assertEquals("intent:#Intent;action=com.google.android.gms.backup.ACTION_WIFI_D2D;package=com.google.android.gms;end",options.getJSONObject("PostTransferAction").getString("wifiD2D"))
+            assertNull(store.load(uid).hint())
+            exchange.receive("{\"bootstrapConfigurations\":{\"optionFlags\":8}}".toByteArray())
+            assertPostSetup(root,uid,exchange.sessionId.toString(),secret)
+        }
+    }
+    private fun assertPostSetup(root: File, uid: Int, session: String, secret: ByteArray) {
         val fresh = AndroidSessionStore(root).load(uid)
         AndroidTargetDeviceBinder(uid,fresh).use { target ->
             val hint = query(target,13,1,AndroidSetupSchemas.hint)!!; assertEquals(session,hint.text(2)); assertArrayEquals(secret,hint.bytes(3))

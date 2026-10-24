@@ -41,6 +41,9 @@ internal class LegacyBootstrapExchange(private val options: DctRecord,
             .put("optionFlagsSetIndicator",options.long(20) or (1L shl 11))
             .put("SharedSecret",Base64.encodeToString(secret,Base64.NO_WRAP))
             .put("targetDeviceFingerprint",Build.FINGERPRINT)
+        // gelh sets this exact default when option flag8 selects Wi-Fi D2D;
+        // source gffo resolves it before reporting its post-transfer action.
+        if(options.long(18) and 128L != 0L) json.put("PostTransferAction",JSONObject().put("wifiD2D","intent:#Intent;action=com.google.android.gms.backup.ACTION_WIFI_D2D;package=com.google.android.gms;end"))
         return JSONObject().put("protocolVersion",3).put("bootstrapOptions",json).toString().toByteArray(Charsets.UTF_8)
     }
     /** Returns the source terminal state, or0 for an acknowledged configuration.

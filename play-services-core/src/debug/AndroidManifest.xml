@@ -1,5 +1,7 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <application>
+        <activity android:name="org.microg.gms.migration.android.AndroidD2dBootstrapActivity" tools:replace="android:permission"
+            android:exported="true" android:permission="android.permission.DUMP" />
         <activity android:name="org.microg.gms.migration.MigrationWirelessActivity"
             android:exported="true" android:permission="android.permission.DUMP"
             android:excludeFromRecents="true" />

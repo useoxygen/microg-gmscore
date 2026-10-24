@@ -19,6 +19,10 @@ def stageLab = tasks.register('stageClassicLabSources', Sync) {
         include 'org/microg/gms/migration/nearby/DctRecord.kt'
         include 'org/microg/gms/migration/android/Classic*.kt'
         include 'org/microg/gms/migration/android/DeadlineFdStreams.kt'
+        include 'org/microg/gms/migration/android/LegacyTargetBootstrap.kt'
+        include 'org/microg/gms/migration/android/AndroidPostSetupState.kt'
+        include 'org/microg/gms/migration/android/AndroidSessionStore.kt'
+        include 'org/microg/gms/migration/android/PostSetupTargetHandshake.kt' 
     }
     from('../play-services-core/src/debug/kotlin') {
         include 'org/microg/gms/migration/backup/GmsClassicPeerProbe.kt'

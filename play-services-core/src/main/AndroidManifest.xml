@@ -219,9 +219,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.LOCAL_MAC_ADDRESS" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
 
     <application
@@ -234,6 +232,10 @@
         android:multiArch="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.App">
+        <activity android:name="org.microg.gms.migration.android.AndroidD2dBootstrapActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD"
+            android:excludeFromRecents="true" />
+
 
         <library android:name="com.google.android.gms" />
 

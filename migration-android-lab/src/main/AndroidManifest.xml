@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <queries><package android:name="com.google.android.gms" /></queries>
     <application android:label="Synthetic migration lab" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".BootstrapActivity" android:exported="true" android:permission="android.permission.DUMP" />
         <activity android:name=".ProbeActivity" android:exported="true" android:permission="android.permission.DUMP" />
     </application>
 </manifest>
