@@ -6,7 +6,7 @@ import java.io.FilterOutputStream
 import java.io.OutputStream
 
 /** Disk admission is current free storage, separate from per-payload wire bounds.
- * Completed files may be consumed/deleted by the client while the session stays up. */
+ * Available storage may change independently while the session stays up. */
 internal class ClassicStorageOutputStream(output: OutputStream,
     private val availableBytes: () -> Long) : FilterOutputStream(output) {
     override fun write(value: Int) {
