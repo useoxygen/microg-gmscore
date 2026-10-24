@@ -64,3 +64,8 @@
 -keep public class com.google.android.gms.common.net.SocketFactoryCreatorImpl { *; }
 -keep public class com.google.android.gms.providerinstaller.SocketFactoryCreatorImpl { *; }
 -keep public class com.google.android.gms.common.net.SocketFactoryCreatorImpl { *; }
+
+# Android's hidden callback is omitted from the public SDK; the runtime invokes this signature virtually.
+-keepclassmembers class org.microg.gms.migration.MigrationSystemRestore$* {
+    public void restoreSetsAvailable(android.app.backup.RestoreSet[]);
+}

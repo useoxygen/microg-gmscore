@@ -16,8 +16,12 @@ configurations {
 }
 
 dependencies {
-    debugImplementation 'com.google.zxing:core:3.5.2'
+    compileOnly project(':migration-restore-api-stubs')
+    implementation 'com.google.zxing:core:3.5.2'
     testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:core:1.6.1'
     // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.
     testImplementation 'org.json:json:20240303'
     // Android framework classes (SQLite, Log, the platform's org.json) for host tests of GCM permissions and web bridges.
@@ -138,6 +142,7 @@ android {
     }
 
     defaultConfig {
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         versionName version
         versionCode appVersionCode
 
