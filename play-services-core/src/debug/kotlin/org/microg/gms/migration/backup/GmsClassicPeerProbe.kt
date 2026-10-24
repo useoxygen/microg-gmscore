@@ -22,20 +22,23 @@ object GmsClassicPeerProbe {
         java.io.File(context.filesDir,"nearby-result.txt").writeText("RUNNING\n")
         val worker = Executors.newSingleThreadExecutor()
         val gms = AtomicReference<IBinder>(); val brokerReady = CountDownLatch(1)
+        val brokerFailure=AtomicReference<Throwable>()
         val connection = object : ServiceConnection {
-            override fun onServiceDisconnected(name: ComponentName) {}
+            override fun onServiceDisconnected(name: ComponentName) { brokerFailure.compareAndSet(null,IllegalStateException("Production GMS disconnected")); brokerReady.countDown() }
             override fun onServiceConnected(name: ComponentName, broker: IBinder) {
                 val callbacks = object : Binder() {
                     override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
                         data.enforceInterface("com.google.android.gms.common.internal.IGmsCallbacks")
                         if(code != 1 && code != 3) return false
                         val status = data.readInt(); println("GMS broker status=$status callback=$code")
-                        check(status == 0); gms.set(requireNotNull(data.readStrongBinder())); brokerReady.countDown(); reply?.writeNoException(); return true
+                        if(status==0) gms.set(data.readStrongBinder()) else brokerFailure.set(IllegalStateException("Production GMS broker status=$status"))
+                        brokerReady.countDown(); reply?.writeNoException(); return true
                     }
                 }
                 val request = GetServiceRequest(54).apply { packageName = context.packageName; extras = Bundle().apply { putLong("clientId",System.nanoTime() and Long.MAX_VALUE) }; apiFeatures = emptyArray(); defaultFeatures = emptyArray() }
                 val data = Parcel.obtain(); val reply = Parcel.obtain()
-                try { data.writeInterfaceToken("com.google.android.gms.common.internal.IGmsServiceBroker"); data.writeStrongBinder(callbacks); data.writeNullable(request); check(broker.transact(46,data,reply,0)); reply.readException() } finally { data.recycle(); reply.recycle() }
+                try { data.writeInterfaceToken("com.google.android.gms.common.internal.IGmsServiceBroker"); data.writeStrongBinder(callbacks); data.writeNullable(request); check(broker.transact(46,data,reply,0)); reply.readException() } catch(e: Exception) { brokerFailure.set(e); brokerReady.countDown() }
+                finally { data.recycle(); reply.recycle() }
             }
         }
         check(context.bindService(Intent("com.google.android.gms.nearby.connection.service.START").setPackage("com.google.android.gms"),connection,Context.BIND_AUTO_CREATE))
@@ -43,6 +46,7 @@ object GmsClassicPeerProbe {
             var target: ClassicNearbyBinder? = null
             try {
                 check(brokerReady.await(25,TimeUnit.SECONDS)) { "Production GMS broker timed out" }
+                brokerFailure.get()?.let { throw it }
                 val source = requireNotNull(gms.get()); val advertised = CountDownLatch(1); val sourceInitiated = CountDownLatch(1); val targetConnected = CountDownLatch(1); val received = CountDownLatch(1); val echoed = CountDownLatch(1)
                 val sourceStream = CountDownLatch(1); val targetStream = CountDownLatch(1)
                 val sourceStreamComplete=CountDownLatch(1); val targetStreamComplete=CountDownLatch(1); val sourceBytesComplete=CountDownLatch(1); val targetBytesComplete=CountDownLatch(1)

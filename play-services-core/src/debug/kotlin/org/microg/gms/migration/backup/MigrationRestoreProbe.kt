@@ -66,6 +66,8 @@ object MigrationRestoreProbe {
         helperIntegration(root, metadata, data)
         println("PASS: real Android hidden transport Binder/API, key-value/full-stream bytes, FD ownership and restore evidence preserved")
         println("Not tested: BackupManager registration/restore, app agents/policy, stock-GMS transfer")
+        // Standalone app_process has no Android lifecycle to retire helper executors.
+        kotlin.system.exitProcess(0)
     }
     private fun helperIntegration(root: File, metadata: ByteArray, data: ByteArray) {
         val folder = File(root,"helper").apply { check(mkdir()) }
