@@ -23,7 +23,7 @@ internal object PakeNegativeProbe {
                             try { socket.startHandshake(); true } catch (e: javax.net.ssl.SSLException) { false }
                         }
                     }
-                    (client.socketFactory.createSocket(InetAddress.getLoopbackAddress(), server.localPort) as SSLSocket).use { socket ->
+                    PakeProbeSocket.connect(client, InetAddress.getLoopbackAddress(), server.localPort).use { socket ->
                         socket.soTimeout = 5000
                         val passed = try { socket.startHandshake(); true } catch (e: javax.net.ssl.SSLException) { false }
                         check(!passed && !accepted.get(6, TimeUnit.SECONDS))

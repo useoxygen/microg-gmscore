@@ -62,6 +62,31 @@ phone-claim take 3A031JEHN04180 --for 'CYC-701 first authorized wireless attempt
 # Keep the returned claim ID; release it when the run ends.
 ```
 
+Stage replacement system APKs under a temporary **non-APK** filename, wait for
+the copy/push command to finish, compare the full SHA256, then rename atomically.
+Never reboot while an APK copy, install or package operation is still running.
+Clear only the documented GMS/Switch package-cache entries when removing overlays.
+Check account presence before and after each boot, and stop on any mismatch.
+
+After `pm uninstall-system-updates com.google.android.gms`, **reboot before testing**
+when switching to a system copy with different privileged permissions. A live
+reversion is the suspected trigger for stale restricted-mode UID state; a package permission grant
+alone does not prove that the kernel firewall admits the UID. The precise framework race is not yet reproduced. The failed parent
+run had restricted networking enabled but no `RESTRICTED_MATCH` for the GMS UID;
+the exact same APK passed PAKE negatives after boot with the system copy active.
+Do not disable restricted mode or change the owner's egress policy to bypass it.
+
+With the owned claim, inspect `dumpsys netpolicy` and
+`dumpsys connectivity trafficcontroller`. Read **effective** blocked reasons;
+`blocked=RESTRICTED_MODE|APP_BACKGROUND` alone is also present in healthy baseline
+state. When the restricted chain is enabled and GMS is expected to be allowed,
+its `sUidOwnerMap` row must contain `RESTRICTED_MATCH`. If that rule is absent,
+stop protocol tests, retain the dumps, reboot and recheck. Never interpret an
+unbounded old probe's silence as a PAKE rejection. Current debug probes use a
+five-second TCP connect timeout before TLS wrapping and a five-second read timeout.
+The checkin receiver also retires immediate connectivity callbacks and uses a
+five-minute fallback instead of spinning on a policy-blocked network.
+
 Check the actual installed versions, granted restricted-network permission,
 Switch's privileged status, Wi-Fi Aware availability and baseline counts/settings.
 Enable Bluetooth and Wi-Fi only with ownership of those settings and restore their

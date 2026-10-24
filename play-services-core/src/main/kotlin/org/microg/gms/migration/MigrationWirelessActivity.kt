@@ -85,7 +85,8 @@ class MigrationWirelessActivity : Activity() {
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             status.text = "On iPhone (iOS 26.3+), open Transfer to Android and scan.\nPairing password: ${session.password}"
-            addView(status); addView(ImageView(this@MigrationWirelessActivity).apply { setImageBitmap(bitmap) })
+            // status was the content view, so it still carries MATCH_PARENT height and would hide the QR.
+            addView(status, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)); addView(ImageView(this@MigrationWirelessActivity).apply { setImageBitmap(bitmap) })
             addView(Button(this@MigrationWirelessActivity).apply { text = "Cancel"; setOnClickListener { controller?.close(); finish() } })
         })
     }
