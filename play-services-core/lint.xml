@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CYC-700: the Android Switch migration code runs only when Switch (Android 12+) calls it on Cyclon phones
+     (Android 17), and its radios are permission-checked at runtime. The module still declares upstream microG's
+     minSdk 19, so these checks would flag every API it uses. Scoped to the migration package only. -->
+<lint>
+    <issue id="NewApi">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+        <ignore path="src/debug/java/org/microg/gms/migration/**" />
+    </issue>
+    <issue id="MissingPermission">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+        <ignore path="src/debug/java/org/microg/gms/migration/**" />
+    </issue>
+    <issue id="WrongConstant">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+    </issue>
+    <issue id="ParcelCreator">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+    </issue>
+</lint>
