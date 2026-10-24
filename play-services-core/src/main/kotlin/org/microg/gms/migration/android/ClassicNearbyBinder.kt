@@ -31,7 +31,7 @@ internal object ClassicSchemas {
     val endpoint = mapOf(1 to S)
     val reject = mapOf(1 to C, 2 to S)
     val cancel = mapOf(1 to C, 2 to L)
-    val payload = mapOf(1 to L, 2 to I, 3 to B, 4 to DctRecord.Kind.Fd, 5 to S, 6 to L, 7 to DctRecord.Kind.Fd)
+    val payload = mapOf(1 to L, 2 to I, 3 to B, 4 to DctRecord.Kind.Fd, 5 to S, 6 to L, 7 to DctRecord.Kind.Fd, 11 to obj { org.microg.gms.migration.nearby.DctSchemas.parcelBytes })
     val send = mapOf(1 to C, 2 to DctRecord.Kind.Strings, 3 to obj { payload })
     val started = mapOf(1 to I, 2 to S)
     val found = mapOf(1 to S, 2 to S, 3 to S, 5 to B, 6 to I)
@@ -170,10 +170,10 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
             }
             override fun progress(id: Long, count: Long) {
                 val header=headers[id]
-                if(header?.type == PayloadTransferFrame.PayloadHeader.PayloadType.BYTES && count==header.totalSize && deliveredBytes.add(id)) bytes.remove(id)?.let { delivered(header,mapOf(3 to it.toByteArray())) }
+                if(header?.type == PayloadTransferFrame.PayloadHeader.PayloadType.BYTES && count==header.totalSize && deliveredBytes.add(id)) bytes.remove(id)?.let { delivered(header,ClassicParcelBytes.fields(context.cacheDir,it.toByteArray())) }
                 update(session,endpoint,id,3,header?.totalSize ?: -1,count)
             }
-            override fun complete(id: Long, count: Long) { session.outputs.remove(id); val header = requireNotNull(headers.remove(id)); bytes.remove(id)?.let { delivered(header,mapOf(3 to it.toByteArray())) }; files.remove(id)?.let { session.cacheFiles.remove(it) }; deliveredBytes.remove(id); update(session,endpoint,id,1,header.totalSize,count) }
+            override fun complete(id: Long, count: Long) { session.outputs.remove(id); val header = requireNotNull(headers.remove(id)); bytes.remove(id)?.let { delivered(header,ClassicParcelBytes.fields(context.cacheDir,it.toByteArray())) }; files.remove(id)?.let { session.cacheFiles.remove(it) }; deliveredBytes.remove(id); update(session,endpoint,id,1,header.totalSize,count) }
             override fun cancelled(id: Long) { session.cancelled.add(id); failed(id) }
             override fun failed(id: Long) { session.outputs.remove(id)?.let { runCatching { it.close() } }; bytes.remove(id); files.remove(id)?.let { session.cacheFiles.remove(it); it.delete() }; deliveredBytes.remove(id); val header = headers.remove(id); update(session,endpoint,id,if(session.cancelled.remove(id))4 else 2,header?.totalSize ?: -1,0) }
         },16L*1024*1024*1024)
@@ -235,24 +235,49 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
     }
     private fun sendPayload(request: DctRecord, callback: IBinder?) {
         val ids = (request.fields[2] as? Array<*>)?.filterIsInstance<String>() ?: emptyList()
-        val target = ids.map { sessions[it] }; val payload = requireNotNull(request.obj(3)); val id = payload.long(1); val type = payload.int(2)
+        val targets = ids.map { sessions[it] }
+        val payload = requireNotNull(request.obj(3)); val id=payload.long(1); val type=payload.int(2)
         if(ids.size!=ids.toSet().size) { result(callback,13); return }
-        if(ids.isEmpty() || ids.size > 4 || target.any { it?.connected != true } || transfers.containsKey(id) || transfers.size>=16) { result(callback,8005); return }
-        val input: InputStream = when(type) { 1 -> ByteArrayInputStream(requireNotNull(payload.bytes(3)).also { require(it.size <= 1048576) }); 2,3 -> DeadlineFdStreams.input(ParcelFileDescriptor.dup(requireNotNull(payload.fields[4] as? ParcelFileDescriptor).fileDescriptor)); else -> { result(callback,ClassicStatus.PAYLOAD_TYPE); return } }
-        val completion = if(type==3) (payload.fields[7] as? ParcelFileDescriptor)?.let { DeadlineFdStreams.input(ParcelFileDescriptor.dup(it.fileDescriptor)) } else null
+        if(ids.isEmpty() || ids.size>4 || targets.any { it?.connected!=true } || transfers.size>=16) { result(callback,ClassicStatus.NOT_CONNECTED); return }
+        if(type !in 1..3) { result(callback,ClassicStatus.PAYLOAD_TYPE); return }
+        val wrapper=if(type==1)payload.obj(11)?.fields?.get(1) as? ParcelFileDescriptor else null
+        val inline=if(type==1 && wrapper==null)requireNotNull(payload.bytes(3)).also { require(it.size<=ClassicParcelBytes.MAX_BYTES) } else null
+        val input: InputStream=if(inline!=null)ByteArrayInputStream(inline) else DeadlineFdStreams.input(ParcelFileDescriptor.dup(requireNotNull(wrapper ?: payload.fields[4] as? ParcelFileDescriptor).fileDescriptor))
+        val completion=if(type==3)(payload.fields[7] as? ParcelFileDescriptor)?.let { DeadlineFdStreams.input(ParcelFileDescriptor.dup(it.fileDescriptor)) } else null
         val outgoing=Outgoing(input,completion)
-        if(transfers.putIfAbsent(id,outgoing)!=null) { outgoing.close(); result(callback,8005); return }
+        if(transfers.putIfAbsent(id,outgoing)!=null) { outgoing.close(); result(callback,ClassicStatus.PAYLOAD_UNKNOWN); return }
+        val declared=payload.long(6).takeIf { it>=0 } ?: -1
         try { workers.execute {
-            val total = if(type == 1) payload.bytes(3)!!.size.toLong() else payload.long(6).takeIf { it > 0 } ?: -1
-            val header = PayloadTransferFrame.PayloadHeader.newBuilder().setId(id).setType(PayloadTransferFrame.PayloadHeader.PayloadType.forNumber(type)).setTotalSize(total).build(); var offset = 0L
+            var offset=0L; var total=-1L
+            val builder=PayloadTransferFrame.PayloadHeader.newBuilder().setId(id).setType(PayloadTransferFrame.PayloadHeader.PayloadType.forNumber(type))
             try {
-                if(type==1 && total==0L) target.forEach { session -> session!!.channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.DATA).setPayloadHeader(header).setPayloadChunk(PayloadTransferFrame.PayloadChunk.newBuilder().setOffset(0).setFlags(0).setBody(ByteString.EMPTY))).build()) }
-                input.use { val buffer = ByteArray(if(type==1) payload.bytes(3)!!.size.coerceAtLeast(1) else 32768); while(true) { val count = it.read(buffer); val last = count == -1; if(last && completion!=null)require(completion.read()==1) { "Nearby stream producer failed" }; if(!last) require(offset <= 16L*1024*1024*1024-count); val chunk = PayloadTransferFrame.PayloadChunk.newBuilder().setOffset(offset).setFlags(if(last)1 else 0).setBody(if(count<0)ByteString.EMPTY else ByteString.copyFrom(buffer,0,count)); target.forEach { session -> session!!.channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.DATA).setPayloadHeader(header).setPayloadChunk(chunk)).build()) }; if(last) { if(count>0)offset+=count; require(total == -1L || total == offset); break }; offset += count; ids.zip(target).forEach { (ep,s) -> update(s!!,ep,id,3,total,offset) } } }
-                ids.zip(target).forEach { (ep,s) -> update(s!!,ep,id,1,total,offset) }
-            } catch (_: Exception) { ids.zip(target).forEach { (ep,s) -> update(s!!,ep,id,if(outgoing.cancelled.get())4 else 2,total,offset); runCatching { s.channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.CONTROL).setPayloadHeader(header).setControlMessage(PayloadTransferFrame.ControlMessage.newBuilder().setEvent(if(outgoing.cancelled.get())PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_CANCELED else PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_ERROR).setOffset(offset))).build()) } } }
-            finally { transfers.remove(id,outgoing); outgoing.close() }
-        }
-        } catch(_: RejectedExecutionException) { transfers.remove(id,outgoing); outgoing.close(); result(callback,13); return }
+                val body=if(type==1)inline ?: ClassicParcelBytes.read(input) else null
+                total=body?.size?.toLong() ?: declared
+                val header=builder.setTotalSize(total).build()
+                fun chunk(bytes: ByteArray, last: Boolean) {
+                    check(!outgoing.cancelled.get())
+                    require(offset <= 16L*1024*1024*1024-bytes.size)
+                    val frame=V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.DATA).setPayloadHeader(header).setPayloadChunk(PayloadTransferFrame.PayloadChunk.newBuilder().setOffset(offset).setFlags(if(last)1 else 0).setBody(ByteString.copyFrom(bytes)))).build()
+                    targets.forEach { it!!.channel.send(frame) }; offset+=bytes.size
+                }
+                if(body!=null) {
+                    // GMS creates incoming BYTES from the whole first nonfinal DATA.
+                    chunk(body,false)
+                } else {
+                    val buffer=ByteArray(32768)
+                    while(true) { val count=input.read(buffer); if(count==-1)break; if(count==0)continue; chunk(buffer.copyOf(count),false); ids.zip(targets).forEach { (ep,s) -> update(s!!,ep,id,3,total,offset) } }
+                    if(completion!=null)require(completion.read()==1) { "Nearby stream producer failed" }
+                }
+                require(total == -1L || total==offset)
+                chunk(byteArrayOf(),true)
+                ids.zip(targets).forEach { (ep,s) -> update(s!!,ep,id,1,total,offset) }
+            } catch(_: Exception) {
+                ids.zip(targets).forEach { (ep,s) ->
+                    update(s!!,ep,id,if(outgoing.cancelled.get())4 else 2,total,offset)
+                    runCatching { s.channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.CONTROL).setPayloadHeader(builder).setControlMessage(PayloadTransferFrame.ControlMessage.newBuilder().setEvent(if(outgoing.cancelled.get())PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_CANCELED else PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_ERROR).setOffset(offset))).build()) }
+                }
+            } finally { transfers.remove(id,outgoing); outgoing.close() }
+        } } catch(_: RejectedExecutionException) { transfers.remove(id,outgoing); outgoing.close(); result(callback,13); return }
         result(callback,0)
     }
     override fun close() { if(!closed.compareAndSet(false,true)) return; radio?.close(); sessions.values.toList().forEach { it.close() }; sessions.clear(); transfers.values.toList().forEach { runCatching { it.close() } }; transfers.clear(); deaths.forEach { (binder,death) -> runCatching { binder.unlinkToDeath(death,0) } }; deaths.clear(); timer.shutdownNow(); workers.shutdownNow() }

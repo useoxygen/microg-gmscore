@@ -35,7 +35,7 @@ class BootstrapActivity : Activity() {
             }
         }
         status("STARTING (source must use the real exported Google setup UI)")
-        bootstrap=LegacyTargetBootstrap(this,DctRecord(LegacyBootstrapExchange.schema,mapOf(18 to 128L,20 to 128L)),listener,{ verified -> store.commit(Process.myUid(),verified); status("ACKNOWLEDGED_PERSISTED (no credentials logged)") },{ code -> status("ADVERTISING_STATUS=$code") }).also { it.start() }
+        bootstrap=LegacyTargetBootstrap(this,DctRecord(LegacyBootstrapExchange.schema,mapOf(3 to 1,18 to 128L,20 to 128L)),listener,{ verified -> store.commit(Process.myUid(),verified); status("ACKNOWLEDGED_PERSISTED (no credentials logged)") },{ code -> status("ADVERTISING_STATUS=$code") }).also { it.start() }
     }
     override fun onDestroy() { bootstrap?.close(); super.onDestroy() }
 }

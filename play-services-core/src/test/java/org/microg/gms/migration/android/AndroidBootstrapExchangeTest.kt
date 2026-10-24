@@ -52,9 +52,10 @@ class AndroidBootstrapExchangeTest {
     }
     @Test fun legacySourceAcknowledgementPersistsThen13_14_15_17AgreesWithPeer() {
         val root=temp.newFolder(); val uid=Binder.getCallingUid(); val store=AndroidSessionStore(root)
-        LegacyBootstrapExchange(DctRecord(LegacyBootstrapExchange.schema,mapOf(18 to 128L))) { store.commit(uid,it) }.use { exchange ->
+        LegacyBootstrapExchange(DctRecord(LegacyBootstrapExchange.schema,mapOf(3 to 1,18 to 128L))) { store.commit(uid,it) }.use { exchange ->
             val options=JSONObject(exchange.initial("Cyclon (712)").toString(Charsets.UTF_8)).getJSONObject("bootstrapOptions")
             val secret=Base64.decode(options.getString("SharedSecret"),Base64.DEFAULT)
+            assertEquals(1,options.getInt("accountRequirement"))
             assertEquals("intent:#Intent;action=com.google.android.gms.backup.ACTION_WIFI_D2D;package=com.google.android.gms;end",options.getJSONObject("PostTransferAction").getString("wifiD2D"))
             assertNull(store.load(uid).hint())
             exchange.receive("{\"bootstrapConfigurations\":{\"optionFlags\":8}}".toByteArray())

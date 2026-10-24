@@ -49,12 +49,12 @@ object GmsClassicPeerProbe {
                 val streamFixture = ByteArray(100003) { (it % 239).toByte() }
                 val sourceToken = AtomicReference<ByteArray>(); val sourceEndpoint = AtomicReference<String>(); val targetPeer = AtomicReference<String>()
                 val service = "cyclon.cyc712.probe."+java.util.UUID.randomUUID().toString()
-                val fixture = ByteArray(8193) { (it % 251).toByte() }
+                val fixture = ByteArray(100003) { (it % 251).toByte() }
                 fun call(binder: IBinder, code: Int, value: DctRecord) { val data = Parcel.obtain(); val reply = Parcel.obtain(); try { data.writeInterfaceToken(NEARBY_DESCRIPTOR); data.writeNullable(value); check(binder.transact(code,data,reply,0)); reply.readException() } finally { data.recycle(); reply.recycle() } }
                 fun callback(name: String, action: (Int,Parcel) -> Unit): IBinder = object : Binder() { override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean { data.enforceInterface(PREFIX+name); action(code,data); reply?.writeNoException(); return true } }
                 val result = callback("IResultListener") { _,data -> check(data.readInt()==0) }
                 val sourcePayload = callback("IPayloadListener") { code,data ->
-                    if(code == 2) { val record = requireNotNull(DctRecord.nullable(data,ClassicSchemas.received)); record.use { val payload = requireNotNull(it.obj(2)); if(payload.int(2)==1) { check(payload.bytes(3)!!.contentEquals(fixture)) { "GMS received a different byte array" }; received.countDown() }
+                    if(code == 2) { val record = requireNotNull(DctRecord.nullable(data,ClassicSchemas.received)); record.use { val payload = requireNotNull(it.obj(2)); if(payload.int(2)==1) { check(ClassicParcelBytes.body(payload).contentEquals(fixture)) { "GMS received a different byte array" }; received.countDown() }
                         else if(payload.int(2)==2) { val fd=ParcelFileDescriptor.dup((payload.fields[4] as ParcelFileDescriptor).fileDescriptor); Thread { try { check(sourceFileComplete.await(15,TimeUnit.SECONDS)); DeadlineFdStreams.input(fd).use { check(it.readBytes().contentEquals(streamFixture)); sourceFile.countDown() } } catch(e: Throwable) { e.printStackTrace() } }.start() }
                         else if(payload.int(2)==3) { val fd=ParcelFileDescriptor.dup((payload.fields[4] as ParcelFileDescriptor).fileDescriptor); Thread { try { DeadlineFdStreams.input(fd).use { stream -> val bytes=stream.readBytes(); check(bytes.contentEquals(streamFixture)); sourceStream.countDown() } } catch(e: Throwable) { e.printStackTrace() } }.start() } } }
                 }
@@ -71,7 +71,7 @@ object GmsClassicPeerProbe {
                 val sourceOptions = ClassicSchemas.options + mapOf(9 to DctRecord.Kind.Bool,12 to DctRecord.Kind.Bool)
                 call(source,2001,DctRecord(ClassicSchemas.start + mapOf(6 to DctRecord.Kind.Object { sourceOptions }),mapOf(1 to start,3 to "Synthetic source",4 to service,6 to DctRecord(sourceOptions,mapOf(1 to DctRecord(ClassicSchemas.strategy,mapOf(3 to 1,4 to 3)),2 to true,3 to true,4 to true,5 to true,9 to true,12 to false)),7 to sourceLifecycle,8 to "Synthetic source".toByteArray())))
                 check(advertised.await(25,TimeUnit.SECONDS)) { "GMS LAN advertising timed out" }
-                val targetPayload = callback("IPayloadListener") { code,data -> if(code==2) { val record = requireNotNull(DctRecord.nullable(data,ClassicSchemas.received)); record.use { val payload=it.obj(2)!!; if(payload.int(2)==1) { check(payload.bytes(3)!!.contentEquals(fixture)); echoed.countDown() }
+                val targetPayload = callback("IPayloadListener") { code,data -> if(code==2) { val record = requireNotNull(DctRecord.nullable(data,ClassicSchemas.received)); record.use { val payload=it.obj(2)!!; if(payload.int(2)==1) { check(ClassicParcelBytes.body(payload).contentEquals(fixture)); echoed.countDown() }
                     else if(payload.int(2)==2) { val fd=ParcelFileDescriptor.dup((payload.fields[4] as ParcelFileDescriptor).fileDescriptor); Thread { try { check(targetFileComplete.await(15,TimeUnit.SECONDS)); DeadlineFdStreams.input(fd).use { check(it.readBytes().contentEquals(streamFixture)); targetFile.countDown() } } catch(e: Throwable) { e.printStackTrace() } }.start() }
                     else if(payload.int(2)==3) { val fd=ParcelFileDescriptor.dup((payload.fields[4] as ParcelFileDescriptor).fileDescriptor); Thread { try { DeadlineFdStreams.input(fd).use { stream -> check(stream.readBytes().contentEquals(streamFixture)); targetStream.countDown() } } catch(e: Throwable) { e.printStackTrace() } }.start() } } } }
                 val targetPayloadWithProgress = callback("IPayloadListener") { code,data ->
@@ -93,10 +93,10 @@ object GmsClassicPeerProbe {
                 val discovery = callback("IDiscoveryListener") { code,data -> if(code==2) { val record = requireNotNull(DctRecord.nullable(data,ClassicSchemas.found)); val endpoint = record.text(1)!!; targetPeer.set(endpoint); record.close(); call(target!!,2005,DctRecord(ClassicSchemas.request,mapOf(1 to result,4 to "Synthetic target",5 to endpoint,7 to targetLifecycle,8 to "Synthetic target".toByteArray()))) } }
                 call(target!!,2003,DctRecord(ClassicSchemas.discovery,mapOf(1 to result,3 to service,5 to DctRecord(ClassicSchemas.options,mapOf(1 to DctRecord(ClassicSchemas.strategy,mapOf(3 to 1,4 to 3)))),6 to discovery)))
                 check(targetConnected.await(45,TimeUnit.SECONDS)) { "Production GMS to Cyclon LAN connection timed out" }
-                call(target!!,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(targetPeer.get()),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to 712001L,2 to 1,3 to fixture)))))
+                call(target!!,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(targetPeer.get()),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to 712001L,2 to 1)+ClassicParcelBytes.fields(context.cacheDir,fixture)))))
                 // Target peer ID is captured from discovery, distinct from sourceEndpoint.
                 check(received.await(15,TimeUnit.SECONDS)) { "GMS did not receive exact synthetic bytes" }
-                call(source,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(sourceEndpoint.get()),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to 712002L,2 to 1,3 to fixture)))))
+                call(source,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(sourceEndpoint.get()),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to 712002L,2 to 1)+ClassicParcelBytes.fields(context.cacheDir,fixture)))))
                 check(echoed.await(15,TimeUnit.SECONDS)) { "Cyclon did not receive exact synthetic bytes" }
                 fun streamTo(binder: IBinder, endpoint: String, id: Long) {
                     val pipe=ParcelFileDescriptor.createPipe(); val completion=ParcelFileDescriptor.createPipe()
@@ -121,7 +121,7 @@ object GmsClassicPeerProbe {
                 call(source,2010,DctRecord(ClassicSchemas.result,mapOf(1 to result)))
                 println("PASS: production GMS classic LAN discovery/Binder/UKEY2 acceptance and bidirectional encrypted payload bytes")
                 println("Not tested: SmartDevice setup bootstrap, Android Switch, Google accounts, physical radios")
-                val message = "PASS: production GMS classic LAN/Binder/UKEY2 and bidirectional encrypted BYTES, 100003-byte STREAM/status pipes and FILE payloads"
+                val message = "PASS: production GMS classic LAN/Binder/UKEY2 and bidirectional encrypted 100003-byte BYTES/ParcelByteArray, STREAM/status pipes and FILE payloads"
                 java.io.File(context.filesDir,"nearby-result.txt").writeText(message+"\n")
                 report(message)
             } catch(e: Throwable) { e.printStackTrace(); val message = "FAIL: "+e.javaClass.simpleName+": "+e.message; java.io.File(context.filesDir,"nearby-result.txt").writeText(message+"\n"); report(message) }

@@ -40,7 +40,7 @@ internal class ClassicNearbyPayloads(private val sink: Sink, private val maxByte
         require(header.type in listOf(PayloadTransferFrame.PayloadHeader.PayloadType.BYTES,
             PayloadTransferFrame.PayloadHeader.PayloadType.FILE, PayloadTransferFrame.PayloadHeader.PayloadType.STREAM))
         require(header.totalSize in -1..maxBytes)
-        if (header.type == PayloadTransferFrame.PayloadHeader.PayloadType.BYTES) require(header.totalSize in 0..1048576)
+        if (header.type == PayloadTransferFrame.PayloadHeader.PayloadType.BYTES) require(header.totalSize in 0..ClassicParcelBytes.MAX_BYTES)
         val chunk = frame.payloadChunk
         try {
             val item = pending[id] ?: run {

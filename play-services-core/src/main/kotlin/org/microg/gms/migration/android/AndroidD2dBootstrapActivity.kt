@@ -51,7 +51,7 @@ class AndroidD2dBootstrapActivity : Activity() {
                     data.requireEnd(); reply?.writeNoException(); return true
                 }
             }
-            val options=DctRecord(LegacyBootstrapExchange.schema,mapOf(18 to 128L,20 to 128L))
+            val options=DctRecord(LegacyBootstrapExchange.schema,mapOf(3 to 1,18 to 128L,20 to 128L))
             bootstrap=LegacyTargetBootstrap(this,options,listener,{ verified ->
                 sessions.commit(targetUid,verified)
                 handler.post { ready() }
