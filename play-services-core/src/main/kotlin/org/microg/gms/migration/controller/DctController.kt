@@ -29,11 +29,30 @@ internal class DctController(private val context: Context, val session: DctSessi
         fun advertising(status: Int) {}
         fun connected(peer: DeviceInfoResponse) {}
         fun bandwidth(medium: Int, status: Int) {}
-        fun oneWay(type: String, bytes: ByteArray) {}
+        fun oneWay(type: String, bytes: ByteArray): Boolean = false
         fun request(request: DctHttpRequest): DctHttpReply? = null
         fun closed(status: Int) {}
     }
     private val listeners = CopyOnWriteArrayList<Listener>()
+    private val incomingLock = Any()
+    private val buffered = java.util.ArrayDeque<Pair<String, ByteArray>>()
+    private var bufferedBytes = 0
+    private val applicationOwner = java.util.concurrent.CompletableFuture<Listener>()
+    internal fun oneWay(type: String, bytes: ByteArray) { synchronized(incomingLock) {
+        if (stopped.get()) return
+        if (listeners.any { it.oneWay(type, bytes) }) return
+        if (buffered.size >= 8 || bytes.size > 16 * 1024 * 1024 - bufferedBytes) { fail(8013); return }
+        buffered.add(type to bytes.copyOf()); bufferedBytes += bytes.size
+    } }
+    fun applicationReady(listener: Listener) { synchronized(incomingLock) {
+        if (stopped.get()) return
+        applicationOwner.complete(listener)
+        while (buffered.isNotEmpty()) {
+            val (type, bytes) = buffered.peek()
+            if (!listener.oneWay(type, bytes)) return
+            buffered.remove(); bufferedBytes -= bytes.size
+        }
+    } }
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val channels = CopyOnWriteArrayList<DctControlChannel>()
@@ -98,7 +117,7 @@ internal class DctController(private val context: Context, val session: DctSessi
             val channel = DctHttpChannel(network, address, port, tls)
             val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
             val controls = DctControlChannel(channel, Build.MODEL, Build.MANUFACTURER, salt,
-                { type, bytes -> listeners.forEach { it.oneWay(type, bytes) } }, { status -> if (!upgraded) fail(status) }, { request -> publish(request, tls) })
+                ::oneWay, { status -> if (!upgraded) fail(status) }, { request -> publish(request, tls) })
             synchronized(this) { if (stopped.get()) { controls.close(); return@execute }; http = channel; control = controls; channels.add(controls) }
             controls.start()
             if (org.microg.gms.checkin.LastCheckinInfo.read(context).androidId == 0L) {
@@ -138,7 +157,7 @@ internal class DctController(private val context: Context, val session: DctSessi
                                 val frame = DctOfflineFrame.ADAPTER.decode(DctControlChannel.bounded(it))
                                 check(frame.control?.device_info_response != null)
                             }
-                            val nextControl = DctControlChannel(next, Build.MODEL, Build.MANUFACTURER, salt, { type, bytes -> listeners.forEach { it.oneWay(type, bytes) } }, ::fail)
+                            val nextControl = DctControlChannel(next, Build.MODEL, Build.MANUFACTURER, salt, ::oneWay, ::fail)
                             synchronized(this@DctController) {
                                 if (stopped.get()) { nextControl.close(); return@execute }
                                 http = next; control = nextControl; channels.add(nextControl); upgraded = true
@@ -174,7 +193,7 @@ internal class DctController(private val context: Context, val session: DctSessi
             if (stopped.get()) { ready.completeExceptionally(DctFailure(8005)); return@post }
             try {
                 val serverControl = DctServerControl(Build.MODEL, Build.MANUFACTURER,
-                    { incoming -> listeners.firstNotNullOfOrNull { it.request(incoming) } ?: throw DctFailure(8009) }, ::fail)
+                    { incoming -> applicationOwner.get(20, java.util.concurrent.TimeUnit.SECONDS).request(incoming) ?: throw DctFailure(8009) }, ::fail)
                 val peerAddress = java.util.concurrent.atomic.AtomicReference<Inet6Address>()
                 val serverNetwork = java.util.concurrent.atomic.AtomicReference<Network>()
                 val next = DctHttpServer.pake(tls,
@@ -204,6 +223,8 @@ internal class DctController(private val context: Context, val session: DctSessi
     fun fail(status: Int) {
         if (!stopped.compareAndSet(false, true)) return
         android.util.Log.i("GmsDct", "Session closed status=$status")
+        applicationOwner.completeExceptionally(DctFailure(status))
+        synchronized(incomingLock) { buffered.clear(); bufferedBytes = 0 }
         listeners.forEach { runCatching { it.closed(status) } }; listeners.clear()
         synchronized(this) { channels.forEach { it.close() }; channels.clear(); control = null; http = null }
         server?.close(); publisher?.close(); publisher = null

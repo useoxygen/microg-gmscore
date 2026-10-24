@@ -6,6 +6,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Call
 import okhttp3.Response
 import org.microg.gms.migration.controller.DctControlChannel
@@ -28,7 +29,16 @@ internal class DctPayloadBridge(private val context: Context, private val channe
                                 private val notifyPeer: ((Long, String, ByteArray, () -> Unit) -> Boolean)? = null,
                                 private val cancelNotice: ((Long) -> Boolean)? = null) : Closeable {
     private val server = DctServerPayloads(context, received, update)
-    fun incoming(request: DctHttpRequest): DctHttpReply = server.incoming(request)
+    fun incoming(request: DctHttpRequest): DctHttpReply {
+        val path = request.path.substringBefore('?')
+        if (path == "/_callback") {
+            require(request.method == "POST")
+            oneWay(requireNotNull(request.headers["content-type"]), requireNotNull(request.bytes))
+            return DctHttpReply("application/vnd.dct.control+proto", byteArrayOf().toRequestBody())
+        }
+        if (path.startsWith("/_callback/esim")) throw DctFailure(8013)
+        return server.incoming(request)
+    }
     private val work = Executors.newFixedThreadPool(2)
     private val calls = ConcurrentHashMap<Long, Call>()
     private val requestIds = ConcurrentHashMap<Long, Long>()

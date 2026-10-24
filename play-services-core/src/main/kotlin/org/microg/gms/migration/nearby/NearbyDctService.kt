@@ -104,7 +104,10 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
                 mapOf(1 to device().text(1)!!, 2 to 3, 3 to medium, 4 to 3, 11 to device(), 12 to status)))
         }
         override fun request(request: DctHttpRequest): DctHttpReply? = bridge?.incoming(request)
-        override fun oneWay(type: String, bytes: ByteArray) { bridge?.oneWay(type, bytes) ?: controller?.fail(8009) }
+        override fun oneWay(type: String, bytes: ByteArray): Boolean {
+            val target = bridge ?: return false
+            target.oneWay(type, bytes); return true
+        }
         override fun closed(status: Int) {
             if (startResult != null) advertising(status)
             if (!connected) connectionResult(status)
@@ -204,7 +207,7 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
                                     mapOf(1 to id, 2 to status, 3 to total, 4 to transferredBytes)), 3 to 3, 6 to device())))
                         }, { id, type, bytes, consumed -> controller?.publisher?.oneWay(type, bytes, id, consumed) == true },
                             { id -> controller?.publisher?.cancel(id) == true })
-                        accepted = true; controller?.claimActive(); result(callback, 0); connectionResult(0)
+                        accepted = true; controller?.claimActive(); result(callback, 0); connectionResult(0); controller?.applicationReady(listener)
                     }
                 }
                 2007 -> { result(callback, if (matches(request, 6, 2)) 0 else 8005); if (matches(request, 6, 2)) controller?.fail(8004) }

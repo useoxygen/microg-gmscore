@@ -79,6 +79,15 @@ class DctHttpServerTest {
             } } finally { bridge.close(); file.delete(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdownNow() }
         }
     }
+    @Test fun callbackPostsAreOneWayAndDoNotWaitForApplicationResponse() {
+        var seen = false
+        DctPayloadBridge(RuntimeEnvironment.getApplication(), { null }, { payload ->
+            seen = true; assertEquals(4, payload.int(17)); assertEquals("application/test", payload.obj(18)!!.text(1))
+        }, { _,_,_,_ -> }).use { bridge ->
+            val reply = bridge.incoming(DctHttpRequest("POST", "/_callback", mapOf("content-type" to "application/test"), byteArrayOf(4,2)))
+            assertTrue(seen); assertEquals(200, reply.status); assertEquals(0L, reply.body.contentLength())
+        }
+    }
     @Test fun cancellationUnblocksWaitingServerAndDeathClosesQueuedDescriptors() {
         val entered = CountDownLatch(1); val requestId = java.util.concurrent.atomic.AtomicLong()
         val server = DctServerPayloads(RuntimeEnvironment.getApplication(), { requestId.set(it.long(1)); entered.countDown() }, { _,_,_,_ -> })
