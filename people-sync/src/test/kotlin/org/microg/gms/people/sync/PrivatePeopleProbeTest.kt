@@ -10,6 +10,7 @@ import java.util.concurrent.CancellationException
 import kotlin.coroutines.*
 
 class PrivatePeopleProbeTest {
+    private val context = PrivatePeopleContext("25.24.32")
     private val signature = "0123456789abcdef0123456789abcdef01234567"
     private fun run(block: suspend () -> Unit) {
         var result: Result<Unit>? = null
@@ -21,7 +22,7 @@ class PrivatePeopleProbeTest {
     }
     @Test fun fixedGetIsOneSmallReadPerAuthorizedCandidateAndNeverFollowsCursors() = run {
         val requests = mutableListOf<String>(); val output = mutableListOf<String>(); var authorizations = 0
-        PrivatePeopleProbe.run({ variant ->
+        PrivatePeopleProbe.run(context, { variant ->
             authorizations++
             assertTrue(PrivatePeopleProbe.isPrivateService("oauth2:" + variant.scope.scope))
             ProbeGrant("secret-token", PrivatePeopleProbe.authReceipt(ProbeAuthState.TOKEN, 200, null,
@@ -35,7 +36,10 @@ class PrivatePeopleProbeTest {
             } }
             assertEquals(mapOf("pageSize" to "1", "syncParameters.fullSyncOption" to "FULL_SYNC_OK",
                 "mergedPersonSourceOptions.personModelParams.personModel" to "CONTACT_CENTRIC",
-                "requestMask.includeField" to "person.metadata", "fields" to "nextPageToken,nextSyncToken"), params)
+                "requestMask.includeField" to "person.metadata", "fields" to "nextPageToken,nextSyncToken",
+                "requestMask.productContactGroup" to "PRODUCT_BESTIES", "mergedPersonSourceOptions.includedProfileStates" to "CORE_ID",
+                "extensionSet.extensionNames" to "GDATA_COMPATIBILITY", "context.clientVersion.clientType" to "GMS FSA2",
+                "context.clientVersion.clientVersion" to "25.24.32", "context.migrationOptions.useNewRequestMaskBehavior" to "true"), params)
             HttpReply(200, """{"nextPageToken":"secret-page","nextSyncToken":"secret-sync","people":[{"name":"secret-contact"}]}""")
         }, output::add)
         assertEquals(6, authorizations); assertEquals(6, requests.size); assertEquals(6, output.size)
@@ -46,7 +50,7 @@ class PrivatePeopleProbeTest {
     }
     @Test fun denialNeverPerformsGetAndDoesNotAbortOtherCandidates() = run {
         val output = mutableListOf<String>(); var attempted = 0
-        PrivatePeopleProbe.run({ attempted++; ProbeGrant(null, """{"state":"ERROR","http":403,"error":"BadAuthentication","account":"secret"}""") },
+        PrivatePeopleProbe.run(context, { attempted++; ProbeGrant(null, """{"state":"ERROR","http":403,"error":"BadAuthentication","account":"secret"}""") },
             { _, _ -> error("Denied authorization must not read the service") }, output::add)
         assertEquals(6, attempted); assertEquals(6, output.size)
         assertTrue(output.all { it.contains("auth=ERROR auth_http=403 auth_error=BadAuthentication") && it.endsWith("http=NOT_REQUESTED") })
@@ -54,7 +58,7 @@ class PrivatePeopleProbeTest {
     }
     @Test fun untrustedDiagnosticsAndExceptionMessagesNeverReachReceipts() = run {
         val output = mutableListOf<String>()
-        PrivatePeopleProbe.run({ ProbeGrant("secret", """{"state":"secret","http":"secret","error":"secret","client":"secret","clientSig":"secret","caller":"secret","callerSig":"secret"}""") },
+        PrivatePeopleProbe.run(context, { ProbeGrant("secret", """{"state":"secret","http":"secret","error":"secret","client":"secret","clientSig":"secret","caller":"secret","callerSig":"secret"}""") },
             { _, _ -> throw IOException("secret account and bearer") }, output::add)
         assertFalse(output.joinToString().contains("secret"))
         assertTrue(output.all { it.contains("auth=UNKNOWN") && it.contains("client_sig=UNKNOWN") && it.contains("api_result=NETWORK") })
@@ -73,7 +77,7 @@ class PrivatePeopleProbeTest {
         val output = mutableListOf<String>()
         val receipt = PrivatePeopleProbe.authReceipt(ProbeAuthState.ERROR, 9999, "Error=NeedsBrowser\nsecret",
             "com.google.android.gms", signature, "secret", "secret")
-        PrivatePeopleProbe.run({ ProbeGrant(null, receipt) }, { _, _ -> error("No token") }, output::add)
+        PrivatePeopleProbe.run(context, { ProbeGrant(null, receipt) }, { _, _ -> error("No token") }, output::add)
         assertTrue(output.all { it.contains("auth_http=UNKNOWN auth_error=NeedsBrowser") && it.contains("client_sig=${signature.uppercase()}") && it.contains("caller=UNKNOWN caller_sig=UNKNOWN") })
         assertFalse(output.toString().contains("secret"))
         assertFalse(PrivatePeopleProbe.isPrivateService("oauth2:https://www.googleapis.com/auth/peopleapi.readonly secret"))
@@ -82,7 +86,7 @@ class PrivatePeopleProbeTest {
     @Test fun cancellationStopsTheMatrixRatherThanBeingSwallowed() {
         var authorizations = 0
         assertThrows(CancellationException::class.java) { run {
-            PrivatePeopleProbe.run({ authorizations++; throw CancellationException("secret") }, { _, _ -> error("No token") }, { error("Cancelled") })
+            PrivatePeopleProbe.run(context, { authorizations++; throw CancellationException("secret") }, { _, _ -> error("No token") }, { error("Cancelled") })
         } }
         assertEquals(1, authorizations)
     }

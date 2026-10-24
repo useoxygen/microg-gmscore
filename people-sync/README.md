@@ -1,204 +1,142 @@
 # Google Contacts synchronization
 
-This module implements the sync engine used by GmsCore's existing
-`org.microg.gms.people.ContactSyncService`. Google remains the remote contacts
-store; microG implements the Android client, account integration, reconciliation,
-and contact-provider writes.
+Production **Download only** uses the private Internal People v2 REST API at
+`https://people-pa.googleapis.com/v2/`. Google remains the remote store; microG
+imports into Android ContactsProvider. **Two-way is coming soon and disabled.**
+Existing Two-way preferences are blocked before service authorization or provider
+work; they are not silently routed to the unusable public v1 API. The production
+sync adapter advertises supportsUploading=false while writes are gated.
 
-## Modes and ownership
+This follows the owner-approved Prometheus findings in
+`~/research/cyc721-contacts/private-probe-iteration.md` and `private-iteration/`.
+Public v1 tokens were obtained but every tested GET returned SERVICE_DISABLED.
+Private reads work with the required client context. API research is distinct
+from acceptance of this implementation on a device.
 
-In microG Settings, open **Google accounts → Contacts sync**. Each account has
-Off, Download only, and Two-way modes. Enabling a mode requests contact-provider
-permissions and the corresponding Google authorization, verifies a People API
-read, and then enables Android synchronization. Background sync uses
-AccountManager token renewal; missing authorization requires reconnecting.
+## Authorization and client context
 
-Download-only requests `https://www.googleapis.com/auth/contacts.readonly` and
-the API client rejects every mutation. Two-way requests
-`https://www.googleapis.com/auth/contacts` and supports creating, updating, and
-deleting Google contacts. Switching modes changes managed raw-contact editing
-flags. New local-only contacts should be saved in Device storage.
+Download uses `oauth2:https://www.googleapis.com/auth/peopleapi.readonly` through
+the normal microG AccountManager path. There is no write-scope fallback: readonly
+sync succeeded in the device research, and discovery declares readonly for group
+and encoded-photo reads. No private mutation method can dispatch a request.
 
-The Android implementation owns rows in the selected Google account marked
-`SYNC4=microg-people-v1`. It also adopts newly created, dirty, source-less rows in
-that account whose IDs exceed the initial opt-in baseline. Existing unowned
-rows, Device imports, and other apps' raw contacts remain outside this set.
-Remote identifiers, etags, baselines, and pending uploads are stored in the
-owned raw contacts' sync columns. Provider updates assert the observed row
-version and use `CALLER_IS_SYNCADAPTER`. Contact and group metadata checkpoints
-advance after durable provider writes. A pending photo mutation holds the contact
-metadata checkpoint: after photo recovery, the next metadata pass must revisit
-and apply any cloud fields skipped while that journal was pending. Photo download
-hints remain durable independently of metadata checkpoints.
+`PrivatePeopleContext` is the only definition of `GMS FSA2`, client version and
+`useNewRequestMaskBehavior=true`. The Android factory derives the semantic GMS
+version from `Constants.GMS_VERSION_CODE`, the same advertised version already
+used by microG auth requests (currently 25.24.32, controlled by the existing root
+`gmsVersion`). It does not copy an unrelated research APK's version string. Sync,
+batchGet, groups, photos and the non-enabling diagnostic matrix share it. No API
+key, Spatula header, cookie or custom user-agent is sent.
 
-## Sync and recovery
+A fixed read rejected with INVALID_ARGUMENT/400 (or HTTP426) produces **needs
+update**, rather than pretending it was a connectivity failure. Automatic calls
+are paused for that context binding with no I/O retry failure count. A changed
+advertised version/mask or explicit Sync now/enable permits another attempt.
+Known expired-cursor errors are handled before this classification and restart
+with a full read. Error bodies and exception messages are never logged.
 
-- Read every page before applying a snapshot. Keep the request configuration
-  fixed across pages and checkpoints; reset expired sync tokens through a full
-  read. A partial read cannot justify a deletion.
-- Apply incremental tombstones only to owned, clean rows. Verify absence from
-  a full snapshot with a direct read, since list results lag behind mutations.
-- Quarantine malformed contacts independently, including malformed field
-  containers and direct readbacks. Readable siblings still sync. Keep the old
-  checkpoint, preserve all pull deletion candidates, and show partial status
-  until the unreadable entries recover; never treat a malformed page envelope
-  as an empty account.
-- Update only locally changed fields, with the latest CONTACT-source etag.
-  Disjoint local/cloud edits merge. Same-field conflicts remain dirty and hold
-  back the checkpoint; the status screen exposes that review is needed.
-- Record a pending request before sending it. Disable HTTP redirects and
-  transparent mutation retries. A lost create reply is reconciled using a
-  unique `clientData` marker, without issuing another create. Lost update and
-  delete replies require direct readback. Ambiguous outcomes stay pending.
-- Preserve edits made during upload or recovery. Merge unchanged fields from
-  the server and retain subsequent local edits with their dirty flag.
-- Google's delete endpoint has no documented conditional-etag parameter. This
-  implementation checks the latest etag before deleting, but cannot make that
-  read and remote deletion atomic against another client.
+## Read protocol and normalized fields
 
-## Photos and groups
+Sync uses GET `people/sync`, pageSize 100, CONTACT_CENTRIC, CORE_ID,
+PRODUCT_BESTIES and GDATA_COMPATIBILITY. Full reads use FULL_SYNC_OK; incremental
+reads preserve the starting sync token with FULL_SYNC_UNDESIRABLE while paging.
+All other parameters stay identical. Only a complete final page can supply the
+new durable checkpoint. There is no invented private-token lifetime.
 
-`ContactSyncService` runs group metadata/lifecycle sync, contact fields and
-memberships, then photos, serially for the authenticated account.
+The private `personId=c<decimal>` is not a public v1 resource ID. Metadata's exact
+int64 contact IDs and matching CONTACT `sourceIds` (hex) identify each source.
+Internal keys are `people/fsa_<hex>`. Merged people are split only when field
+metadata identifies the contact source; profile fields are not imported as owned
+contact data. Ambiguous deduplicated contact fields, invalid/unrepresentable dates
+and malformed entries are quarantined and their stored copies kept.
 
-Photos use the documented `updateContactPhoto` / `deleteContactPhoto` endpoints,
-not the ordinary person update mask. Only non-default CONTACT-source images
-are managed; public profile/default avatars are not written back. Downloads
-accept HTTPS Google image origins with redirects disabled and never send the
-People API bearer token to an image host. Reads are bounded to 4 MiB. Downloads
-request 1024 pixels; bounded decoding and JPEG encoding keep the provider photo
-blob at most 256 KiB. An atomic provider batch asserts the raw-contact version,
-replaces the photo and records its baseline; ContactsProvider generates the
-display image/thumbnail. Uploads read the provider display-photo stream, with a
-thumbnail fallback. Provider row nonce/DATA_VERSION baselines distinguish a
-user edit from provider recompression. Source revisions and image hashes detect
-changes even when Google reuses a URL, while text-only changes avoid image rewrites.
-After a confirmed mutation, canonical-image read failure leaves a pending read,
-not a pending mutation or a reason to replay the upload.
+The adapter translates singular private proto-JSON fields to the shared internal
+mapping: names/phonetic names, phone/email, addresses, organizations, notes,
+yearless or full birthdays, nicknames, websites, relations, anniversaries/events,
+IM, SIP and user-defined fields. Source etags and primary flags are preserved.
+Direct reads use the verified read-only POST `people:batchGet`; each embedded
+status, requested identity and source identity must agree. A malformed/error item
+is never interpreted as NOT_FOUND. Mutating POST/PUT/PATCH/DELETE are unavailable.
 
-Each photo mutation is journaled in the raw-contact SYNC3 column before dispatch,
-with the action, submitted image hash and local row token. A reply acknowledges
-only the sent token, retaining subsequent local photo/text edits and contact
-tombstones. Lost delete replies reconcile against fresh absence; lost upload
-replies reconcile against exact image-byte equality. **If Google transforms the
-bytes and equality cannot prove the result, the operation remains uncertain;
-it is never automatically replayed over a possible cloud edit.** Photo endpoints
-have no etag precondition, so a direct read/conflict check cannot eliminate the
-race with another client between that read and the mutation. These are explicit
-acceptance limits, not a claim of atomic remote photo writes.
+## Ownership, checkpoints and deletion safety
 
-Groups use their own paginated/incremental checkpoint and provider Groups
-SYNC1–4 columns for etag, title baseline, mutation journal and ownership. New
-local groups are adopted only after a separate per-account group-ID baseline;
-existing unowned groups are not name-matched or adopted. Creates include a
-unique clientData marker. Unknown create replies reconcile only against one
-matching marker in a complete read, never by label name and never by a second
-POST. Renames preserve concurrent local changes. Deletion explicitly sends
-`deleteContacts=false`; local cascading removal atomically refuses edited,
-pending or unowned member rows, including members added after discovery.
+Private raw contacts and groups use `SYNC4=microg-people-fsa2-read-v1`, with
+account/type/dataset scoping and version/owner assertions. Private imports are
+read-only and never adopt source-less/device/app rows. Legacy `microg-people-v1`
+rows and unknown outcomes are preserved separately: this change does not guess
+cross-backend identity equivalence, replay journals, delete or relink old imports.
+If old imports exist, migration/duplicate presentation needs explicit acceptance.
 
-Owned system groups are read-only: My Contacts maps AUTO_ADD and starred maps
-FAVORITES / raw-contact STARRED. Contact memberships use account-scoped group
-IDs and public resource names. A missing group can be resolved by direct get
-when a list lags. Independent membership additions/removals merge as sets,
-including edits made during upload; a merge removing every membership is held
-as a conflict. Removing the last local label falls back to My Contacts because
-the public API requires at least one membership. Pre-mapping owned rows with
-unrepresented native membership edits remain preserved for review rather than
-being silently interpreted or uploaded.
+Contact checkpoints bind the backend, mask/model and client context. Group
+checkpoints are separate, account-scoped and bound independently. Old public
+cursors cannot enter either private endpoint. A context/mask change starts full
+reads while retaining existing private rows.
 
-## Current scope and release acceptance
+Every page is read before applying its snapshot. Malformed entries quarantine
+all identifiable source IDs across pages, apply readable siblings, report partial
+status and hold checkpoints and pull deletions. Explicit partialFailureStates
+also hold deletions/checkpoints. Absence from full reads requires a successful
+direct NOT_FOUND confirmation. A late malformed direct read keeps all earlier
+removal candidates. Dirty, pending and unowned data are preserved. Provider writes
+are version-checked batches; cursors advance only after their writes succeed.
 
-Mapped fields are names, phone numbers, email addresses, postal addresses,
-organizations, plain-text notes, complete or year-less birthdays, nicknames,
-websites, relations, events/anniversaries, IM clients/protocols, SIP addresses,
-and user-defined fields, including preferred-value flags. Dates remain ASCII
-ISO strings regardless of the device locale; invalid or partially represented
-events cannot be silently replaced by another event edit. Contact photos,
-labels, My Contacts membership and starred state are also mapped. File-as,
-contact merge/alias handling and guided conflict resolution remain future work.
-Unmapped cloud fields are excluded from update masks. Unsupported local edits
-are preserved rather than acknowledged as uploaded. Imported Device contacts
-are not automatically migrated or retired.
+## Photos, labels and memberships
 
-Live Google authorization and an actual Google-side round trip are release
-requirements beyond mock API/provider tests. Enable the People API for the
-registered Android OAuth identity, use the existing normal authorization path,
-and test renewal and revoked consent. Contacts editor behavior, the settings
-consent flow, and scheduled/background execution also need end-to-end acceptance.
-No OAuth client secret is embedded in
-this module. A development-signed GmsCore is not an ordinary update of an
-upstream-signed installation: use an upstream release or validate the product's
-signing and account-retention migration before delivery.
+Only non-default CONTACT photos are managed; profile fallback/monograms are not
+turned into owned contact photos. The adapter creates an internal
+`fsa2-photo:<hex>:<revision hash>` locator, not an image URL containing credentials.
+It calls GET `people/photosEncoded` with CONTACT_PHOTO, the hex source ID,
+useBytes=true and the shared context. PNG/JPEG base64 is decoded with a 4 MiB
+bound. Empty/malformed/error replies preserve the old photo. API authorization
+failures keep their sanitized HTTP status/reason. The backend may re-encode images;
+exact byte equality is not proof of pixel identity.
 
-## Authorization diagnostics and parity status
+The Android mapper bounds decoding and emits at most 256 KiB per provider blob.
+Photo replacement and its baseline commit atomically under the raw-row version
+assertion; provider nonce/DATA_VERSION detects later local edits. Metadata stores
+a durable pending photo hint, so an image failure remains retryable even after a
+metadata checkpoint advances. This private backend never creates upload journals.
 
-**This is not full stock-GMS parity or a confirmed fix for the real-account
-activation failure.** See [the GMS comparison](../docs/contacts-parity.md).
-GMS FSA2 uses private People v2 protobuf/gRPC and a flag-selected scope list
-including `peopleapi.legacy.readwrite` on its legacy path. This client remains
-on public People v1 with `contacts[.readonly]` until an actual grant/API result
-identifies the remedy. The documented legacy `m8/feeds` scope aliases `contacts`.
+Groups use GET `people/contactGroups/list` with their own page/sync tokens and
+INCLUDE_DELETED on incremental reads. Each embedded group result must be OK;
+HTTP200 is insufficient. Direct missing-group resolution and absence confirmation
+use the discovery-backed `contactGroups/get` binding with per-item checks.
+Malformed results preserve old labels and hold the group cursor/deletions.
 
-Each account has separate **Check read access** and **Check two-way access**
-actions. They may request Google consent for the selected scope, then issue one
-minimal metadata GET (with at most one 401 token renewal). They return before
-contact-provider access, adoption baselines, `configure()`, or scheduling. They
-do not prove that creates/edits/deletes work; test those with disposable data.
-These checks do not cancel or pause sync that was already enabled independently.
+System IDs map separately from user label hex IDs. All groups are read-only.
+My Contacts maps AUTO_ADD, starred maps FAVORITES/raw STARRED, and membership rows
+use account/owner-scoped provider group IDs. The importer never invents My
+Contacts when the private membership list is empty. It can resolve a referenced
+group missing from a list through a direct read. A group with member rows is kept
+until contact metadata has removed those memberships, avoiding a cascade which
+would alter contact baselines behind the reader. Private group/contact/photo
+writes all fail locally even if accidentally called.
 
-**Check private service access** is a separate diagnostic-only entry point.
-It tests `peopleapi.readonly`, `peopleapi.readwrite`, and
-`peopleapi.legacy.readwrite` individually, first with the actual PM-presented
-identity, then with the existing `isGmsApp` / `appIsGms` override as a labeled
-`GMS_APP` comparison. All token requests use the same microG AccountManager path,
-force a fresh request and do not persist probe responses/tokens. Local consent
-may be requested, but probe failures do not launch the shared remote challenge
-resolver. Private probe consent also skips owner-avatar fetching and raw payload
-logging. The legacy `fsnp` bundle's ten unrelated plus scopes are not requested.
+## Settings, diagnostics and retained code
 
-Each successful grant permits exactly one GET of
-`https://people-pa.googleapis.com/v2/people/sync` with `pageSize=1`,
-`syncParameters.fullSyncOption=FULL_SYNC_OK`,
-`mergedPersonSourceOptions.personModelParams.personModel=CONTACT_CENTRIC`,
-`requestMask.includeField=person.metadata`, and the response selector
-`fields=nextPageToken,nextSyncToken`. No cursor is followed or saved. HTTPS
-redirects/retries are disabled and response reads are capped at 64 KiB. The
-receipt contains only candidate/identity labels, sanitized auth status/error and
-HTTP status, effective app/caller SHA-1 fingerprints, allowlisted API status/reason,
-and token-presence booleans. Tokens and response bodies live only in RAM; logs,
-UI results and preferences never receive their values or contact content.
+Choose Off or Download only in **Google accounts → Contacts sync**. Activation
+obtains Android Contacts permissions and Google authorization, then verifies a
+cursor-only private read before configuring the provider or scheduling. **Check
+read access** and the private scope/identity matrix return before provider access,
+preferences/configure or scheduling. Existing independently enabled sync is not
+paused by a check. The private matrix compares readonly/readwrite/legacy grants
+under actual and separately labeled appIsGms identities, using only GETs. It does
+not persist probe tokens or launch shared remote challenge resolution.
 
-The GET intentionally sends no borrowed API key or Spatula header. A successful
-REST read is evidence for that exact scope/identity/transport only; a denial may
-still reflect private-service/header policy, not just a refused scope. The normal
-public sync scopes, identity, stores and scheduling are unchanged. No private
-sync or write implementation is enabled by this check.
+Diagnostics contain only fixed labels, allowlisted auth/API status/reason/Error,
+numeric HTTP status, effective package/signature fingerprints and cursor-presence
+booleans. No account/contact values, tokens, cursor values, raw error text or
+consent payloads are added. The auth transport/parser suppresses raw body/field
+logs for contacts self-requests even with VERBOSE enabled.
 
-Diagnostics under `GmsContactSync` include fixed stages, requested scope, numeric
-HTTP status, allowlisted auth/API reason/status codes and the public presented
-client/caller SHA-1 digests. A PackageManager-reported signature can differ from
-the APK signer on a signature-spoofing OS. Never enable HTTP body VERBOSE logging.
-No account identifiers, tokens, challenge URLs, consent blobs, contact contents,
-or arbitrary exception text are added to these diagnostics. Unknown reasons are
-reported as UNKNOWN. Production authorization behavior and identities are unchanged; the separately
-labeled probe override is diagnostic only. Retaining an HTTP status does not
-itself repair a grant.
-
-Cyclon Contacts already uses an editable built-in GoogleAccountType, including
-phonetic fields and custom-field support. Adding duplicate primary metadata in
-GmsCore would also be loaded as a Google extension, so this change does not add
-a competing dataset. Settings support CONTACTS_SYNC_SETTINGS and its V3 action;
-**New contact in this account** opens the Contacts editor with the chosen Google
-account in two-way mode. The editor remains responsible for the user's default
-account choice. Existing hourly periodic scheduling and OS dirty-row uploads
-remain; private Chime/GCM registration is not implemented.
-
-Required remaining work is remote linking/file-as, a supported push trigger,
-actual Google grants/round trips,
-and device/provider/editor acceptance. Device/SIM backup and Google-only portal,
-consent migrations, social fields and calling-card services are outside the
-basic account sync implementation. No Device contacts are imported automatically.
+Public `PeopleApi`, its journaled create/update/delete/photo/group engines and
+regression tests remain inexpensive dormant code for a possible future registered
+OAuth client. Production account sync does not call that factory. They are not a
+fallback and do not establish private write support. No owner-level default
+account choice is changed, no new-contact editor action is offered for this
+read-only path, and existing hourly/OS scheduling remains. Private push,
+file-as/linking and all private two-way behavior remain open under CYC-721 and its
+follow-ups. No device or live Google qualification of this commit is implied.
 
 ## Tests
 
@@ -244,21 +182,15 @@ Run this helper instead of the direct instrumentation command when permissions
 have not already been granted; raw instrumentation intentionally cannot approve
 a physical phone by itself. The helper removes its temporary proof after the run.
 
-An optional [Google access probe](../people-sync-lab/README.md) tests the selected
-account through ordinary AccountManager authorization and the production People
-API parser. It is a separate debug app, with its own actual OAuth identity, and
+The optional [public Google access lab](../people-sync-lab/README.md) uses
+ordinary AccountManager authorization and the retained public v1 parser. It does
+not exercise the production private backend and the GMS project currently gets
+SERVICE_DISABLED from public v1. It is a separate debug app, with its own actual OAuth identity, and
 does not replace the installed GmsCore or enable account sync.
 
 ## API references
 
-- [Connections and sync tokens](https://developers.google.com/people/api/rest/v1/people.connections/list)
-- [Create contacts](https://developers.google.com/people/api/rest/v1/people/createContact)
-- [Update contacts and source etags](https://developers.google.com/people/api/rest/v1/people/updateContact)
-- [Delete contacts](https://developers.google.com/people/api/rest/v1/people/deleteContact)
+- [Private v2 discovery](https://people-pa.googleapis.com/$discovery/rest?version=v2)
 - [Android Contacts Provider](https://developer.android.com/identity/providers/contacts-provider)
-- [Android authorization](https://developer.android.com/identity/authorization)
-
-- [Contact photos](https://developers.google.com/people/api/rest/v1/people/updateContactPhoto)
-- [Contact groups](https://developers.google.com/people/api/rest/v1/contactGroups)
-- [Membership semantics](https://developers.google.com/people/api/rest/v1/people#ContactGroupMembership)
-- [AOSP photo version and provider processing](https://android.googlesource.com/platform/packages/providers/ContactsProvider/+/refs/heads/main/src/com/android/providers/contacts/ContactsDatabaseHelper.java)
+- [AOSP photo processing](https://android.googlesource.com/platform/packages/providers/ContactsProvider/+/refs/heads/main/src/com/android/providers/contacts/DataRowHandlerForPhoto.java)
+- Retained public v1 client only: [contacts](https://developers.google.com/people/api/rest/v1/people.connections/list), [groups](https://developers.google.com/people/api/rest/v1/contactGroups), [photos](https://developers.google.com/people/api/rest/v1/people/updateContactPhoto).

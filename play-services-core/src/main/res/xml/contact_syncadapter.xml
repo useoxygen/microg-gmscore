@@ -19,6 +19,6 @@
               android:accountType="com.google"
               android:contentAuthority="com.android.contacts"
               android:userVisible="true"
-              android:supportsUploading="true"
+              android:supportsUploading="false"
               android:isAlwaysSyncable="false"
               android:settingsActivity="org.microg.gms.people.ContactsSyncActivity"/>

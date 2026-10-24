@@ -11,27 +11,35 @@ import org.json.JSONObject
 import org.microg.gms.people.sync.*
 
 class AndroidGroupStore(private val provider: ContentProviderClient, private val account: Account,
-    private val prefs: ContactSyncPreferences) : GroupStore {
+    private val prefs: ContactSyncPreferences, private val backendOwner: String = AndroidContactStore.OWNER,
+    private val checkpointBinding: String? = null) : GroupStore {
+    private val privateBackend get() = backendOwner == PrivatePeopleApi.OWNER
+    val starredResource get() = if (privateBackend) PrivatePeopleApi.groupResource("starred") else STARRED
+    val myContactsResource get() = if (privateBackend) PrivatePeopleApi.groupResource("myContacts") else MY_CONTACTS
     private val scope = "${Groups.ACCOUNT_NAME}=? AND ${Groups.ACCOUNT_TYPE}=? AND ${Groups.DATA_SET} IS NULL"
     private val args get() = arrayOf(account.name, account.type)
     private fun uri() = Groups.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
     private fun selection(id: Long) = "$scope AND ${Groups._ID}=$id"
     private fun assertion(group: LocalGroup) = ContentProviderOperation.newAssertQuery(uri())
-        .withSelection(selection(group.id) + " AND ${Groups.VERSION}=?", args + group.version.toString()).withExpectedCount(1).build()
+        .withSelection(selection(group.id) + " AND ${Groups.VERSION}=?" + (if (privateBackend) " AND ${Groups.SYNC4}=?" else ""),
+            args + group.version.toString() + (if (privateBackend) arrayOf(backendOwner) else emptyArray())).withExpectedCount(1).build()
     fun initialize() {
         check(prefs.mode != SyncMode.OFF)
-        if (prefs.groupAdoptionFloor == null) {
+        if (!privateBackend && prefs.groupAdoptionFloor == null) {
             val floor = provider.query(Groups.CONTENT_URI, arrayOf(Groups._ID), null, null, "${Groups._ID} DESC")!!.use { if (it.moveToFirst()) it.getLong(0) else 0L }
             prefs.initializeGroupFloor(floor)
         }
-        provider.update(uri(), ContentValues().apply { put(Groups.GROUP_IS_READ_ONLY, if (prefs.mode == SyncMode.TWO_WAY) 0 else 1) },
-            "$scope AND ${Groups.SYNC4}=? AND ${Groups.SYSTEM_ID} IS NULL", args + AndroidContactStore.OWNER)
+        provider.update(uri(), ContentValues().apply { put(Groups.GROUP_IS_READ_ONLY, if (!privateBackend && prefs.mode == SyncMode.TWO_WAY) 0 else 1) },
+            "$scope AND ${Groups.SYNC4}=? AND ${Groups.SYSTEM_ID} IS NULL", args + backendOwner)
     }
-    override fun groupCheckpoint() = prefs.groupCheckpoint
-    override fun groupCheckpoint(token: String) { check(prefs.mode != SyncMode.OFF); prefs.groupCheckpoint = token }
+    override fun groupCheckpoint() = if (privateBackend) prefs.privateGroupCheckpoint(checkNotNull(checkpointBinding)) else prefs.groupCheckpoint
+    override fun groupCheckpoint(token: String) {
+        check(prefs.mode != SyncMode.OFF)
+        if (privateBackend) prefs.privateGroupCheckpoint(checkNotNull(checkpointBinding), token) else prefs.groupCheckpoint = token
+    }
     override fun groups(): List<LocalGroup> = provider.query(Groups.CONTENT_URI, null,
-        "$scope AND (${Groups.SYNC4}=? OR (${Groups.SYNC4} IS NULL AND ${Groups.SOURCE_ID} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND ${Groups._ID}>? AND ${Groups.DIRTY}=1))",
-        args + arrayOf(AndroidContactStore.OWNER, (prefs.groupAdoptionFloor ?: Long.MAX_VALUE).toString()), "${Groups._ID} ASC")!!.use { cursor ->
+        if (privateBackend) "$scope AND ${Groups.SYNC4}=?" else "$scope AND (${Groups.SYNC4}=? OR (${Groups.SYNC4} IS NULL AND ${Groups.SOURCE_ID} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND ${Groups._ID}>? AND ${Groups.DIRTY}=1))",
+        args + (if (privateBackend) arrayOf(backendOwner) else arrayOf(backendOwner, (prefs.groupAdoptionFloor ?: Long.MAX_VALUE).toString())), "${Groups._ID} ASC")!!.use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
                 fun text(column: String) = cursor.getString(cursor.getColumnIndexOrThrow(column))
@@ -46,13 +54,13 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
     private fun values(group: ContactGroup) = ContentValues().apply {
         put(Groups.ACCOUNT_NAME, account.name); put(Groups.ACCOUNT_TYPE, account.type)
         put(Groups.SOURCE_ID, group.resource); put(Groups.SYNC1, group.etag); put(Groups.SYNC2, group.name)
-        putNull(Groups.SYNC3); put(Groups.SYNC4, AndroidContactStore.OWNER)
+        putNull(Groups.SYNC3); put(Groups.SYNC4, backendOwner)
         put(Groups.TITLE, group.json.optString("formattedName").ifBlank { group.name })
         if (group.system) put(Groups.SYSTEM_ID, group.name) else putNull(Groups.SYSTEM_ID)
-        put(Groups.AUTO_ADD, if (group.resource == MY_CONTACTS) 1 else 0)
-        put(Groups.FAVORITES, if (group.resource == STARRED) 1 else 0)
-        put(Groups.GROUP_IS_READ_ONLY, if (group.system || prefs.mode != SyncMode.TWO_WAY) 1 else 0)
-        put(Groups.GROUP_VISIBLE, if (!group.system || group.resource in setOf(MY_CONTACTS, STARRED)) 1 else 0)
+        put(Groups.AUTO_ADD, if (group.resource == myContactsResource) 1 else 0)
+        put(Groups.FAVORITES, if (group.resource == starredResource) 1 else 0)
+        put(Groups.GROUP_IS_READ_ONLY, if (privateBackend || group.system || prefs.mode != SyncMode.TWO_WAY) 1 else 0)
+        put(Groups.GROUP_VISIBLE, if (!group.system || group.resource in setOf(myContactsResource, starredResource) || group.json.optString("_privateSystemId") in setOf("friends", "family", "coworkers")) 1 else 0)
         put(Groups.SHOULD_SYNC, 1); put(Groups.DIRTY, 0)
     }
     override fun applyGroup(group: ContactGroup, existing: LocalGroup?) {
@@ -70,6 +78,9 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
             arrayOf(ContactsContract.CommonDataKinds.GroupMembership.CONTENT_ITEM_TYPE, existing.id.toString()), null)!!.use { cursor ->
             buildList { while (cursor.moveToNext()) add(cursor.getLong(0)) }
         }
+        // Let the contact reader remove memberships and update their baselines
+        // first. A private group delete must not silently alter contact metadata.
+        if (privateBackend && members.isNotEmpty()) throw GroupInUse()
         val operations = arrayListOf(assertion(existing))
         val ids = members.distinct()
         if (ids.isNotEmpty()) {
@@ -77,7 +88,7 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
             // avoids a Binder operation and query for every member.
             operations.add(ContentProviderOperation.newAssertQuery(ContactsContract.RawContacts.CONTENT_URI)
                 .withSelection("${ContactsContract.RawContacts._ID} IN (${ids.joinToString(",")}) AND ${ContactsContract.RawContacts.ACCOUNT_NAME}=? AND ${ContactsContract.RawContacts.ACCOUNT_TYPE}=? AND ${ContactsContract.RawContacts.DATA_SET} IS NULL AND ${ContactsContract.RawContacts.SYNC4}=? AND ${ContactsContract.RawContacts.DIRTY}=0 AND ${ContactsContract.RawContacts.SYNC3} IS NULL",
-                    arrayOf(account.name, account.type, AndroidContactStore.OWNER)).withExpectedCount(ids.size).build())
+                    arrayOf(account.name, account.type, backendOwner)).withExpectedCount(ids.size).build())
         }
         // Also refuse a member added after discovery. The check and cascading
         // delete execute in one provider transaction, without yielding.
@@ -91,10 +102,10 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
         catch (error: android.content.OperationApplicationException) { throw GroupInUse() }
     }
     override fun beginGroup(existing: LocalGroup, pending: JSONObject): LocalGroup {
-        check(prefs.mode == SyncMode.TWO_WAY && !existing.system)
+        check(!privateBackend && prefs.mode == SyncMode.TWO_WAY && !existing.system)
         provider.applyBatch(arrayListOf(assertion(existing), ContentProviderOperation.newUpdate(uri())
             .withSelection(selection(existing.id), args).withValue(Groups.SYNC3, pending.toString())
-            .withValue(Groups.SYNC4, AndroidContactStore.OWNER).withExpectedCount(1).build()))
+            .withValue(Groups.SYNC4, backendOwner).withExpectedCount(1).build()))
         val current = groups().single { it.id == existing.id }
         if (current.name != existing.name || current.deleted != existing.deleted) {
             rejectGroup(current); throw IllegalStateException("Group changed before upload")
@@ -121,12 +132,12 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
     }
     fun id(resource: String): Long? = provider.query(Groups.CONTENT_URI, arrayOf(Groups._ID),
         "$scope AND ${Groups.SOURCE_ID}=? AND ${Groups.SYNC4}=? AND ${Groups.DELETED}=0",
-        args + arrayOf(resource, AndroidContactStore.OWNER), null)!!.use { if (it.count > 1) throw UnreadableContact(); if (it.moveToFirst()) it.getLong(0) else null }
+        args + arrayOf(resource, backendOwner), null)!!.use { if (it.count > 1) throw UnreadableContact(); if (it.moveToFirst()) it.getLong(0) else null }
     fun isDeleted(id: Long): Boolean = provider.query(Groups.CONTENT_URI, arrayOf(Groups.DELETED), selection(id), args, null)!!.use {
         it.moveToFirst() && it.getInt(0) != 0
     }
     fun resource(id: Long): String? = provider.query(Groups.CONTENT_URI, arrayOf(Groups.SOURCE_ID),
-        selection(id) + " AND ${Groups.SYNC4}=? AND ${Groups.DELETED}=0", args + AndroidContactStore.OWNER, null)!!.use {
+        selection(id) + " AND ${Groups.SYNC4}=? AND ${Groups.DELETED}=0", args + backendOwner, null)!!.use {
         if (it.moveToFirst()) it.getString(0) else null
     }
     fun resolve(resource: String, api: GroupsApi): Long {

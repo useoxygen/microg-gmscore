@@ -390,7 +390,7 @@ public class AuthManager {
             Log.i("GmsContactSync", "stage=authorization client=com.google.android.gms client_sig_presented=" + signature
                     + " caller=com.google.android.gms caller_sig=" + callerSignature + " is_gms_app=" + isGmsApp);
         }
-        request.suppressSensitiveLogs = contactsProbe;
+        request.suppressSensitiveLogs = contactsSelfRequest;
         recordContactsProbe(request, org.microg.gms.people.sync.ProbeAuthState.UNKNOWN, null, null);
         AuthResponse response;
         try {

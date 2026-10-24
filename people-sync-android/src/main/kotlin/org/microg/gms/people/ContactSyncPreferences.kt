@@ -21,6 +21,14 @@ class ContactSyncPreferences(context: Context, val account: Account) {
     var groupCheckpoint: String?
         get() = prefs.getString(prefix + "groupCheckpoint-v1", null)
         set(value) { check(prefs.edit().putString(prefix + "groupCheckpoint-v1", value).commit()) }
+    fun privateGroupCheckpoint(binding: String): String? = if (prefs.getString(prefix + "privateGroupBinding", null) == binding)
+        prefs.getString(prefix + "privateGroupCheckpoint", null) else null
+    fun privateGroupCheckpoint(binding: String, token: String) {
+        check(prefs.edit().putString(prefix + "privateGroupBinding", binding).putString(prefix + "privateGroupCheckpoint", token).commit())
+    }
+    var blockedClientContext: String?
+        get() = prefs.getString(prefix + "blockedClientContext", null)
+        set(value) { check(prefs.edit().putString(prefix + "blockedClientContext", value).commit()) }
     var status: String
         get() = prefs.getString(prefix + "status", "")!!
         set(value) { prefs.edit().putString(prefix + "status", value).apply() }
@@ -50,6 +58,7 @@ class ContactSyncPreferences(context: Context, val account: Account) {
     }
     fun refresh() {
         if (mode == SyncMode.OFF) return
+        blockedClientContext = null // Explicit user refresh/enable permits one fresh attempt.
         ContentResolver.requestSync(account, AUTHORITY, Bundle().apply {
             putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
             putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)

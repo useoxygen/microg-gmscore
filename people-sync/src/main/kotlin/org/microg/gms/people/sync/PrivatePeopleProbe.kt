@@ -30,11 +30,9 @@ object PrivatePeopleProbe {
     }
     // Discovery revision 20261020. The response selector excludes all people,
     // including metadata: only opaque cursor presence is inspected in RAM.
-    val url = "https://people-pa.googleapis.com/v2/people/sync?" + linkedMapOf(
-        "pageSize" to "1", "syncParameters.fullSyncOption" to "FULL_SYNC_OK",
-        "mergedPersonSourceOptions.personModelParams.personModel" to "CONTACT_CENTRIC",
-        "requestMask.includeField" to "person.metadata", "fields" to "nextPageToken,nextSyncToken"
-    ).entries.joinToString("&") { URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8") }
+    fun url(context: PrivatePeopleContext) = PrivatePeopleApi.ORIGIN + "people/sync?" +
+        context.syncParameters("person.metadata", 1).apply { put("fields", "nextPageToken,nextSyncToken") }
+            .entries.joinToString("&") { URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8") }
 
     @JvmStatic fun isPrivateService(service: String?): Boolean = PrivatePeopleScope.values().any { service == "oauth2:" + it.scope }
     @JvmStatic fun isContactsService(service: String?): Boolean = isPrivateService(service) || service in setOf(
@@ -63,12 +61,12 @@ object PrivatePeopleProbe {
         fun present(key: String) = (json.opt(key) as? String)?.isNotBlank() == true
         return "$base api_result=SUCCESS page_token_present=${present("nextPageToken")} sync_token_present=${present("nextSyncToken")}"
     }
-    suspend fun run(authorize: suspend (PrivatePeopleVariant) -> ProbeGrant,
+    suspend fun run(context: PrivatePeopleContext, authorize: suspend (PrivatePeopleVariant) -> ProbeGrant,
         get: suspend (token: String, url: String) -> HttpReply, emit: (String) -> Unit) {
         for (variant in variants) {
             val grant = try { authorize(variant) } catch (error: CancellationException) { throw error }
                 catch (error: Exception) { ProbeGrant(null, null) }
-            val api = if (grant.token.isNullOrBlank()) "http=NOT_REQUESTED" else try { apiDisplay(get(grant.token, url)) }
+            val api = if (grant.token.isNullOrBlank()) "http=NOT_REQUESTED" else try { apiDisplay(get(grant.token, url(context))) }
                 catch (error: ProbeResponseTooLarge) { "http=${http(error.status)} api_result=OVERSIZE" }
                 catch (error: CancellationException) { throw error }
                 catch (error: Exception) { "http=UNKNOWN api_result=NETWORK" }

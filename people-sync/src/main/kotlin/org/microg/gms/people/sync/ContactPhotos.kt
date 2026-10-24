@@ -30,7 +30,7 @@ object ContactPhotos {
         } ?: throw UnreadableContact()
         return photo
     }
-    fun reference(person: Person): String? = selected(person)?.getString("url")?.also { if (!safeUrl(it)) throw UnreadableContact() }
+    fun reference(person: Person): String? = selected(person)?.getString("url")?.also { if (!safeUrl(it) && !PrivatePeopleApi.isPhotoReference(it)) throw UnreadableContact() }
     fun revision(person: Person): String = hash(canonical(JSONObject().put("personEtag", person.json.optString("etag"))
         .put("contactEtag", person.etag).put("photo", selected(person) ?: JSONObject.NULL)).toByteArray(Charsets.UTF_8))
     fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }

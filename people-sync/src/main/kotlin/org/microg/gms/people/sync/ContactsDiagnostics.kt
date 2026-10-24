@@ -6,7 +6,7 @@ import java.util.Locale
 
 /** Diagnostics are vocabulary, never server messages or exception text. */
 object ContactsDiagnostics {
-    private val apiReasons = setOf("SERVICE_DISABLED", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "ACCESS_TOKEN_EXPIRED",
+    private val apiReasons = setOf("EXPIRED_SYNC_TOKEN", "INVALID_PAGE_TOKEN", "SERVICE_DISABLED", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "ACCESS_TOKEN_EXPIRED",
         "CREDENTIALS_MISSING", "ACCESS_TOKEN_TYPE_UNSUPPORTED", "CONSUMER_INVALID", "USER_PROJECT_DENIED",
         "RATE_LIMIT_EXCEEDED", "QUOTA_EXCEEDED", "SECURITY_POLICY_VIOLATED", "API_KEY_SERVICE_BLOCKED",
         "accessNotConfigured", "insufficientPermissions", "forbidden", "authError", "rateLimitExceeded",

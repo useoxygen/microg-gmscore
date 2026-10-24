@@ -164,44 +164,53 @@ The actual grant and backend remedy remain unproven until that check is run.
 
 ## Implementation status of this draft
 
-Implemented: per-entry quarantine and partial reports; held metadata checkpoints
-and pull-deletion fences; unreadable direct-read isolation; extended field and
-date mappings; safe auth/API diagnostics; non-enabling scope checks; settings
-and selected-account editor entry points. The same draft now implements contact
-photo download/upload/delete, groups/labels, My Contacts and starred, including
-provider code and durable mutation recovery. A separate private REST authorization
-probe compares three single-scope candidates with actual and GMS-app-override
-identities; it performs only a bounded cursor-only GET and never enables sync.
-Private grant/transport acceptance remains unproven. See `people-sync/README.md` for the
-state layout and recovery rules.
+The earlier sections compare the original public v1 design with GMS. Subsequent
+owner-approved Prometheus research establishes public GET SERVICE_DISABLED despite
+successful token grants, and a working private REST read path when client context
+is present (`prometheus-test.md`, then the superseding private-probe-iteration.md).
+The original historical refusal still has no retained incident receipt; the current
+public API blocker is now reproduced. No private writes are enabled here.
 
-Photo download hints have independent per-row durable work. Pending photo
-mutation journals hold the contact metadata checkpoint so the next metadata pass
-revisits cloud fields skipped before photo recovery cleared the journal. Photo
-mutations use dedicated endpoints, bounded images,
-provider display-photo reads and atomic photo/baseline writes. Unknown upload
-replies require exact readback equality; transformed or different readback stays
-uncertain without automatic replay. The endpoint has no etag precondition, so
-the direct preflight check does not eliminate concurrent-cloud-write races.
+Download only now uses private People v2 with peopleapi.readonly. Full/incremental
+paging, source-specific identities/etags/tombstones, extended/phonetic fields,
+encoded contact photos, group/label metadata and memberships/My Contacts/starred
+are implemented. The single shared GMS FSA2 context derives its version from the
+version microG advertises; context rejection pauses automatic calls as needs
+update. Probes share that context and still return before provider/configuration
+or scheduling changes. Two-way is disabled and guarded before auth/provider work,
+including old Two-way preferences. The adapter advertises supportsUploading=false.
+It is not routed to public v1.
 
-Group creates carry unique clientData markers; loss recovery never name-matches
-or repeats a create. Group metadata has a separate checkpoint and journal.
-Deleting a label never requests contact deletion. Provider group deletion guards
-its cascading member changes atomically and preserves edited/unowned rows.
-Memberships and starred merge as sets, including concurrent local/cloud changes;
-pre-mapping native edits and invalid empty membership merges remain preserved.
-All mutation paths keep mode checks, actual client identity, row assertions,
-no transparent retries and separate read-only/two-way consent. Expanded read
-masks invalidate old metadata checkpoints through the existing mask check.
+Private rows and cursors are separate from legacy public rows/cursors. Partial
+reads, embedded errors, malformed IDs/fields, ambiguous merged contact ownership
+and unrepresentable dates preserve stored copies and hold cursors/deletions.
+Absence requires checked direct reads. Photo bytes and provider batches are
+bounded and version-checked. Group deletion waits for member contact metadata to
+settle instead of cascading through their baselines. Existing public journals are
+not replayed or discarded. See people-sync/README.md for current protocol/state.
 
-Not implemented: private FSA2 wire client or a grant/root-cause fix; remote
-merge/alias and file-as writes (CYC-727); authenticated Chime/GCM registration
-(CYC-728). Actual grants and device/provider/editor acceptance remain CYC-729.
-CYC-725/726 now have implementation on PR #39 and remain subject to review,
-merge and acceptance. CYC-721 must not be described as full stock parity or a
-proven real-account activation fix.
+The public client, write journals and tests are retained as dormant code for a
+possible separately registered OAuth client. They are not private write coverage.
+Private updates and membership/star writes remain unresolved; two-way, file-as/
+linking (CYC-727), authenticated push (CYC-728) and device/provider/editor acceptance
+(CYC-729) remain open. API research proved 251-contact paging, photos and group
+reads with a test account, not acceptance of this implementation. In particular,
+the advertised microG version-derived context, readonly group/photo grants,
+private group get/incrementals/expiry, read-only provider flags, legacy migration,
+all extended fields and lifecycle behavior still need device qualification.
 
 ## Validation receipt
+
+Private Download-only backend follow-up: all 151 engine tests and six focused
+Android host tests passed; the app Debug APK and all 23 provider fixtures built;
+provider/app Debug lint passed. Logs: `private-download-extras-verify.log`,
+`private-download-lint.log`, and the final XML/package recheck
+`private-download-final-package.log` in the research folder. New fixtures use
+hand-authored synthetic values matching recorded private response shapes. They
+cover paging, embedded outcomes, source-specific/legacy ownership, encoded photos,
+private groups/memberships and readonly provider flags. Provider instrumentation
+was compiled, not executed. This implementation did not access a phone or an
+authenticated Google endpoint; device/private protocol qualification remains open.
 
 Private authorization probe follow-up: all 124 engine tests and three focused
 Android host tests passed, and the CI Mapbox Default Debug APK built successfully

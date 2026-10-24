@@ -19,7 +19,8 @@ import org.microg.gms.people.sync.*
 
 class AndroidContactStore(private val provider: ContentProviderClient, private val account: Account,
     private val prefs: ContactSyncPreferences, private val groupStore: AndroidGroupStore? = null,
-    private val groupApi: GroupsApi? = null) : ContactStore, PhotoStore {
+    private val groupApi: GroupsApi? = null, private val backendOwner: String = OWNER,
+    private val checkpointBinding: String = PeopleApi.READ_FIELDS) : ContactStore, PhotoStore {
     companion object { const val OWNER = "microg-people-v1" }
     private val scope = "${RawContacts.ACCOUNT_NAME}=? AND ${RawContacts.ACCOUNT_TYPE}=? AND ${RawContacts.DATA_SET} IS NULL"
     private val args get() = arrayOf(account.name, account.type)
@@ -27,10 +28,10 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     private fun rawScope(id: Long) = "$scope AND ${RawContacts._ID}=$id"
     fun configureMode() {
         check(prefs.mode != SyncMode.OFF)
-        val readOnly = if (prefs.mode == SyncMode.TWO_WAY) 0 else 1
+        val readOnly = if (backendOwner == OWNER && prefs.mode == SyncMode.TWO_WAY) 0 else 1
         provider.update(syncUri(RawContacts.CONTENT_URI), ContentValues().apply {
             put(RawContacts.RAW_CONTACT_IS_READ_ONLY, readOnly)
-        }, "$scope AND ${RawContacts.SYNC4}=? AND ${RawContacts.RAW_CONTACT_IS_READ_ONLY}!=?", args + arrayOf(OWNER, readOnly.toString()))
+        }, "$scope AND ${RawContacts.SYNC4}=? AND ${RawContacts.RAW_CONTACT_IS_READ_ONLY}!=?", args + arrayOf(backendOwner, readOnly.toString()))
         val settings = ContentValues().apply {
             put(ContactsContract.Settings.ACCOUNT_NAME, account.name)
             put(ContactsContract.Settings.ACCOUNT_TYPE, account.type)
@@ -44,12 +45,12 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     }
     override fun checkpoint(): String? = ContactsContract.SyncState.get(provider, account)?.let { bytes ->
         val state = JSONObject(String(bytes, Charsets.UTF_8))
-        if (state.optString("fields") == PeopleApi.READ_FIELDS && state.optInt("version") == 1) state.optString("token").takeIf { it.isNotBlank() } else null
+        if (state.optString("backend", OWNER) == backendOwner && state.optString("fields") == checkpointBinding && state.optInt("version") == 1) state.optString("token").takeIf { it.isNotBlank() } else null
     }
     override fun checkpoint(token: String) {
         check(prefs.mode != SyncMode.OFF)
         ContactsContract.SyncState.set(provider, account, JSONObject().put("version", 1)
-            .put("fields", PeopleApi.READ_FIELDS).put("token", token).toString().toByteArray(Charsets.UTF_8))
+            .put("backend", backendOwner).put("fields", checkpointBinding).put("token", token).toString().toByteArray(Charsets.UTF_8))
     }
     override fun project(person: Person) = ContactFieldMapper.fields(ContactFieldMapper.rows(person)).toMutableMap().apply {
         if (groupStore != null) put("memberships", Memberships.field(Memberships.resources(person)))
@@ -68,14 +69,15 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
             if (groupStore?.isDeleted(id) == true) continue
             add(groupStore?.resource(id) ?: "localGroup:$id")
         }
-        remove(STARRED)
-        if (starred) add(STARRED)
-        if (isEmpty()) add(MY_CONTACTS) // The public API requires at least one contact-group membership.
+        remove(groupStore?.starredResource ?: STARRED)
+        if (starred) add(groupStore?.starredResource ?: STARRED)
+        if (isEmpty() && backendOwner == OWNER) add(groupStore?.myContactsResource ?: MY_CONTACTS) // The public API requires at least one contact-group membership.
     }
 
     override fun contacts(): List<LocalContact> = provider.query(RawContacts.CONTENT_URI, null,
-        "$scope AND (${RawContacts.SYNC4}=? OR (${RawContacts.SYNC4} IS NULL AND ${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>? AND ${RawContacts.DIRTY}=1))",
-        args + arrayOf(OWNER, prefs.adoptionFloor.toString()), "${RawContacts._ID} ASC")!!.use { cursor ->
+        if (backendOwner == OWNER) "$scope AND (${RawContacts.SYNC4}=? OR (${RawContacts.SYNC4} IS NULL AND ${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>? AND ${RawContacts.DIRTY}=1))"
+            else "$scope AND ${RawContacts.SYNC4}=?",
+        args + (if (backendOwner == OWNER) arrayOf(backendOwner, prefs.adoptionFloor.toString()) else arrayOf(backendOwner)), "${RawContacts._ID} ASC")!!.use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
                 fun text(column: String) = cursor.getString(cursor.getColumnIndexOrThrow(column))
@@ -101,7 +103,8 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         }
     }
     private fun assertVersion(existing: LocalContact) = ContentProviderOperation.newAssertQuery(syncUri(RawContacts.CONTENT_URI))
-        .withSelection(rawScope(existing.id) + " AND ${RawContacts.VERSION}=?", args + existing.version.toString())
+        .withSelection(rawScope(existing.id) + " AND ${RawContacts.VERSION}=?" + (if (backendOwner == OWNER) "" else " AND ${RawContacts.SYNC4}=?"),
+            args + existing.version.toString() + (if (backendOwner == OWNER) emptyArray() else arrayOf(backendOwner)))
         .withExpectedCount(1).build()
     private fun baseline(person: Person, existing: LocalContact?): String = JSONObject().apply {
         for ((key, value) in project(person)) put(key, org.json.JSONArray(value))
@@ -133,10 +136,11 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         val values = ContentValues().apply {
             put(RawContacts.ACCOUNT_NAME, account.name); put(RawContacts.ACCOUNT_TYPE, account.type)
             put(RawContacts.SOURCE_ID, person.resource); put(RawContacts.SYNC1, person.etag)
-            put(RawContacts.SYNC2, baseline(remoteBaseline, existing)); putNull(RawContacts.SYNC3); put(RawContacts.SYNC4, OWNER)
+            put(RawContacts.SYNC2, baseline(remoteBaseline, existing)); putNull(RawContacts.SYNC3); put(RawContacts.SYNC4, backendOwner)
             put(RawContacts.DIRTY, if (dirty || photoDirty(existing)) 1 else 0)
-            if (groupStore != null) put(RawContacts.STARRED, if (STARRED in memberships) 1 else 0)
-            put(RawContacts.RAW_CONTACT_IS_READ_ONLY, if (readOnly) 1 else 0)
+            if (groupStore != null) put(RawContacts.STARRED, if ((groupStore?.starredResource ?: STARRED) in memberships) 1 else 0)
+            put(RawContacts.RAW_CONTACT_IS_READ_ONLY, if (readOnly || backendOwner != OWNER) 1 else 0)
+            if (backendOwner == PrivatePeopleApi.OWNER && person.json.has("_privateStarred")) put(RawContacts.STARRED, if (person.json.getBoolean("_privateStarred")) 1 else 0)
         }
         operations.add(if (existing == null) ContentProviderOperation.newInsert(syncUri(RawContacts.CONTENT_URI)).withValues(values).build()
             else ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope(existing.id), args).withValues(values).withExpectedCount(1).build())
@@ -168,10 +172,10 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
             .withSelection(rawScope(existing.id), args).withExpectedCount(1).build()))
     }
     override fun begin(existing: LocalContact, pending: JSONObject): LocalContact {
-        check(prefs.mode == SyncMode.TWO_WAY)
+        check(backendOwner == OWNER && prefs.mode == SyncMode.TWO_WAY)
         provider.applyBatch(arrayListOf(assertVersion(existing), ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI))
             .withSelection(rawScope(existing.id), args).withValue(RawContacts.SYNC3, pending.toString())
-            .withValue(RawContacts.SYNC4, OWNER).withExpectedCount(1).build()))
+            .withValue(RawContacts.SYNC4, backendOwner).withExpectedCount(1).build()))
         val current = contacts().single { it.id == existing.id }
         if (current.fields != existing.fields || current.deleted != existing.deleted) {
             rejected(current) // No network request has been dispatched yet.

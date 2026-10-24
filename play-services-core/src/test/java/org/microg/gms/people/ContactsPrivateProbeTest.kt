@@ -5,6 +5,11 @@ import android.accounts.Account
 import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.Intent
+import android.content.AbstractThreadedSyncAdapter
+import android.content.SyncResult
+import android.content.pm.ProviderInfo
+import android.os.Bundle
 import android.database.Cursor
 import android.net.Uri
 import android.content.ContentResolver
@@ -59,7 +64,7 @@ class ContactsPrivateProbeTest {
                 assertEquals(account, received); authCalls++
                 ProbeGrant(if (mode == SyncMode.OFF) "synthetic-token" else null, null)
             }
-            activity.privateProbeGet = { _, url -> getCalls++; assertEquals(PrivatePeopleProbe.url, url); HttpReply(200, "{}") }
+            activity.privateProbeGet = { _, url -> getCalls++; assertEquals(PrivatePeopleProbe.url(ContactSyncService.privatePeopleContext), url); HttpReply(200, "{}") }
             activity.checkPrivateAccess(account)
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(6, authCalls); assertEquals(if (mode == SyncMode.OFF) 6 else 0, getCalls)
@@ -70,6 +75,63 @@ class ContactsPrivateProbeTest {
             assertEquals(mode != SyncMode.OFF, ContentResolver.getSyncAutomatically(account, "com.android.contacts"))
             assertEquals(periodic, ContentResolver.getPeriodicSyncs(account, "com.android.contacts"))
         }
+    }
+    @Test fun productionScopeAndAdvertisedContextArePrivateReadOnly() {
+        assertEquals(PrivatePeopleScope.READONLY.scope, ContactSyncService.scope(SyncMode.DOWNLOAD))
+        assertEquals(PrivatePeopleContext.fromGmsVersionCode(org.microg.gms.common.Constants.GMS_VERSION_CODE).version,
+            ContactSyncService.privatePeopleContext.version)
+        assertThrows(ContactsTwoWayUnavailable::class.java) { ContactSyncService.scope(SyncMode.TWO_WAY) }
+        assertThrows(ContactsTwoWayUnavailable::class.java) {
+            ContactSyncService.contactsToken(RuntimeEnvironment.getApplication(), Account("synthetic@invalid", "com.google"), SyncMode.TWO_WAY)
+        }
+    }
+    @Test fun oldTwoWayAndRejectedContextStopBeforeAuthAndProviderWithoutRetryFailures() {
+        val context = RuntimeEnvironment.getApplication()
+        val account = Account("synthetic@invalid", "com.google")
+        val prefs = ContactSyncPreferences(context, account)
+        val rawPrefs = context.getSharedPreferences("contacts-sync", 0)
+        var touches = 0
+        fun forbidden(): Nothing { touches++; error("Guard must precede provider access") }
+        val provider = object : ContentProvider() {
+            override fun onCreate() = true
+            override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor = forbidden()
+            override fun getType(uri: Uri): String = forbidden()
+            override fun insert(uri: Uri, values: ContentValues?): Uri = forbidden()
+            override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?): Int = forbidden()
+            override fun delete(uri: Uri, selection: String?, args: Array<out String>?): Int = forbidden()
+        }
+        provider.attachInfo(context, ProviderInfo().apply { authority = "com.android.contacts" })
+        ShadowContentResolver.registerProviderInternal("com.android.contacts", provider)
+        val service = Robolectric.buildService(ContactSyncService::class.java).create().get()
+        val getter = ContactSyncService::class.java.getDeclaredMethod("getAdapter").apply { isAccessible = true }
+        val adapter = getter.invoke(service) as AbstractThreadedSyncAdapter
+        context.contentResolver.acquireContentProviderClient("com.android.contacts")!!.use { client ->
+            rawPrefs.edit().putString("com.google:synthetic@invalid:mode", SyncMode.TWO_WAY.name).commit()
+            adapter.onPerformSync(account, Bundle(), "com.android.contacts", client, SyncResult())
+            assertEquals("two_way_unavailable", prefs.status)
+            rawPrefs.edit().putString("com.google:synthetic@invalid:mode", SyncMode.DOWNLOAD.name).commit()
+            prefs.blockedClientContext = ContactSyncService.privatePeopleContext.binding
+            repeat(3) {
+                val result = SyncResult()
+                adapter.onPerformSync(account, Bundle(), "com.android.contacts", client, result)
+                assertEquals("needs_update", prefs.status)
+                assertEquals(0L, result.stats.numIoExceptions); assertEquals(0L, result.stats.numAuthExceptions)
+            }
+            assertEquals(0, touches)
+            prefs.refresh(); assertNull(prefs.blockedClientContext)
+        }
+    }
+    @Test fun twoWayActivationDoesNotAuthorizeConfigureOrSchedule() {
+        val context = RuntimeEnvironment.getApplication()
+        val prefs = context.getSharedPreferences("contacts-sync", 0)
+        prefs.edit().clear().putString("sentinel", "preserved").commit()
+        val before = prefs.all.toMap()
+        val activity = Robolectric.buildActivity(ContactsSyncActivity::class.java).get()
+        val authorize = ContactsSyncActivity::class.java.getDeclaredMethod("authorize", Account::class.java, SyncMode::class.java, Boolean::class.javaPrimitiveType)
+        authorize.isAccessible = true
+        authorize.invoke(activity, Account("synthetic@invalid", "com.google"), SyncMode.TWO_WAY, false)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(before, prefs.all)
     }
     @Test fun quietAuthParserNeverLogsUnknownFieldsOrMalformedValues() {
         ShadowLog.clear()
