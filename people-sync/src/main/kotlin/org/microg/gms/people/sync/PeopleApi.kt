@@ -61,6 +61,7 @@ class UnreadableContact : IOException("Contact entry could not be read")
 class UnsupportedContactEdit : Exception("Contact field contains unmapped values")
 
 interface ContactsApi {
+    fun prepareUpdate(person: Person, changed: Set<String>, payload: JSONObject): JSONObject = PeopleApi.retainUnmapped(person, changed, payload)
     fun list(syncToken: String?, pageToken: String?): Page
     fun get(resource: String): Person?
     fun create(body: JSONObject): Person

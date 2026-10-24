@@ -37,8 +37,9 @@ class PrivatePeopleContext(val version: String) {
     }
 }
 
-/** Read-only private REST client. Mutations fail locally, before transport. */
-class PrivatePeopleApi(private val transport: HttpTransport, val context: PrivatePeopleContext) : ContactsApi, PhotosApi, GroupsApi {
+/** Private REST client. Every mutation rechecks the opt-in immediately before dispatch. */
+class PrivatePeopleApi(private val transport: HttpTransport, val context: PrivatePeopleContext,
+    private val canUpload: () -> Boolean = { false }, private val deviceInfo: String = "microG - Android") : ContactsApi, PhotosApi, GroupsApi {
     companion object {
         const val ORIGIN = "https://people-pa.googleapis.com/v2/"
         const val OWNER = "microg-people-fsa2-read-v1"
@@ -48,7 +49,7 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
             "sipAddress" to "sipAddresses", "userDefined" to "userDefined", "photo" to "photos")
         // Private field masks use singular snake_case paths, not public v1 names.
         val READ_MASK = (listOf("metadata", "name", "phone", "email", "address", "organization", "about", "birthday",
-            "nickname", "website", "relation", "event", "im", "sip_address", "user_defined", "photo", "contact_group_membership"))
+            "nickname", "website", "relation", "event", "im", "sip_address", "user_defined", "photo", "contact_group_membership", "client_data"))
             .joinToString(",") { "person.$it" }
         val SYSTEM_GROUPS = setOf("starred", "friends", "family", "coworkers", "myContacts", "chatBuddies", "all", "blocked")
         fun groupResource(id: String): String = if (id in SYSTEM_GROUPS) "contactGroups/fsa_s_$id" else "contactGroups/fsa_g_${hex(id)}"
@@ -140,6 +141,20 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
             require(source in all)
             return source == id
         }
+        private fun mappedKeys(kind: String): List<String> = when (kind) {
+            "name" -> listOf("givenName", "middleName", "familyName", "honorificPrefix", "honorificSuffix", "unstructuredName", "displayName", "yomiGivenName", "yomiMiddleName", "yomiFamilyName")
+            "address" -> listOf("formatted", "streetAddress", "poBox", "extendedAddress", "locality", "region", "postalCode", "country", "type")
+            "organization" -> listOf("name", "title", "department", "description", "symbol", "yomiName", "stringType", "type")
+            "email" -> listOf("value", "type", "displayName")
+            "about" -> listOf("value", "contentType")
+            "im" -> listOf("value", "type", "protocol")
+            "userDefined" -> listOf("key", "value")
+            "relation", "phone", "website", "sipAddress" -> listOf("value", "type")
+            "nickname" -> listOf("value")
+            "photo" -> listOf("url", "photoToken", "isDefault", "isMonogram")
+            "birthday", "event" -> listOf("type", "calendarDay", "value")
+            else -> emptyList()
+        }
         private fun field(value: JSONObject, kind: String): JSONObject {
             val output = JSONObject()
             val aliases = when (kind) {
@@ -152,20 +167,7 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
             }
             // Only mapped values enter the normalized model, never private
             // lookup tokens, fingerprints, owner/profile data or debug info.
-            val keys = when (kind) {
-                "name" -> listOf("givenName", "middleName", "familyName", "honorificPrefix", "honorificSuffix", "unstructuredName", "displayName", "yomiGivenName", "yomiMiddleName", "yomiFamilyName")
-                "address" -> listOf("formatted", "streetAddress", "poBox", "extendedAddress", "locality", "region", "postalCode", "country", "type")
-                "organization" -> listOf("name", "title", "department", "description", "symbol", "yomiName", "stringType")
-                "email" -> listOf("value", "type", "displayName")
-                "about" -> listOf("value", "contentType")
-                "im" -> listOf("value", "type", "protocol")
-                "userDefined" -> listOf("key", "value")
-                "relation", "phone", "website", "sipAddress" -> listOf("value", "type")
-                "nickname" -> listOf("value")
-                "photo" -> listOf("url", "photoToken")
-                "birthday", "event" -> listOf("type")
-                else -> emptyList()
-            }
+            val keys = mappedKeys(kind) - setOf("calendarDay", "isDefault", "isMonogram") - (if (kind == "birthday") setOf("value") else emptySet())
             for (key in keys) if (value.has(key)) output.put(aliases[key] ?: key, text(value, key))
             if (kind == "organization") {
                 val type = if (value.has("stringType")) text(value, "stringType") else when (value.optString("type")) {
@@ -201,6 +203,12 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                     .put("deleted", deleted).put("sources", JSONArray().put(JSONObject().put("type", "CONTACT")
                         .put("id", id).put("etag", if (deleted) "" else text(source, "sourceEtag")))))
                 if (!deleted) {
+                    // Keep identities separate: this is the returned private Person ID,
+                    // whereas resource/source IDs below are hex CONTACT identifiers.
+                    val personId = text(raw, "personId")
+                    require(personId.matches(Regex("c[0-9]{1,19}")))
+                    normalized.put("_privatePersonId", personId).put("_privateMerged", sources.size != 1)
+                    val unsupported = JSONArray()
                     for ((kind, target) in fields) if (raw.has(kind)) {
                         val values = raw.getJSONArray(kind); val result = JSONArray()
                         for (i in 0 until values.length()) {
@@ -211,6 +219,10 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                                     if (value.optBoolean("isDefault") || value.optBoolean("isMonogram")) continue
                                 }
                                 val mapped = field(value, kind)
+                                // Unknown writable attributes cannot be discarded by a
+                                // whole-array replacement. Hold that field for review.
+                                val known = mappedKeys(kind) + setOf("metadata", "formattedType", "canonicalForm")
+                                if (value.keys().asSequence().any { it !in known }) unsupported.put(target)
                                 if (kind == "photo") {
                                     val revision = ContactPhotos.hash(canonical(mapped).toByteArray(Charsets.UTF_8))
                                     mapped.put("url", "fsa2-photo:$id:$revision")
@@ -236,9 +248,20 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                                 ids.add(groupResource(system))
                             }
                             require(ids.size <= 1)
+                            if (value.has("productContactGroupId") || value.has("delegatedGroupInfo")) unsupported.put("memberships")
                             memberships.addAll(ids) // Product groups are not user labels.
                         }
                     }
+                    if (raw.has("clientData")) {
+                        val values = raw.getJSONArray("clientData"); val markers = JSONArray()
+                        for (i in 0 until values.length()) {
+                            val value = values.getJSONObject(i)
+                            if (belongs(value, id, sources.map { it.first }.toSet()) && value.optString("key") == Person.CREATE_KEY)
+                                markers.put(JSONObject().put("key", Person.CREATE_KEY).put("value", text(value, "value")))
+                        }
+                        normalized.put("clientData", markers)
+                    }
+                    normalized.put("_privateUnsupported", unsupported)
                     normalized.put("memberships", Memberships.json(memberships))
                     normalized.put("_privateStarred", groupResource("starred") in memberships)
                 }
@@ -250,7 +273,8 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8")
     }
     private fun call(method: String, path: String, params: Map<String, String>, body: JSONObject? = null): JSONObject {
-        check(method == "GET" && path in setOf("people/sync", "people/photosEncoded", "people/contactGroups/list", "people/contactGroups/get") || method == "POST" && path == "people:batchGet")
+        val read = method == "GET" || method == "POST" && path == "people:batchGet"
+        if (!read && !canUpload()) throw UploadDisabled()
         val reply = transport.request(method, url(path, params), body?.toString())
         if (reply.status !in 200..299) {
             val status = ContactsDiagnostics.apiStatus(reply.body)
@@ -263,10 +287,14 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                     text.contains(marker) || (0 until details.length()).any { details.optJSONObject(it)?.optString("reason") == marker }
                 }
             }.getOrDefault(false)
+            val fingerprintMismatch = reply.status in setOf(400, 409, 412) && reply.body.contains("FingerprintMismatch")
+            if (fingerprintMismatch) throw ApiException(412, reason = "FINGERPRINT_MISMATCH", code = "FAILED_PRECONDITION")
             if (!expired && (reply.status == 426 || reply.status == 400 && status == "INVALID_ARGUMENT")) throw PeopleClientUpdateRequired()
             throw ApiException(reply.status, expired, reply.retryAfterSeconds, reason, status)
         }
-        try { return JSONObject(reply.body) } catch (error: Exception) { throw IOException("Invalid private contacts response") }
+        val result = try { JSONObject(reply.body) } catch (error: Exception) { throw IOException("Invalid private contacts response") }
+        if (result.has("error")) throw IOException("Invalid private contacts response")
+        return result
     }
     private fun params(syncToken: String?, pageToken: String?, probe: Boolean = false) =
         context.syncParameters(if (probe) "person.metadata" else READ_MASK, if (probe) 1 else 100, syncToken, pageToken).apply {
@@ -314,10 +342,135 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         } catch (error: org.json.JSONException) { throw UnreadableContact() }
         catch (error: IllegalArgumentException) { throw UnreadableContact() }
     }
-    override fun create(body: JSONObject): Person = throw UploadDisabled()
-    override fun update(person: Person, fields: Set<String>, body: JSONObject): Person = throw UploadDisabled()
-    override fun delete(resource: String): Unit = throw UploadDisabled()
-    override fun writePhoto(resource: String, bytes: ByteArray?): Person = throw UploadDisabled()
+    private fun contactId(resource: String): String = resource.removePrefix("people/fsa_").also { require(resource == resource(it)) }
+    private fun mutationParams() = context.parameters().apply {
+        put("deletionContext.mutationContext.source", "ANDROID_FSA2")
+        put("deletionContext.mutationContext.androidDeviceInfo.id", deviceInfo)
+    }
+    private fun postGetParams() = context.parameters().mapKeys { "getPeopleRequest." + it.key }.toMutableMap().apply {
+        put("getPeopleRequest.requestMask.includeField", READ_MASK)
+        put("getPeopleRequest.requestMask.productContactGroup", "PRODUCT_BESTIES")
+        put("getPeopleRequest.mergedPersonSourceOptions.personModelParams.personModel", "CONTACT_CENTRIC")
+        put("getPeopleRequest.mergedPersonSourceOptions.includedProfileStates", "CORE_ID")
+    }
+    private val privateFields = fields.entries.associate { it.value to it.key } + ("memberships" to "contactGroupMembership") + ("clientData" to "clientData")
+    private fun mask(fields: Set<String>) = fields.sorted().joinToString(",") {
+        "person." + when (val key = privateFields.getValue(it)) {
+            "contactGroupMembership" -> "contact_group_membership"; "sipAddress" -> "sip_address"
+            "userDefined" -> "user_defined"; "clientData" -> "client_data"; else -> key
+        }
+    }
+    override fun prepareUpdate(person: Person, changed: Set<String>, payload: JSONObject): JSONObject {
+        if (person.json.optBoolean("_privateMerged")) throw UnsupportedContactEdit()
+        val unsupported = person.json.optJSONArray("_privateUnsupported") ?: JSONArray()
+        if ((0 until unsupported.length()).any { unsupported.getString(it) in changed }) throw UnsupportedContactEdit()
+        return PeopleApi.retainUnmapped(person, changed, payload)
+    }
+    private fun writable(body: JSONObject, selected: Set<String>, id: String? = null): JSONObject {
+        require((PeopleApi.EDITABLE_FIELDS + "clientData").containsAll(selected))
+        val output = JSONObject()
+        for (target in selected) {
+            val kind = privateFields.getValue(target)
+            val values = body.optJSONArray(target) ?: JSONArray(); val next = JSONArray()
+            for (i in 0 until values.length()) {
+                val value = values.getJSONObject(i)
+                val mapped = JSONObject()
+                if (target == "memberships") {
+                    val resource = value.getJSONObject("contactGroupMembership").getString("contactGroupResourceName")
+                    mapped.put("contactGroupId", groupId(resource))
+                } else {
+                    val aliases = when (kind) {
+                        "name" -> mapOf("phoneticGivenName" to "yomiGivenName", "phoneticMiddleName" to "yomiMiddleName", "phoneticFamilyName" to "yomiFamilyName")
+                        "address" -> mapOf("formattedValue" to "formatted", "city" to "locality")
+                        "organization" -> mapOf("jobDescription" to "description", "phoneticName" to "yomiName", "type" to "stringType")
+                        "relation" -> mapOf("person" to "value"); "im" -> mapOf("username" to "value")
+                        else -> emptyMap()
+                    }
+                    for (key in value.keys().asSequence().toList()) {
+                        if (key == "metadata" || key in setOf("displayNameLastFirst", "formattedType", "canonicalForm") || kind == "name" && key == "displayName") continue
+                        if (key == "date") mapped.put("calendarDay", JSONObject(value.getJSONObject(key).toString()))
+                        else mapped.put(aliases[key] ?: key, value.get(key))
+                    }
+                }
+                mapped.put("metadata", JSONObject().put("containerType", "CONTACT").apply {
+                    id?.let { put("encodedContainerId", it) }
+                    value.optJSONObject("metadata")?.let { if (it.has("sourcePrimary")) put("containerPrimary", it.getBoolean("sourcePrimary")) }
+                })
+                next.put(mapped)
+            }
+            output.put(kind, next)
+        }
+        return output
+    }
+    private fun personReceipt(json: JSONObject, expected: String? = null): Person {
+        try {
+            val response = json.getJSONObject("personResponse")
+            require(response.has("status") || response.has("responseStatus"))
+            val code = response.optJSONObject("responseStatus")?.optInt("code") ?: 0
+            if (code == 9) throw ApiException(412, reason = "FINGERPRINT_MISMATCH", code = "FAILED_PRECONDITION")
+            if (code != 0 || response.has("status") && text(response, "status") != "SUCCESS") {
+                // A malformed/partial receipt stays journaled. Only an explicit
+                // embedded rejection can clear an operation with no remote effect.
+                if (code in setOf(3, 5, 6, 7, 16)) throw ApiException(when (code) { 5 -> 404; 7 -> 403; 16 -> 401; else -> 400 })
+                throw UnreadableContact()
+            }
+            val people = normalize(response.getJSONObject("person"))
+            val person = if (expected == null) people.single() else people.single { it.resource == expected }
+            if (person.deleted) throw UnreadableContact()
+            return person
+        } catch (error: org.json.JSONException) { throw UnreadableContact() }
+        catch (error: IllegalArgumentException) { throw UnreadableContact() }
+        catch (error: NoSuchElementException) { throw UnreadableContact() }
+    }
+    override fun create(body: JSONObject): Person {
+        if (!canUpload()) throw UploadDisabled()
+        // Server allocates the contact ID. The durable client marker permits
+        // readback; missing/ambiguous marker recovery must never resend this POST.
+        val selected = body.keys().asSequence().filter {
+            it != "memberships" || body.getJSONArray(it).length() != 0
+        }.toSet()
+        return personReceipt(call("POST", "people", postGetParams(), writable(body, selected)))
+    }
+    override fun update(person: Person, fields: Set<String>, body: JSONObject): Person {
+        if (!canUpload()) throw UploadDisabled()
+        require(fields.isNotEmpty() && PeopleApi.EDITABLE_FIELDS.containsAll(fields))
+        prepareUpdate(person, fields, body)
+        val id = contactId(person.resource)
+        val personId = person.json.getString("_privatePersonId"); require(personId.matches(Regex("c[0-9]{1,19}")))
+        val request = writable(body, fields, id).put("personId", personId).put("metadata", JSONObject()
+            .put("model", "CONTACT_CENTRIC").put("contactId", JSONArray().put(BigInteger(id, 16).toString()))
+            .put("identityInfo", JSONObject().put("sourceIds", JSONArray().put(JSONObject()
+                .put("containerType", "CONTACT").put("id", id).put("sourceEtag", person.etag)))))
+        return personReceipt(call("PUT", "people/$personId", postGetParams().apply {
+            put("container", "CONTACT"); put("fieldMask", mask(fields))
+        }, request), person.resource)
+    }
+    override fun delete(resource: String) {
+        val id = contactId(resource)
+        call("DELETE", "people", mutationParams().apply { put("contactId", id) })
+        // DeletePeople has no per-item receipt. Only a checked NOT_FOUND read
+        // acknowledges deletion; endpoint HTTP 200 alone cannot remove a row.
+        if (get(resource) != null) throw UnreadableContact()
+    }
+    override fun writePhoto(resource: String, bytes: ByteArray?): Person {
+        if (!canUpload()) throw UploadDisabled()
+        val id = contactId(resource)
+        if (bytes == null) call("DELETE", "people/photos/delete", context.parameters().apply { put("contactId", id) })
+        else {
+            require(bytes.isNotEmpty() && bytes.size <= ContactPhotos.MAX_BYTES)
+            val png = byteArrayOf(-119, 80, 78, 71, 13, 10, 26, 10)
+            val format = when {
+                bytes.size >= 8 && bytes.take(8).toByteArray().contentEquals(png) -> "PNG"
+                bytes.size >= 3 && bytes[0] == (-1).toByte() && bytes[1] == (-40).toByte() && bytes[2] == (-1).toByte() -> "JPEG"
+                else -> throw UnreadableContact()
+            }
+            val response = call("PUT", "people/photos", emptyMap(), JSONObject().put("type", "CONTACT_PHOTO")
+                .put("containerId", id).put("format", format).put("photoBytes", ContactPhotos.base64(bytes)).put("context", context.json()))
+            if (response.has("personResponse")) return personReceipt(response, resource)
+            if (!response.has("photoUrl") || !response.has("photoToken")) throw UnreadableContact()
+        }
+        return get(resource) ?: throw UnreadableContact()
+    }
     override fun readPhoto(url: String): ByteArray {
         if (!isPhotoReference(url)) throw UnreadableContact()
         val id = hex(url.split(':')[1])
@@ -350,6 +503,15 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
             .put("formattedName", if (name.has("formattedValue")) text(name, "formattedValue") else value)
             .put("groupType", if (type == "SYSTEM_CONTACT_GROUP") "SYSTEM_CONTACT_GROUP" else "USER_CONTACT_GROUP")
         if (id in SYSTEM_GROUPS) normalized.put("_privateSystemId", id)
+        group.optJSONArray("clientData")?.let { values ->
+            val markers = JSONArray()
+            for (i in 0 until values.length()) {
+                val value = values.getJSONObject(i)
+                if (value.optString("key") == ContactGroup.CREATE_KEY) markers.put(JSONObject()
+                    .put("key", ContactGroup.CREATE_KEY).put("value", text(value, "value")))
+            }
+            normalized.put("clientData", markers)
+        }
         val etag = if (raw.has("fingerprint")) text(raw, "fingerprint").also { require(it.isNotBlank()) }
             else "read-only:" + ContactPhotos.hash(canonical(normalized).toByteArray(Charsets.UTF_8))
         return ContactGroup.parse(normalized.put("etag", etag))
@@ -383,7 +545,42 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         } catch (error: org.json.JSONException) { throw UnreadableContact() }
         catch (error: IllegalArgumentException) { throw UnreadableContact() }
     }
-    override fun createGroup(name: String, creationId: String): ContactGroup = throw UploadDisabled()
-    override fun updateGroup(group: ContactGroup, name: String): ContactGroup = throw UploadDisabled()
-    override fun deleteGroup(resource: String): Unit = throw UploadDisabled()
+    private fun groupReceipt(json: JSONObject, expected: String? = null, deleted: Boolean = false): ContactGroup? {
+        try {
+            val values = json.getJSONArray("groups"); require(values.length() == 1)
+            val raw = values.getJSONObject(0)
+            val status = raw.optString("statusCode", "OK")
+            if (status == "ABORTED" || raw.optString("error").contains("FingerprintMismatch")) throw ApiException(412)
+            if (status in setOf("INVALID_ARGUMENT", "ALREADY_EXISTS")) throw ApiException(400)
+            if (deleted) {
+                require(status in setOf("OK", "NOT_FOUND"))
+                require(groupHint(raw) == expected)
+                return null
+            }
+            return parseGroup(raw, false).also { require(expected == null || it.resource == expected) }
+        } catch (error: org.json.JSONException) { throw UnreadableContact() }
+        catch (error: IllegalArgumentException) { throw UnreadableContact() }
+    }
+    override fun createGroup(name: String, creationId: String): ContactGroup {
+        require(name.isNotBlank() && creationId.isNotBlank())
+        val group = JSONObject().put("name", JSONObject().put("value", name)).put("groupType", JSONObject().put("type", "CONTACT_GROUP"))
+            .put("clientData", JSONArray().put(JSONObject().put("key", ContactGroup.CREATE_KEY).put("value", creationId)))
+        return groupReceipt(call("POST", "people/contactGroups", emptyMap(), JSONObject()
+            .put("groups", JSONArray().put(JSONObject().put("group", group))).put("context", context.json())))!!
+    }
+    override fun updateGroup(group: ContactGroup, name: String): ContactGroup {
+        val id = groupId(group.resource); require(!group.system && id !in SYSTEM_GROUPS && name.isNotBlank())
+        val identity = JSONObject().put("id", id)
+        val entry = JSONObject().put("id", identity).put("fingerprint", group.etag).put("group", JSONObject()
+            .put("id", identity).put("name", JSONObject().put("value", name)).put("groupType", JSONObject().put("type", "CONTACT_GROUP")))
+        return groupReceipt(call("PUT", "people/contactGroups", emptyMap(), JSONObject().put("groups", JSONArray().put(entry))
+            .put("updateMask", "name").put("fingerprintMismatchAction", "FAIL_REQUEST").put("context", context.json())), group.resource)!!
+    }
+    override fun deleteGroup(resource: String) {
+        val id = groupId(resource); require(id !in SYSTEM_GROUPS)
+        groupReceipt(call("DELETE", "people/contactGroups", mutationParams().apply {
+            put("groupId", id); put("deleteContacts", "false")
+        }), resource, true)
+        if (getGroup(resource) != null) throw UnreadableContact()
+    }
 }

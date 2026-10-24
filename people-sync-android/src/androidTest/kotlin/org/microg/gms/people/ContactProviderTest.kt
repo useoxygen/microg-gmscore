@@ -181,6 +181,43 @@ class ContactProviderTest {
             assertEquals(1, legacy.contacts().size); assertEquals(1, privateStore.contacts().size)
         }
     }
+    @Test fun privateTwoWayMakesOwnedRowsEditableAndAdoptsOnlyNewRows() {
+        val old = insertLocal("Old unowned")
+        prefs.initializePrivateFloors(old, Long.MAX_VALUE)
+        prefs.configure(SyncMode.TWO_WAY, old)
+        val created = insertLocal("New private contact")
+        resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
+            val store = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
+                checkpointBinding = PrivatePeopleContext("25.24.32").binding)
+            assertEquals(listOf(created), store.contacts().map { it.id })
+            val pending = JSONObject().put("kind", "create").put("local", JSONObject())
+            val journaled = store.begin(store.contacts().single(), pending)
+            assertEquals("create", store.contacts().single().pending!!.getString("kind"))
+            store.acknowledge(journaled, person("people/fsa_17"))
+            provider.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, created), arrayOf(RawContacts.RAW_CONTACT_IS_READ_ONLY,
+                RawContacts.SYNC4), null, null, null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0)); assertEquals(PrivatePeopleApi.OWNER, it.getString(1))
+            }
+            prefs.configure(SyncMode.DOWNLOAD, old); store.configureMode()
+            provider.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, created), arrayOf(RawContacts.RAW_CONTACT_IS_READ_ONLY), null, null, null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
+            }
+        }
+    }
+    @Test fun privateCursorsAreStagedUntilTheWholePassCommits() {
+        resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
+            val binding = PrivatePeopleContext("25.24.32").binding
+            val store = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
+                checkpointBinding = binding, deferCheckpoint = true)
+            val groups = AndroidGroupStore(provider, account, prefs, PrivatePeopleApi.OWNER, binding, deferCheckpoint = true)
+            store.checkpoint("contacts-next"); groups.groupCheckpoint("groups-next")
+            assertNull(store.checkpoint()); assertNull(groups.groupCheckpoint())
+            // A restarted store cannot see an uncommitted cursor after a failed photo/write.
+            assertNull(AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER, checkpointBinding = binding).checkpoint())
+            store.commitCheckpoint(); groups.commitCheckpoint()
+            assertEquals("contacts-next", store.checkpoint()); assertEquals("groups-next", groups.groupCheckpoint())
+        }
+    }
     @Test fun downloadIsIdempotentAndDoesNotUploadDeviceRows() {
         val deviceId = insertLocal("Device contact", false)
         try {

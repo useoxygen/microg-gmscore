@@ -76,16 +76,14 @@ class ContactsPrivateProbeTest {
             assertEquals(periodic, ContentResolver.getPeriodicSyncs(account, "com.android.contacts"))
         }
     }
-    @Test fun productionScopeAndAdvertisedContextArePrivateReadOnly() {
+    @Test fun productionScopesAndAdvertisedContextUseThePrivateBackend() {
         assertEquals(PrivatePeopleScope.READONLY.scope, ContactSyncService.scope(SyncMode.DOWNLOAD))
         assertEquals(PrivatePeopleContext.fromGmsVersionCode(org.microg.gms.common.Constants.GMS_VERSION_CODE).version,
             ContactSyncService.privatePeopleContext.version)
-        assertThrows(ContactsTwoWayUnavailable::class.java) { ContactSyncService.scope(SyncMode.TWO_WAY) }
-        assertThrows(ContactsTwoWayUnavailable::class.java) {
-            ContactSyncService.contactsToken(RuntimeEnvironment.getApplication(), Account("synthetic@invalid", "com.google"), SyncMode.TWO_WAY)
-        }
+        assertEquals(PrivatePeopleScope.READWRITE.scope, ContactSyncService.scope(SyncMode.TWO_WAY))
+        assertThrows(IllegalArgumentException::class.java) { ContactSyncService.scope(SyncMode.OFF) }
     }
-    @Test fun oldTwoWayAndRejectedContextStopBeforeAuthAndProviderWithoutRetryFailures() {
+    @Test fun rejectedContextStopsBothModesBeforeAuthAndProviderWithoutRetryFailures() {
         val context = RuntimeEnvironment.getApplication()
         val account = Account("synthetic@invalid", "com.google")
         val prefs = ContactSyncPreferences(context, account)
@@ -107,11 +105,9 @@ class ContactsPrivateProbeTest {
         val adapter = getter.invoke(service) as AbstractThreadedSyncAdapter
         context.contentResolver.acquireContentProviderClient("com.android.contacts")!!.use { client ->
             rawPrefs.edit().putString("com.google:synthetic@invalid:mode", SyncMode.TWO_WAY.name).commit()
-            adapter.onPerformSync(account, Bundle(), "com.android.contacts", client, SyncResult())
-            assertEquals("two_way_unavailable", prefs.status)
-            rawPrefs.edit().putString("com.google:synthetic@invalid:mode", SyncMode.DOWNLOAD.name).commit()
             prefs.blockedClientContext = ContactSyncService.privatePeopleContext.binding
-            repeat(3) {
+            repeat(4) { attempt ->
+                rawPrefs.edit().putString("com.google:synthetic@invalid:mode", if (attempt % 2 == 0) SyncMode.DOWNLOAD.name else SyncMode.TWO_WAY.name).commit()
                 val result = SyncResult()
                 adapter.onPerformSync(account, Bundle(), "com.android.contacts", client, result)
                 assertEquals("needs_update", prefs.status)
@@ -121,17 +117,21 @@ class ContactsPrivateProbeTest {
             prefs.refresh(); assertNull(prefs.blockedClientContext)
         }
     }
-    @Test fun twoWayActivationDoesNotAuthorizeConfigureOrSchedule() {
+    @Test fun accessCheckFactoryCannotMutateEvenWithAToken() {
+        val api = ContactSyncService.privateContactsApi("synthetic-token")
+        assertThrows(UploadDisabled::class.java) { api.create(org.json.JSONObject()) }
+        assertThrows(UploadDisabled::class.java) { api.writePhoto("people/fsa_17", byteArrayOf(1)) }
+    }
+    @Test fun privateOwnershipFloorsAreDurableAndIndependentOfLegacyFloors() {
         val context = RuntimeEnvironment.getApplication()
-        val prefs = context.getSharedPreferences("contacts-sync", 0)
-        prefs.edit().clear().putString("sentinel", "preserved").commit()
-        val before = prefs.all.toMap()
-        val activity = Robolectric.buildActivity(ContactsSyncActivity::class.java).get()
-        val authorize = ContactsSyncActivity::class.java.getDeclaredMethod("authorize", Account::class.java, SyncMode::class.java, Boolean::class.javaPrimitiveType)
-        authorize.isAccessible = true
-        authorize.invoke(activity, Account("synthetic@invalid", "com.google"), SyncMode.TWO_WAY, false)
-        shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(before, prefs.all)
+        val account = Account("synthetic-floors@invalid", "com.google")
+        val prefs = ContactSyncPreferences(context, account)
+        assertEquals(Long.MAX_VALUE, prefs.privateAdoptionFloor)
+        prefs.initializePrivateFloors(23, 42)
+        prefs.initializePrivateFloors(100, 200)
+        val restarted = ContactSyncPreferences(context, account)
+        assertEquals(23L, restarted.privateAdoptionFloor); assertEquals(42L, restarted.privateGroupAdoptionFloor)
+        assertEquals(Long.MAX_VALUE, restarted.adoptionFloor); assertNull(restarted.groupAdoptionFloor)
     }
     @Test fun quietAuthParserNeverLogsUnknownFieldsOrMalformedValues() {
         ShadowLog.clear()

@@ -56,6 +56,9 @@ interface PhotoStore {
     fun photoContacts(): List<PhotoContact>
     fun photoBytes(existing: PhotoContact): ByteArray?
     fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact
+    fun holdPhotoConflict(existing: PhotoContact) {
+        beginPhoto(existing, JSONObject(existing.contact.pending!!.toString()).put("conflict", true))
+    }
     fun rejectPhoto(existing: PhotoContact)
     /** Keep a concurrent local photo/text edit; acknowledge only the sent token. */
     fun completePhoto(existing: PhotoContact, remote: Person, sentToken: String, remoteHash: String? = null)
@@ -79,6 +82,7 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
             if (current == null || current.deleted) { if (pending != null) store.rejectPhoto(local); conflicts++; continue }
             val remote = ContactPhotos.reference(current)
             if (pending != null) {
+                if (pending.optBoolean("conflict")) { conflicts++; continue }
                 val hash = remote?.let { ContactPhotos.hash(photos.readPhoto(it)) }
                 val matches = if (pending.getString("action") == "delete") remote == null else hash == pending.getString("hash")
                 if (matches) {
@@ -132,7 +136,8 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
                 store.completePhoto(saved, response, local.token, canonicalHash); uploaded++
             } catch (error: UploadDisabled) { store.rejectPhoto(saved); conflicts++; break }
             catch (error: ApiException) {
-                if (error.definitelyRejected) store.rejectPhoto(saved)
+                if (error.status in setOf(409, 412)) store.holdPhotoConflict(saved)
+                else if (error.definitelyRejected) store.rejectPhoto(saved)
                 if (error.status in listOf(400, 409, 412)) { conflicts++; continue }
                 throw error
             }

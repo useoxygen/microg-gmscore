@@ -18,6 +18,14 @@ class ContactSyncPreferences(context: Context, val account: Account) {
     fun initializeGroupFloor(floor: Long) {
         if (groupAdoptionFloor == null) check(prefs.edit().putLong(prefix + "groupAdoptionFloor", floor).commit())
     }
+    val privateAdoptionFloor: Long get() = prefs.getLong(prefix + "privateAdoptionFloor", Long.MAX_VALUE)
+    val privateGroupAdoptionFloor: Long get() = prefs.getLong(prefix + "privateGroupAdoptionFloor", Long.MAX_VALUE)
+    fun initializePrivateFloors(contacts: Long, groups: Long) {
+        val edit = prefs.edit()
+        if (!prefs.contains(prefix + "privateAdoptionFloor")) edit.putLong(prefix + "privateAdoptionFloor", contacts)
+        if (!prefs.contains(prefix + "privateGroupAdoptionFloor")) edit.putLong(prefix + "privateGroupAdoptionFloor", groups)
+        check(edit.commit())
+    }
     var groupCheckpoint: String?
         get() = prefs.getString(prefix + "groupCheckpoint-v1", null)
         set(value) { check(prefs.edit().putString(prefix + "groupCheckpoint-v1", value).commit()) }

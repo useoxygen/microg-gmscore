@@ -21,6 +21,9 @@ interface ContactStore {
     // Persist before any outbound request. Returns the provider version after
     // recording the journal, without changing the contact's dirty/deleted state.
     fun begin(existing: LocalContact, pending: JSONObject): LocalContact
+    fun holdConflict(existing: LocalContact) {
+        begin(existing, JSONObject(existing.pending!!.toString()).put("kind", "conflict"))
+    }
     fun rejected(existing: LocalContact)
     // Retain concurrent local edits and their dirty flag when acknowledging.
     fun acknowledge(existing: LocalContact, remote: Person?)
@@ -125,6 +128,7 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
             }
             if (existing.pending != null) {
                 val pending = existing.pending
+                if (pending.optString("kind") == "conflict") { conflicts++; continue }
                 val resolved = when (pending.getString("kind")) {
                     "create" -> {
                         // A lost create reply must never trigger a second POST.
@@ -186,7 +190,7 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
                 try {
                     if ("memberships" in changed) payload.put("memberships", JSONArray(Memberships.merge(
                         existing.baseline["memberships"], existing.fields["memberships"], store.project(latest!!)["memberships"])))
-                    payload = PeopleApi.retainUnmapped(latest!!, changed, payload)
+                    payload = api.prepareUpdate(latest!!, changed, payload)
                 } catch (e: UnsupportedContactEdit) { conflicts++; continue }
             }
             val creationId = UUID.randomUUID().toString()
@@ -214,7 +218,8 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
                 conflicts++
                 break
             } catch (e: ApiException) {
-                if (e.definitelyRejected) store.rejected(journaled)
+                if (e.status in setOf(409, 412)) store.holdConflict(journaled)
+                else if (e.definitelyRejected) store.rejected(journaled)
                 if (e.status in listOf(400, 409, 412)) { conflicts++; continue }
                 throw e
             }

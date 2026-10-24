@@ -12,8 +12,10 @@ import org.microg.gms.people.sync.*
 
 class AndroidGroupStore(private val provider: ContentProviderClient, private val account: Account,
     private val prefs: ContactSyncPreferences, private val backendOwner: String = AndroidContactStore.OWNER,
-    private val checkpointBinding: String? = null) : GroupStore {
+    private val checkpointBinding: String? = null, private val deferCheckpoint: Boolean = false) : GroupStore {
     private val privateBackend get() = backendOwner == PrivatePeopleApi.OWNER
+    private var stagedCheckpoint: String? = null
+    fun commitCheckpoint() { stagedCheckpoint?.let { saveCheckpoint(it) }; stagedCheckpoint = null }
     val starredResource get() = if (privateBackend) PrivatePeopleApi.groupResource("starred") else STARRED
     val myContactsResource get() = if (privateBackend) PrivatePeopleApi.groupResource("myContacts") else MY_CONTACTS
     private val scope = "${Groups.ACCOUNT_NAME}=? AND ${Groups.ACCOUNT_TYPE}=? AND ${Groups.DATA_SET} IS NULL"
@@ -21,25 +23,29 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
     private fun uri() = Groups.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
     private fun selection(id: Long) = "$scope AND ${Groups._ID}=$id"
     private fun assertion(group: LocalGroup) = ContentProviderOperation.newAssertQuery(uri())
-        .withSelection(selection(group.id) + " AND ${Groups.VERSION}=?" + (if (privateBackend) " AND ${Groups.SYNC4}=?" else ""),
-            args + group.version.toString() + (if (privateBackend) arrayOf(backendOwner) else emptyArray())).withExpectedCount(1).build()
+        .withSelection(selection(group.id) + " AND ${Groups.VERSION}=? AND (${Groups.SYNC4}=? OR (${Groups.SYNC4} IS NULL AND ${Groups.SOURCE_ID} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND ${Groups._ID}>?))",
+            args + arrayOf(group.version.toString(), backendOwner, (if (privateBackend) prefs.privateGroupAdoptionFloor else prefs.groupAdoptionFloor ?: Long.MAX_VALUE).toString())).withExpectedCount(1).build()
     fun initialize() {
         check(prefs.mode != SyncMode.OFF)
         if (!privateBackend && prefs.groupAdoptionFloor == null) {
             val floor = provider.query(Groups.CONTENT_URI, arrayOf(Groups._ID), null, null, "${Groups._ID} DESC")!!.use { if (it.moveToFirst()) it.getLong(0) else 0L }
             prefs.initializeGroupFloor(floor)
         }
-        provider.update(uri(), ContentValues().apply { put(Groups.GROUP_IS_READ_ONLY, if (!privateBackend && prefs.mode == SyncMode.TWO_WAY) 0 else 1) },
+        provider.update(uri(), ContentValues().apply { put(Groups.GROUP_IS_READ_ONLY, if (prefs.mode == SyncMode.TWO_WAY) 0 else 1) },
             "$scope AND ${Groups.SYNC4}=? AND ${Groups.SYSTEM_ID} IS NULL", args + backendOwner)
     }
     override fun groupCheckpoint() = if (privateBackend) prefs.privateGroupCheckpoint(checkNotNull(checkpointBinding)) else prefs.groupCheckpoint
     override fun groupCheckpoint(token: String) {
         check(prefs.mode != SyncMode.OFF)
+        if (deferCheckpoint) stagedCheckpoint = token else saveCheckpoint(token)
+    }
+    private fun saveCheckpoint(token: String) {
+        check(prefs.mode != SyncMode.OFF)
         if (privateBackend) prefs.privateGroupCheckpoint(checkNotNull(checkpointBinding), token) else prefs.groupCheckpoint = token
     }
     override fun groups(): List<LocalGroup> = provider.query(Groups.CONTENT_URI, null,
-        if (privateBackend) "$scope AND ${Groups.SYNC4}=?" else "$scope AND (${Groups.SYNC4}=? OR (${Groups.SYNC4} IS NULL AND ${Groups.SOURCE_ID} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND ${Groups._ID}>? AND ${Groups.DIRTY}=1))",
-        args + (if (privateBackend) arrayOf(backendOwner) else arrayOf(backendOwner, (prefs.groupAdoptionFloor ?: Long.MAX_VALUE).toString())), "${Groups._ID} ASC")!!.use { cursor ->
+        "$scope AND (${Groups.SYNC4}=? OR (${Groups.SYNC4} IS NULL AND ${Groups.SOURCE_ID} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND ${Groups._ID}>? AND ${Groups.DIRTY}=1))",
+        args + arrayOf(backendOwner, (if (privateBackend) prefs.privateGroupAdoptionFloor else prefs.groupAdoptionFloor ?: Long.MAX_VALUE).toString()), "${Groups._ID} ASC")!!.use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
                 fun text(column: String) = cursor.getString(cursor.getColumnIndexOrThrow(column))
@@ -59,7 +65,7 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
         if (group.system) put(Groups.SYSTEM_ID, group.name) else putNull(Groups.SYSTEM_ID)
         put(Groups.AUTO_ADD, if (group.resource == myContactsResource) 1 else 0)
         put(Groups.FAVORITES, if (group.resource == starredResource) 1 else 0)
-        put(Groups.GROUP_IS_READ_ONLY, if (privateBackend || group.system || prefs.mode != SyncMode.TWO_WAY) 1 else 0)
+        put(Groups.GROUP_IS_READ_ONLY, if (group.system || prefs.mode != SyncMode.TWO_WAY) 1 else 0)
         put(Groups.GROUP_VISIBLE, if (!group.system || group.resource in setOf(myContactsResource, starredResource) || group.json.optString("_privateSystemId") in setOf("friends", "family", "coworkers")) 1 else 0)
         put(Groups.SHOULD_SYNC, 1); put(Groups.DIRTY, 0)
     }
@@ -102,7 +108,7 @@ class AndroidGroupStore(private val provider: ContentProviderClient, private val
         catch (error: android.content.OperationApplicationException) { throw GroupInUse() }
     }
     override fun beginGroup(existing: LocalGroup, pending: JSONObject): LocalGroup {
-        check(!privateBackend && prefs.mode == SyncMode.TWO_WAY && !existing.system)
+        check(prefs.mode == SyncMode.TWO_WAY && !existing.system)
         provider.applyBatch(arrayListOf(assertion(existing), ContentProviderOperation.newUpdate(uri())
             .withSelection(selection(existing.id), args).withValue(Groups.SYNC3, pending.toString())
             .withValue(Groups.SYNC4, backendOwner).withExpectedCount(1).build()))

@@ -81,6 +81,9 @@ interface GroupStore {
     fun applyGroup(group: ContactGroup, existing: LocalGroup?)
     fun removeGroup(existing: LocalGroup)
     fun beginGroup(existing: LocalGroup, pending: JSONObject): LocalGroup
+    fun holdGroupConflict(existing: LocalGroup) {
+        beginGroup(existing, JSONObject(existing.pending!!.toString()).put("kind", "conflict"))
+    }
     fun rejectGroup(existing: LocalGroup)
     fun acknowledgeGroup(existing: LocalGroup, remote: ContactGroup?)
 }
@@ -144,6 +147,7 @@ class GroupsSync(private val api: GroupsApi, private val store: GroupStore, priv
             if (existing.resource in snapshot.unreadable || existing.deleted && skipped > 0) continue
             if (existing.pending != null) {
                 val pending = existing.pending
+                if (pending.optString("kind") == "conflict") { conflicts++; continue }
                 val resolved = when (pending.getString("kind")) {
                     "create" -> {
                         val all = if (snapshot.full) snapshot else read(null)
@@ -189,7 +193,8 @@ class GroupsSync(private val api: GroupsApi, private val store: GroupStore, priv
                 store.acknowledgeGroup(saved, result); uploaded++
             } catch (error: UploadDisabled) { store.rejectGroup(saved); conflicts++; break }
             catch (error: ApiException) {
-                if (error.definitelyRejected) store.rejectGroup(saved)
+                if (error.status in setOf(409, 412)) store.holdGroupConflict(saved)
+                else if (error.definitelyRejected) store.rejectGroup(saved)
                 if (error.status in listOf(400, 409, 412)) { conflicts++; continue }
                 throw error
             }

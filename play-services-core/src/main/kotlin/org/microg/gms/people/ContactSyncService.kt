@@ -30,22 +30,29 @@ class ContactSyncService : Service() {
                 provider: ContentProviderClient, result: SyncResult) {
                 val prefs = ContactSyncPreferences(this@ContactSyncService, account)
                 if (prefs.mode == SyncMode.OFF) return
-                if (prefs.mode == SyncMode.TWO_WAY) { prefs.status = "two_way_unavailable"; return }
                 if (prefs.blockedClientContext == privatePeopleContext.binding) { prefs.status = "needs_update"; return }
                 var usedToken: String? = null
                 try {
                     val mode = prefs.mode
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
-                    val api = privateContactsApi(token)
-                    val currentMode = { if (prefs.mode == SyncMode.DOWNLOAD) SyncMode.DOWNLOAD else SyncMode.OFF }
-                    val groups = AndroidGroupStore(provider, account, prefs, PrivatePeopleApi.OWNER, privatePeopleContext.binding)
+                    val currentMode = { if (prefs.mode == mode) mode else SyncMode.OFF }
+                    val api = privateContactsApi(token) { currentMode() == SyncMode.TWO_WAY }
+                    // Establish private ownership floors before adopting any new
+                    // editor-created rows. Existing public/unowned rows stay separate.
+                    val contactFloor = provider.query(android.provider.ContactsContract.RawContacts.CONTENT_URI,
+                        arrayOf(android.provider.ContactsContract.RawContacts._ID), null, null, "_id DESC")!!.use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                    val groupFloor = provider.query(android.provider.ContactsContract.Groups.CONTENT_URI,
+                        arrayOf(android.provider.ContactsContract.Groups._ID), null, null, "_id DESC")!!.use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                    prefs.initializePrivateFloors(contactFloor, groupFloor)
+                    val groups = AndroidGroupStore(provider, account, prefs, PrivatePeopleApi.OWNER, privatePeopleContext.binding, deferCheckpoint = true)
                     groups.initialize()
                     val groupReport = GroupsSync(api, groups, currentMode).sync()
-                    val store = AndroidContactStore(provider, account, prefs, groups, api, PrivatePeopleApi.OWNER, privatePeopleContext.binding)
+                    val store = AndroidContactStore(provider, account, prefs, groups, api, PrivatePeopleApi.OWNER, privatePeopleContext.binding, deferCheckpoint = true)
                     store.configureMode()
                     val contactReport = ContactsSync(api, store, currentMode).sync()
-                    val photoReport = PhotosSync(api, api, store, currentMode).sync()
+                    val photoReport = if (groupReport.skipped > 0 || contactReport.skipped > 0) SyncReport(0, 0, 0, 0)
+                        else PhotosSync(api, api, store, currentMode).sync()
                     val report = groupReport + contactReport + photoReport
                     result.stats.numEntries += report.downloaded
                     result.stats.numUpdates += report.uploaded
@@ -57,7 +64,12 @@ class ContactSyncService : Service() {
                         report.conflicts > 0 -> "conflict"
                         else -> "success"
                     }
-                    if (report.conflicts == 0 && report.uncertain == 0 && report.skipped == 0) prefs.lastSuccess = System.currentTimeMillis()
+                    if (report.conflicts == 0 && report.uncertain == 0 && report.skipped == 0 && currentMode() != SyncMode.OFF) {
+                        // The metadata/group cursors must not pass pending photos
+                        // or any write/reconciliation failure in this pass.
+                        store.commitCheckpoint(); groups.commitCheckpoint()
+                        prefs.lastSuccess = System.currentTimeMillis()
+                    }
                 } catch (e: PeopleClientUpdateRequired) {
                     prefs.status = "needs_update"
                     prefs.blockedClientContext = privatePeopleContext.binding
@@ -95,9 +107,8 @@ class ContactSyncService : Service() {
         private const val TAG = "GmsContactSync"
         val privatePeopleContext: PrivatePeopleContext get() = PrivatePeopleContext.fromGmsVersionCode(org.microg.gms.common.Constants.GMS_VERSION_CODE)
         fun scope(mode: SyncMode): String {
-            if (mode == SyncMode.TWO_WAY) throw ContactsTwoWayUnavailable()
-            require(mode == SyncMode.DOWNLOAD)
-            return PrivatePeopleScope.READONLY.scope
+            require(mode != SyncMode.OFF)
+            return if (mode == SyncMode.TWO_WAY) PrivatePeopleScope.READWRITE.scope else PrivatePeopleScope.READONLY.scope
         }
         fun contactsToken(context: Context, account: Account, mode: SyncMode): String {
             check(mode != SyncMode.OFF)
@@ -166,8 +177,8 @@ class ContactSyncService : Service() {
                 }
             }
         }
-        fun privateContactsApi(token: String): PrivatePeopleApi = http().let {
-            PrivatePeopleApi(transport(it, token, PrivatePeopleApi.ORIGIN), privatePeopleContext)
+        fun privateContactsApi(token: String, canUpload: () -> Boolean = { false }): PrivatePeopleApi = http().let {
+            PrivatePeopleApi(transport(it, token, PrivatePeopleApi.ORIGIN), privatePeopleContext, canUpload, "${android.os.Build.MANUFACTURER} - ${android.os.Build.MODEL}")
         }
         // Retained for an eventual separately registered public OAuth client.
         // Production account sync and activation never call this factory.

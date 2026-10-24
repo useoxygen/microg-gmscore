@@ -128,9 +128,10 @@ class ContactsSyncActivity : ComponentActivity() {
                         for (account in accounts) {
                             val prefs = ContactSyncPreferences(this@ContactsSyncActivity, account)
                             Text(account.name, style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.contacts_sync_two_way_consent))
                             for (mode in SyncMode.values()) {
                                 Row {
-                                    RadioButton(selected = prefs.mode == mode, enabled = !busy && mode != SyncMode.TWO_WAY, onClick = {
+                                    RadioButton(selected = prefs.mode == mode, enabled = !busy, onClick = {
                                         choose(account, mode)
                                     })
                                     Text(stringResource(when (mode) {
@@ -144,6 +145,9 @@ class ContactsSyncActivity : ComponentActivity() {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 CyclonOutlinedButton(onClick = { checkAccess(account, SyncMode.DOWNLOAD) }, enabled = !busy) {
                                     Text(stringResource(R.string.contacts_sync_check_download))
+                                }
+                                CyclonOutlinedButton(onClick = { checkAccess(account, SyncMode.TWO_WAY) }, enabled = !busy) {
+                                    Text(stringResource(R.string.contacts_sync_check_two_way))
                                 }
                             }
                             CyclonOutlinedButton(onClick = { checkPrivateAccess(account) }, enabled = !busy) {
@@ -188,7 +192,6 @@ class ContactsSyncActivity : ComponentActivity() {
     private fun choose(account: Account, mode: SyncMode) {
         failure = null
         accessCheckResult = null
-        if (mode == SyncMode.TWO_WAY) { failure = ActivationFailure.TWO_WAY_UNAVAILABLE; return }
         if (mode == SyncMode.OFF) {
             ContactSyncPreferences(this, account).configure(mode, Long.MAX_VALUE)
             revision++
@@ -252,7 +255,6 @@ class ContactsSyncActivity : ComponentActivity() {
         authorize(account, mode, checkOnly = true)
     }
     private fun authorize(account: Account, mode: SyncMode, checkOnly: Boolean = false) {
-        if (mode == SyncMode.TWO_WAY) { failure = ActivationFailure.TWO_WAY_UNAVAILABLE; busy = false; pending = null; return }
         lifecycleScope.launch {
             var stage = ActivationStage.AUTHORIZATION
             try {
@@ -286,7 +288,16 @@ class ContactsSyncActivity : ComponentActivity() {
                     // A cancelled/recreated screen must not enable scheduling from an old IO task.
                     if (!AccountManager.get(this@ContactsSyncActivity).getAccountsByType(account.type).contains(account))
                         throw ActivationAccountRemoved()
-                    ContactSyncPreferences(this@ContactsSyncActivity, account).configure(mode, floor)
+                    val groupFloor = withContext(Dispatchers.IO) {
+                        contentResolver.query(android.provider.ContactsContract.Groups.CONTENT_URI,
+                            arrayOf(android.provider.ContactsContract.Groups._ID), null, null, "_id DESC")
+                            ?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                            ?: throw IllegalStateException("Contacts provider unavailable")
+                    }
+                    ContactSyncPreferences(this@ContactsSyncActivity, account).apply {
+                        initializePrivateFloors(floor, groupFloor)
+                        configure(mode, floor)
+                    }
                 }
                 retryChoice = null
                 revision++
