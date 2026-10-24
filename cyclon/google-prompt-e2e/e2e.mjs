@@ -70,7 +70,8 @@ const cleanup = () => cleanupDone ??= (async () => {
   const attempt = async (name, fn) => { try { await fn(); } catch (e) { step(`cleanup ${name} failed`, { message: e.message }); } };
   await attempt('browser', () => browser?.close());
   await attempt('log', () => log.stop());
-  if (pinSet) {
+  // Up to three tries: an interrupted adb command (Ctrl-C reaches adb too) is retried, and success is verified.
+  for (let i = 0; i < 3 && pinSet; i++) {
     await attempt('pin', async () => {
       // Unlock first if a failure left the phone locked, then remove the temporary PIN and check it is gone.
       if (p.locked()) {
@@ -84,6 +85,7 @@ const cleanup = () => cleanupDone ??= (async () => {
       pinSet = false;
     });
   }
+  if (pinSet) console.error(`WARNING: the temporary PIN ${PIN} may still be set on ${serial}; remove it with: adb -s ${serial} shell locksettings clear --old ${PIN}`);
   // Put the phone back as the owner left it: same task in front, shade closed.
   await attempt('shade', () => p.sh('cmd statusbar collapse'));
   await attempt('foreground', async () => {
@@ -95,7 +97,9 @@ const cleanup = () => cleanupDone ??= (async () => {
 })();
 
 const finish = async code => {
+  if (aborted) report.ok = false;
   await cleanup();
+  if (aborted) report.ok = false;
   const dir = join(import.meta.dirname, 'reports');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `report-${Date.now()}.json`), JSON.stringify(report, null, 2));
@@ -110,6 +114,8 @@ const checkAbort = () => { if (aborted) throw new Error(`interrupted by ${aborte
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     report.ok = false;
+    // Once cleanup runs, signals are ignored so it can finish restoring the phone.
+    if (cleanupDone) return;
     if (aborted) { finish(130); return; }
     aborted = signal;
     step('interrupted', { signal });
@@ -124,8 +130,9 @@ try {
   if (locked) {
     // Without a PIN the keyguard goes away on wake, so the run sets one. The power key locks at once.
     checkAbort();
-    p.sh(`locksettings set-pin ${PIN}`);
+    // Marked first: if the command is interrupted after the phone set the PIN, cleanup still removes it.
     pinSet = true;
+    p.sh(`locksettings set-pin ${PIN}`);
     p.sh('input keyevent KEYCODE_POWER');
     await sleep(2500);
     p.sh('input keyevent KEYCODE_WAKEUP');
@@ -164,15 +171,12 @@ try {
 
   // Phone: one message's session goes received -> fetched -> shown. Other sessions (removal tickles, ignored
   // messages) are skipped, and a fetch attempt that is retried does not count as a failure.
-  // Wait for a shown prompt; an ended session only decides after 10 more seconds without one.
+  // Wait up to 60 s for a shown prompt; an ended session (possibly an older prompt's) only decides at the end.
   let outcome = null;
-  let endedAt = null;
   for (const end = Date.now() + 60000; Date.now() < end; await sleep(500)) {
     checkAbort();
     outcome = routeOutcome(log.lines);
     if (outcome?.shown) break;
-    if (outcome) endedAt ??= Date.now();
-    if (endedAt && Date.now() - endedAt > 10000) break;
   }
   step('route', outcome ?? { shown: false });
   if (!outcome) throw new Error('no Gms2FA session showed the prompt or ended within 60 s');
@@ -197,6 +201,7 @@ try {
   await sleep(1500);
   const note = await p.waitFor(new RegExp(`${account.source}|Google sign-in request`, 'i'), 10000);
   if (!note) throw new Error('notification not found in the shade');
+  checkAbort();
   p.tap(note);
   step('notification tapped');
 
@@ -216,8 +221,13 @@ try {
   let body;
   for (const end = Date.now() + 30000; Date.now() < end && !report.ok; await sleep(1000)) {
     body = await text(page);
-    if (deny) report.ok = /tapped no|stopped|denied|didn.?t allow/i.test(body);
-    else report.ok = page.url().split('?')[0] !== promptUrl && !/check your phone/i.test(body);
+    checkAbort();
+    const url = page.url().split('?')[0];
+    const refused = /\/rejected\b/.test(url) || /tapped no|stopped|denied|didn.?t allow|couldn.?t (verify|sign)/i.test(body);
+    if (deny) report.ok = refused;
+    // Approval: Google moved on to the signed-in or recovery's next page (not another challenge, not a refusal).
+    else report.ok = url !== promptUrl && !refused && !/\/challenge\//.test(url) &&
+      /myaccount\.google\.com|mail\.google\.com|\/speedbump\/|welcome back/i.test(url + ' ' + body);
   }
   step('browser result', { url: page.url().split('?')[0], text: body.slice(0, 200) });
 } catch (e) {
