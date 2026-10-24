@@ -16,7 +16,10 @@ configurations {
 }
 
 dependencies {
-    compileOnly project(':migration-restore-api-stubs')
+    implementation project(":migration-ukey2")
+    compileOnly project(":migration-framework-stubs")
+    // Stubs resolve hidden APIs only at compile time; never package them.
+    testCompileOnly project(":migration-framework-stubs")
     implementation 'com.google.zxing:core:3.5.2'
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'

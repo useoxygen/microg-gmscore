@@ -132,5 +132,8 @@ include ':calendar-sync-android'
 // Optional, development-only OAuth/People API acceptance app; never shipped in GmsCore.
 if (hasModule("contactsLab", false)) include ':people-sync-lab'
 
-// Compile-only hidden framework signature; never include this module in an APK.
-include ':migration-restore-api-stubs'
+include ":migration-ukey2"
+include ":migration-framework-stubs"
+
+// Opt-in synthetic GMS peer app, never part of production microG builds.
+if (providers.gradleProperty("migrationLab").getOrElse("false") == "true") include ":migration-android-lab", ":migration-restore-fixture"

@@ -14,7 +14,7 @@ internal class DctRecord(val schema: Map<Int, Kind>, val fields: Map<Int, Any> =
     sealed class Kind {
         object IntValue : Kind(); object LongValue : Kind(); object Bool : Kind(); object Text : Kind()
         object Bytes : Kind(); object Binder : Kind(); object Ints : Kind(); object Strings : Kind()
-        object UriValue : Kind(); object Fd : Kind(); object ByteArrays : Kind()
+        object UriValue : Kind(); object UuidValue : Kind(); object Fd : Kind(); object ByteArrays : Kind()
         class Object(val schema: () -> Map<Int, Kind>) : Kind()
         class ListValue(val schema: () -> Map<Int, Kind>) : Kind()
     }
@@ -45,7 +45,7 @@ internal class DctRecord(val schema: Map<Int, Kind>, val fields: Map<Int, Any> =
                     Kind.Binder -> p.writeStrongBinder(value as IBinder)
                     Kind.Ints -> p.writeIntArray(value as IntArray)
                     Kind.Strings -> p.writeStringArray(value as Array<String>)
-                    Kind.UriValue, Kind.Fd -> (value as Parcelable).writeToParcel(p, flags)
+                    Kind.UriValue, Kind.UuidValue, Kind.Fd -> (value as Parcelable).writeToParcel(p, flags)
                     Kind.ByteArrays -> { val items = value as List<ByteArray>; p.writeInt(items.size); items.forEach(p::writeByteArray) }
                     is Kind.Object -> (value as DctRecord).writeToParcel(p, flags)
                     is Kind.ListValue -> p.writeTypedList(value as List<DctRecord>)
@@ -93,6 +93,7 @@ internal class DctRecord(val schema: Map<Int, Kind>, val fields: Map<Int, Any> =
                             Kind.Ints -> IntArray(count()) { require(p.dataPosition() + 4 <= fieldEnd); p.readInt() }
                             Kind.Strings -> { val n = count(); Array(n) { requireNotNull(p.readString()).also { require(it.length <= 65536) } } }
                             Kind.UriValue -> Uri.CREATOR.createFromParcel(p)
+                            Kind.UuidValue -> android.os.ParcelUuid.CREATOR.createFromParcel(p)
                             Kind.Fd -> ParcelFileDescriptor.CREATOR.createFromParcel(p)
                             Kind.ByteArrays -> List(count()) { bytes() }
                             is Kind.Object -> read(p, kind.schema(), fieldEnd)

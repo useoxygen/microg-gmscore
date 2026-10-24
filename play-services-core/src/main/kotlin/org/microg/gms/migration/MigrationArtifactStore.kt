@@ -23,7 +23,7 @@ internal class MigrationArtifactStore(private val context: Context) {
         return File(directory, name)
     }
     fun contains(name: String) = file(name).isFile
-    @Synchronized fun startBatch() {
+    @Synchronized fun startBatch() = MigrationBatchGuard.mutate(directory) {
         // Keep the previous transfer for verification/recovery. Never delete completed imported data as cleanup.
         if (directory.listFiles().orEmpty().isNotEmpty()) {
             val history = File(context.noBackupFilesDir, "migration-history").apply { check(mkdirs() || isDirectory) }
@@ -51,20 +51,20 @@ internal class MigrationArtifactStore(private val context: Context) {
                 while (true) {
                     val length = input.read(buffer)
                     if (length < 0) break
+                    require(length.toLong() <= byteBudget-total) { "Insufficient storage for migration artifact" }
                     total += length
-                    require(total <= byteBudget) { "Insufficient storage for migration artifact" }
                     output.write(buffer, 0, length)
                 }
             }
             target.finishWrite(output)
         } catch (e: Throwable) { target.failWrite(output); throw e }
     }
-    @Synchronized fun publish(name: String, writeId: String = name) {
+    @Synchronized fun publish(name: String, writeId: String = name) = MigrationBatchGuard.mutate(directory) {
         val source = pending(writeId)
         check(source.isFile && source.renameTo(file(name))) { "Missing or incomplete migration artifact" }
     }
     @Synchronized fun discard(writeId: String) { AtomicFile(pending(writeId)).delete() }
-    @Synchronized fun generateIosMetadata() {
+    @Synchronized fun generateIosMetadata() = MigrationBatchGuard.mutate(directory) {
         // Android's package-manager backup metadata format: API level, incremental build.
         // No package/telephony payload or account recovery is invented by generating the envelope.
         val oldToken = file("restore_token_file")
