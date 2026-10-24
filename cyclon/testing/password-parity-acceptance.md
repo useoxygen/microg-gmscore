@@ -6,12 +6,16 @@ have not been executed. The last recorded host batch is 604 passing tests at
 `dece944d`; rebuilding these additions is a separate gathered check.
 
 The parent owns device discovery, reservation, artifact signing, installation,
-provider calls and results. The owner released the Pixel 7a for this chat. The refreshed
-October 23 baseline is Services `cf93b15`, Core code 26 `cyc677-ident`, and an
-active image init controller. The installed Core APK payload matches the clean
-CYC-677 build at `5042e184`. A separate acceptance build combines that source
-with password-fill head `5d5551a90`; preserve the active image components before
-any transition. The earlier manual-controller baseline is stale. The connected Pixel 8a is a release/user Cyclon Services
+provider calls and results. The owner previously released the Pixel 7a for this
+chat. The earlier October 23 baseline was Services `cf93b15`, Core code 26
+`cyc677-ident`, and an active image init controller. That installed Core APK
+payload matched the clean CYC-677 build at `5042e184`. A separate acceptance build
+combined that source with password-fill head `5d5551a90`; preserve the active image components before
+any transition. The latest coordinated Core baseline is `c07be00`; a whole-device
+reservation runs through October 23 at 7:43 PM PT. No candidate installation has
+run in this gathered batch. Recheck the active reservation and actual installed
+components before any later acceptance action. The earlier manual-controller
+baseline is stale. The connected Pixel 8a is a release/user Cyclon Services
 phone with four accounts that do not match the approved primary test account,
 and has no installed Chrome. It is not an approved second test account/device
 or an official GPM peer merely because it is connected.
@@ -82,9 +86,13 @@ GET are readiness evidence. They do not prove backend admission for a mutation,
 OS recovery execution, passkey signing or restoration. Do not copy another
 service's API key. Affiliation and Vault require their dedicated configuration;
 only its presence boolean may be reported. The candidate/image must retain the
-actual required grants, including READ_WIFI_CREDENTIAL/NETWORK_SETTINGS for Wi-Fi
-and RECOVER_KEYSTORE plus package-specific hidden-API access for OS recovery.
-An APK update cannot provide those image permissions or the controller JAR.
+actual required grants, including the privileged READ_WIFI_CREDENTIAL image grant
+for Wi-Fi and RECOVER_KEYSTORE plus package-specific hidden-API access for OS
+recovery. The current target-29 Wi-Fi caller also needs owner-granted precise
+location, enabled Location, and allowed precise-location/Wi-Fi-scan app-ops.
+NETWORK_SETTINGS is signature-only and cannot be supplied by a privapp allowlist;
+it is not a required substitute for this location path. An APK update cannot
+provide the privileged image grants or the controller JAR.
 
 ## Real two-account family round trip
 
