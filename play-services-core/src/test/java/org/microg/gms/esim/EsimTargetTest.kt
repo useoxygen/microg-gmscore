@@ -231,6 +231,38 @@ class EsimTargetTest {
             assertEquals(listOf(setOf("android.permission.READ_PRIVILEGED_PHONE_STATE"), setOf("android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS")), requirements)
         } finally { binder.close() }
     }
+    @Test fun deadOrRejectedCallbacksCannotEscapeWorkerAndCloseOnlyTheirSession() {
+        for (transaction in listOf(18, 9)) for (dead in listOf(true, false)) {
+            val peer = Peer(); val engine = EsimTransferEngine(context, Process.myUid(), peerFactory = { peer }, carrierId = {123})
+            start().use { engine.start(it) }
+            val uncaught = java.util.concurrent.atomic.AtomicReference<Throwable>()
+            val worker = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+                Thread(task, "esim-callback-fixture").apply { uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, error -> uncaught.set(error) } }
+            }
+            val binder = EsimTransferBinder(context, Binder.getCallingUid(), engine, worker = worker)
+            val broken = object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    if (dead) throw DeadObjectException()
+                    return false
+                }
+            }
+            val data = Parcel.obtain(); val reply = Parcel.obtain()
+            try {
+                data.writeInterfaceToken(EsimTransferBinder.DESCRIPTOR); data.writeStrongBinder(broken)
+                if (transaction == 9) {
+                    profile(engine).use { data.writeInt(1); it.writeToParcel(data, 0) }
+                    data.writeStrongBinder(broken)
+                }
+                // tx18 uses the real empty permission requirement; tx9 needs the fixture write grant.
+                if (transaction == 9) org.robolectric.Shadows.shadowOf(context).grantPermissions("android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS")
+                assertTrue(binder.transact(transaction, data, reply, 0)); reply.readException()
+                worker.submit {}.get(5, TimeUnit.SECONDS)
+                assertTrue("Callback loss must release its session", peer.closed)
+                assertNull("No exception may escape the executor", uncaught.get())
+                assertEquals(48502, assertThrows(EsimFailure::class.java) { engine.retrieveProfiles() }.status)
+            } finally { data.recycle(); reply.recycle(); binder.close(); worker.awaitTermination(5, TimeUnit.SECONDS) }
+        }
+    }
     @Test fun binderChecksRealPermissionsBeforeDispatch() {
         val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { throw SecurityException("fixture") })
         val data = Parcel.obtain(); val reply = Parcel.obtain()

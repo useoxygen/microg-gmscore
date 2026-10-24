@@ -99,7 +99,7 @@ class MigrationInstallJob : JobService() {
                     if (!queue.dispatch(name)) { retry = true; break }
                 }
             } catch (_: Exception) { retry = true }
-            if (!cancelled.get()) jobFinished(params, retry)
+            if (!cancelled.get()) runCatching { jobFinished(params, retry) }
         }
         return true
     }

@@ -49,19 +49,33 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
             if (context.checkPermission(name, Binder.getCallingPid(), Binder.getCallingUid()) != PackageManager.PERMISSION_GRANTED)
                 throw SecurityException("Missing $name")
         }
-    }) : MigrationBinder(DESCRIPTOR, uid), java.io.Closeable {
-    private val worker = Executors.newSingleThreadExecutor()
+    }, private val worker: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor()) : MigrationBinder(DESCRIPTOR, uid), java.io.Closeable {
     private fun record(data: Parcel): EsimWireRecord {
         require(data.readInt() == 1); return EsimWireRecord.CREATOR.createFromParcel(data)
     }
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private fun releaseOperation() {
+        runCatching { engine.cancel() }
+        runCatching { engine.close() }
+    }
+    /** A dead/failed remote callback must never reach a thread's uncaught-exception handler. */
+    private fun execute(record: EsimWireRecord? = null, action: () -> Unit) {
+        try {
+            worker.execute {
+                try { action() }
+                catch (_: Exception) { releaseOperation() }
+                finally { record?.close() }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) { record?.close() }
+    }
     private fun perform(callback: IBinder, callbackName: String, record: EsimWireRecord? = null,
         value: Boolean = false, action: () -> Parcelable? = { null }) {
-        worker.execute {
+        execute(record) {
             var result: Parcelable? = null
             val status = try { result = action(); Status.SUCCESS }
                 catch (e: EsimFailure) { Status(e.status) } catch (_: Exception) { Status(8) }
             try { sendCallback(callback, PREFIX + callbackName, 1) { writeNullable(status); if (value) writeNullable(result) } }
-            finally { (result as? EsimWireRecord)?.close(); record?.close() }
+            finally { (result as? EsimWireRecord)?.close() }
         }
     }
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
@@ -147,11 +161,9 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
             9, 11, 21 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val profile = record(data)
                 val verified = requireNotNull(data.readStrongBinder()); data.requireEnd()
-                worker.execute {
-                    try {
-                        sendCallback(verified, PREFIX + "IVerifiedTransferCredentialCallbacks", 1) { writeInt(0) }
-                        sendCallback(callback, "com.google.android.gms.common.api.internal.IStatusCallback", 1) { writeNullable(Status(48503)) }
-                    } finally { profile.close() }
+                execute(profile) {
+                    sendCallback(verified, PREFIX + "IVerifiedTransferCredentialCallbacks", 1) { writeInt(0) }
+                    sendCallback(callback, "com.google.android.gms.common.api.internal.IStatusCallback", 1) { writeNullable(Status(48503)) }
                 }
                 if (code != 9) { reply?.writeNoException(); reply?.writeStrongBinder(signal(code == 11)); return true }
             }
@@ -181,6 +193,11 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
             return true // Google signal is oneway and writes no reply fields.
         }
     }
-    override fun close() { engine.cancel(); worker.execute { engine.close() }; worker.shutdown() }
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        runCatching { engine.cancel() }
+        execute { releaseOperation() }
+        worker.shutdown()
+    }
     companion object { const val DESCRIPTOR = "com.google.android.gms.esim.internal.IEsimTransferService"; const val PREFIX = "com.google.android.gms.esim.internal." }
 }

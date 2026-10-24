@@ -52,7 +52,7 @@ class PlaySetupService : Service() {
                     }
                     9 -> {
                         val receiver = readReceiver(data); end(data)
-                        work.execute { receiver?.send(1, summary()) }
+                        work.execute { runCatching { receiver?.send(1, summary()) } }
                         reply?.writeNoException(); return true
                     }
                     // No Google backup, paid-account library, or recommended preinstalls are claimed.

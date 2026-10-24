@@ -70,7 +70,7 @@ internal class EmptyMigrateHelper(uid: Int, private val context: Context? = null
         MigrationHelperIo.writes.execute {
             try { requireNotNull(store).stage(name, file, write.id); write.completed.complete(Unit) }
             catch (e: Throwable) { write.completed.completeExceptionally(e) }
-            finally { file.close() }
+            finally { runCatching { file.close() } }
         }
     }
     @Synchronized private fun finishWrite(name: String, remoteSuccess: Boolean) {
