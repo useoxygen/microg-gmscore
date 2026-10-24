@@ -58,7 +58,8 @@ class PasswordFillPendingIntentShadow : ShadowPendingIntent() {
     companion object {
         var failCreation = false
         var creationUid: Int? = null
-        @JvmStatic @Implementation fun getActivity(context: Context, code: Int, intent: Intent, flags: Int): PendingIntent {
+        @JvmStatic @Implementation(methodName = "getActivity")
+        fun createActivity(context: Context, code: Int, intent: Intent, flags: Int): PendingIntent {
             creationUid = Binder.getCallingUid()
             if (creationUid != Process.myUid()) throw SecurityException("creator package does not belong to remote UID")
             if (failCreation) throw IllegalStateException("synthetic PendingIntent creation failure")
