@@ -128,7 +128,8 @@ On a debug microG build:
 
 ```sh
 adb -s 3A031JEHN04180 shell am start -n \
-  com.google.android.gms/org.microg.gms.migration.MigrationWirelessActivity
+  com.google.android.gms/org.microg.gms.migration.MigrationWirelessActivity \
+  --ez deferredSetup true --ez firstRun false
 ```
 
 For a LineageOS SUW integration, launch
