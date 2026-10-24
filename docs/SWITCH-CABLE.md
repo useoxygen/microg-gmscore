@@ -111,7 +111,7 @@ scenario; it is not claimed run until device/emulator execution is recorded.
 
 The existing signature-bound helper broker retains protocol v1. tx3 registers a bounded pipe and acknowledges immediately, then copies a single-name artifact
 asynchronously into private `.pending` staging under GMS's private no-backup
-`migration-staging` directory. Traversal and oversized artifacts fail. It closes
+`migration-staging` directory. Traversal fails; each stream is bounded by available device storage with 256 MiB reserved for OS/metadata. Large MMS archives do not hit an arbitrary 512 MiB ceiling. Concurrent disk exhaustion remains an honest IO failure. It closes
 received file descriptors. tx4 requires both EOF and remote success before atomically
 publishing the final name. tx5 aborts, closes and discards the private write and
 reports failure. Unique temporary identities keep a late failed writer away from
@@ -163,7 +163,7 @@ eSIM carrier path and distribution are tracked in CYC-716 through CYC-719.
 
 ## Validation scope
 
-Focused host suites cover four Play queue/catalog cases and seventeen core
+Focused host suites cover four Play queue/catalog cases and eighteen core
 cases (helper Binder/parcels, staging publication, metadata, observer behavior,
 contact preferences and the persistent upload hold). GmsCore and FakeStore debug
 APKs build. Real-pipe acknowledgement-before-EOF and ContactsProvider tests are

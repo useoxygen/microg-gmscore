@@ -39,6 +39,9 @@ internal class MigrationArtifactStore(private val context: Context) {
     }
     fun stage(name: String, source: ParcelFileDescriptor, writeId: String = name) {
         file(name)
+        // Large MMS archives are legitimate. Bound by this device's available storage,
+        // reserving room for metadata/OS use rather than imposing a 512 MiB data-loss ceiling.
+        val byteBudget = (directory.usableSpace - 256L * 1024 * 1024).coerceAtLeast(0)
         val target = AtomicFile(pending(writeId))
         val output = target.startWrite()
         try {
@@ -49,7 +52,7 @@ internal class MigrationArtifactStore(private val context: Context) {
                     val length = input.read(buffer)
                     if (length < 0) break
                     total += length
-                    require(total <= 512L * 1024 * 1024) { "Migration artifact exceeds staging limit" }
+                    require(total <= byteBudget) { "Insufficient storage for migration artifact" }
                     output.write(buffer, 0, length)
                 }
             }

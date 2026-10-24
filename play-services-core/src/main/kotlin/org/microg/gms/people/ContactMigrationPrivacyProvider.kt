@@ -7,11 +7,15 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
+import android.os.Binder
+import android.os.Process
 
-/** NETWORK_SETUP_WIZARD protects this endpoint in the manifest. No caller may release the upload hold. */
+/** call() enforces its own permission as well as the manifest. No caller may release the upload hold. */
 class ContactMigrationPrivacyProvider : ContentProvider() {
     override fun onCreate() = true
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
+        if (Binder.getCallingUid() != Process.myUid()) requireNotNull(context).enforceCallingPermission(
+            "android.permission.NETWORK_SETUP_WIZARD", "Trusted setup caller required")
         val privacy = ContactMigrationPrivacy(requireNotNull(context))
         return when (method) {
             "beginMigration" -> { privacy.beginMigration(); Bundle().apply { putBoolean("uploads_held", true) } }

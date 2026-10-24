@@ -42,6 +42,12 @@ class ImportedContactConsentTest {
         }
         privacy.ownerResume(); assertFalse(ContactMigrationPrivacy(context).held)
     }
+    @Test fun providerCallRejectsUnprivilegedRemoteUid() {
+        val provider = org.robolectric.Robolectric.buildContentProvider(ContactMigrationPrivacyProvider::class.java).create().get()
+        org.robolectric.shadows.ShadowBinder.setCallingUid(android.os.Process.myUid() + 1)
+        try { assertThrows(SecurityException::class.java) { provider.call("beginMigration", null, null) } }
+        finally { org.robolectric.shadows.ShadowBinder.setCallingUid(android.os.Process.myUid()) }
+    }
     @Test fun disabledImportUploadStopsAtTheActualHttpBoundary() {
         val api = ContactSyncService.contactsApi("synthetic-never-sent", canCreate = { false }) { true }
         assertThrows(UploadDisabled::class.java) { api.create(JSONObject()) }
