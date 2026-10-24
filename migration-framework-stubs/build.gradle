@@ -1,0 +1,8 @@
+// SPDX-FileCopyrightText: 2026 Cyclon
+// SPDX-License-Identifier: Apache-2.0
+apply plugin: 'com.android.library'
+android {
+    namespace 'org.microg.migration.frameworkstubs'
+    compileSdkVersion androidCompileSdk
+    defaultConfig { minSdkVersion androidMinSdk }
+}

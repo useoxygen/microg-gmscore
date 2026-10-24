@@ -1575,7 +1575,6 @@
                 <action android:name="com.google.android.gms.setup.auth.SecondDeviceAuth.START" />
                 <action android:name="com.google.android.gms.smartdevice.d2d.SourceDeviceService.START" />
                 <action android:name="com.google.android.gms.smartdevice.directtransfer.SourceDirectTransferService.START" />
-                <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
                 <action android:name="com.google.android.gms.smartdevice.setup.accounts.AccountsService.START" />
                 <action android:name="com.google.android.gms.smartdevice.wifi.START_WIFI_HELPER_SERVICE" />
                 <action android:name="com.google.android.gms.social.location.activity.service.START" />
@@ -1625,6 +1624,7 @@
         <service android:name="org.microg.gms.migration.SwitchSupportService" android:exported="true">
             <intent-filter>
                 <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
+                <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
                 <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
             </intent-filter>
         </service>
@@ -1633,6 +1633,11 @@
                 <action android:name="com.google.android.gms.quickstart.xos.api.SourceXosApiService.START" />
                 <action android:name="com.google.android.gms.backup.d2d.api.OsMigrationWifiExportApiService.START" />
             </intent-filter>
+        </service>
+        <!-- Local migration restore only. The system also requires its explicit transport allowlist. -->
+        <service android:name="com.google.android.gms.backup.BackupTransportService"
+            android:permission="android.permission.CONFIRM_FULL_BACKUP" android:exported="false">
+            <intent-filter><action android:name="android.backup.TRANSPORT_HOST" /></intent-filter>
         </service>
         <service android:name="org.microg.gms.migration.MigrateHelperService" android:exported="true">
             <intent-filter>

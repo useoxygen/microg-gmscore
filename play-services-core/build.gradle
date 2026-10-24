@@ -16,6 +16,11 @@ configurations {
 }
 
 dependencies {
+    implementation project(":migration-ukey2")
+    compileOnly project(":migration-framework-stubs")
+    // Resolve hidden transport signatures while compiling tests; Robolectric supplies
+    // the real framework implementation at runtime, and stubs never enter the APK.
+    testCompileOnly project(":migration-framework-stubs")
     debugImplementation 'com.google.zxing:core:3.5.2'
     testImplementation 'junit:junit:4.13.2'
     // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.

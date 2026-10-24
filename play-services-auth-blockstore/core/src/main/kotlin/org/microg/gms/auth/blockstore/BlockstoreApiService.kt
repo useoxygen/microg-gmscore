@@ -108,7 +108,9 @@ class BlobstoreServiceImpl(val blockStore: BlockStoreImpl, override val lifecycl
     }
 
     override fun reportAppRestore(callback: IStatusCallback?, packages: List<String?>?, code: Int, info: AppRestoreInfo?) {
-        Log.d(TAG, "Method (reportAppRestore: $packages, $code, $info) called but not implemented")
+        // CYC-712: a reporting failure must complete the waiting migration task.
+        // Do not log the app inventory or claim a cloud report/credential restore.
+        callback?.onResult(Status(CommonStatusCodes.API_NOT_CONNECTED, "App restore reporting is unavailable"))
     }
 
     override fun storeBytes(callback: IStoreBytesCallback?, data: StoreBytesData?) {
