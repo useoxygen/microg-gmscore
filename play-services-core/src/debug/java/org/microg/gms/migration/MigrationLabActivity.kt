@@ -72,7 +72,7 @@ class MigrationLabActivity : Activity() {
                                 value == 41 && socket.session.protocol == "TLSv1.3"
                             }
                         }
-                        (tls.client.socketFactory.createSocket(InetAddress.getLoopbackAddress(), server.localPort) as SSLSocket).use { socket ->
+                        PakeProbeSocket.connect(tls.client, InetAddress.getLoopbackAddress(), server.localPort).use { socket ->
                             socket.soTimeout = 5000
                             socket.startHandshake()
                             socket.outputStream.write(41)
