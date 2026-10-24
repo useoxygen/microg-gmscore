@@ -138,7 +138,11 @@ internal class AndroidPasswordWifiPlatform(context: Context, private val verifyA
             // The public copy constructor arrived in API30. Parcelable retains the complete native
             // configuration on supported API26–29 without reconstructing or dropping opaque fields.
             val parcel = Parcel.obtain()
-            try { base.writeToParcel(parcel, 0); parcel.setDataPosition(0); WifiConfiguration.CREATOR.createFromParcel(parcel) }
+            try {
+                parcel.writeParcelable(base, 0); parcel.setDataPosition(0)
+                parcel.readParcelable<WifiConfiguration>(WifiConfiguration::class.java.classLoader)
+                    ?: throw PasswordWifiUnavailableException()
+            }
             finally { parcel.recycle() }
         }
         result.SSID = network.hexSsid // Framework accepts exact unquoted hex, including non-UTF8 SSIDs.
