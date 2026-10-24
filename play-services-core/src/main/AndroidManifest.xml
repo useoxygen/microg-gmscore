@@ -209,6 +209,10 @@
         androidx.compose.ui.tooling.data, androidx.compose.ui.tooling.preview, androidx.compose.ui.tooling,androidx.compose.material" />
 
     <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
+    <uses-permission android:name="android.permission.BACKUP" tools:ignore="ProtectedPermissions" />
+
+    <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
     <application
         android:allowBackup="true"
         android:forceQueryable="true"
@@ -453,6 +457,22 @@
         <!-- People -->
 
         <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <receiver android:name="org.microg.gms.people.ContactSyncAccountsReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <service android:name="org.microg.gms.esim.EsimTransferService" android:exported="true">
+            <intent-filter><action android:name="com.google.android.gms.esim.service.START" /><action android:name="com.google.android.gms.esim.provisioning.service.START" /></intent-filter>
+        </service>
+        <provider android:name="org.microg.gms.people.ContactMigrationPrivacyProvider"
+            android:authorities="org.microg.gms.migration.contacts" android:exported="true"
+            android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <activity-alias android:name="org.microg.gms.people.ContactsSyncSettings"
+            android:targetActivity="org.microg.gms.people.ContactsSyncActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">

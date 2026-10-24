@@ -15,7 +15,7 @@ internal class DctAdvertiser(context: Context) : Closeable {
     private val advertiser = context.getSystemService(BluetoothManager::class.java)?.adapter?.bluetoothLeAdvertiser
     private var active: AdvertiseCallback? = null
 
-    @Synchronized fun start(sessionId: String, psm: Int, onResult: (Int) -> Unit) {
+    @Synchronized fun start(sessionId: String, psm: Int, supportedServices: Int = 2, onResult: (Int) -> Unit) {
         check(active == null)
         val radio = checkNotNull(advertiser) { "BLE advertising unavailable" }
         val callback = object : AdvertiseCallback() {
@@ -31,7 +31,7 @@ internal class DctAdvertiser(context: Context) : Closeable {
             radio.startAdvertising(AdvertiseSettings.Builder().setConnectable(true)
                 .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).setTimeout(0).build(),
                 AdvertiseData.Builder().addServiceData(ParcelUuid.fromString(DctAdvertisement.SERVICE_UUID),
-                    DctAdvertisement.target(sessionId, psm)).build(), callback)
+                    DctAdvertisement.target(sessionId, psm, supportedServices)).build(), callback)
         } catch (t: Exception) { close(); throw t }
     }
 

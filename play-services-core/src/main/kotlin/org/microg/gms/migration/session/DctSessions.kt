@@ -9,8 +9,8 @@ import org.microg.gms.migration.controller.DctController
 internal object DctSessions {
     private var current: DctController? = null
     @Synchronized fun retained(): DctController? = current?.takeUnless { it.isClosed }
-    @Synchronized fun create(context: Context, session: DctSession = DctSession.create(), serviceId: String = "quickStart", remote: Pair<String, Int>? = null): DctController {
+    @Synchronized fun create(context: Context, session: DctSession = DctSession.create(), serviceId: String = "quickStart", remote: Pair<String, Int>? = null, supportedServices: Int = 2): DctController {
         check(retained() == null) { "An import session is already active" }
-        return DctController(context.applicationContext, session, serviceId, remote).also { current = it }
+        return DctController(context.applicationContext, session, serviceId, remote, supportedServices).also { current = it }
     }
 }
