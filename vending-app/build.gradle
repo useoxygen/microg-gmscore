@@ -16,7 +16,9 @@ android {
     defaultConfig {
         versionName vendingAppVersionName
         versionCode vendingAppVersionCode
-        minSdkVersion androidMinSdk
+        // Cyclon ships these APKs only on its own Android 17 images (Android Switch itself needs 12+); the shared
+        // library modules keep upstream's androidMinSdk.
+        minSdkVersion 33
         targetSdkVersion androidTargetSdk
 
         multiDexEnabled true
