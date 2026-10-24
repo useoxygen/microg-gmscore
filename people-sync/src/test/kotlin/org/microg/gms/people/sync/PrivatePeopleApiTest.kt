@@ -187,6 +187,17 @@ class PrivatePeopleApiTest {
         assertThrows(IOException::class.java) { ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync() }
         assertEquals(0, store.writes); assertNull(store.saved)
     }
+    @Test fun pagedIncrementalReadsFollowPagesThatAlsoCarryASyncToken() {
+        val store = Store(); store.saved = "old"; var calls = 0
+        val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
+            calls++
+            assertEquals("old", query(url)["syncParameters.syncToken"])
+            if (calls == 1) HttpReply(200, JSONObject(fixture("full")).apply { put("nextSyncToken", "early"); put("nextPageToken", "page-two") }.toString())
+            else { assertEquals("page-two", query(url)["pageToken"]); HttpReply(200, """{"nextSyncToken":"final"}""") }
+        }, context)
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(2, calls); assertNotNull(store.row); assertEquals("final", store.saved)
+    }
     @Test fun explicitPartialFailureHoldsCheckpointAndDeletions() {
         val store = Store(); store.apply(PrivatePeopleApi.normalize(person()).single(), null, true); store.saved = "old"
         val reply = JSONObject(fixture("deleted")).put("partialFailureStates", JSONArray().put("EMAIL_LOOKUP_QUOTA_THROTTLED"))
@@ -245,11 +256,11 @@ class PrivatePeopleApiTest {
         ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
         assertEquals(2, requests); assertEquals(1, store.removed); assertEquals("final-delta", store.saved)
     }
-    @Test fun prematureCheckpointsCannotCommitEitherSnapshot() {
+    @Test fun intermediateSyncTokensAreNeverReturnedAsCheckpoints() {
         val api = PrivatePeopleApi(HttpTransport { _, _, _ -> HttpReply(200,
             """{"nextPageToken":"page","nextSyncToken":"premature"}""") }, context)
-        assertThrows(IOException::class.java) { api.list(null, null) }
-        assertThrows(IOException::class.java) { api.listGroups(null, null) }
+        assertNull(api.list(null, null).nextSync)
+        assertNull(api.listGroups(null, null).nextSync)
     }
 
 }

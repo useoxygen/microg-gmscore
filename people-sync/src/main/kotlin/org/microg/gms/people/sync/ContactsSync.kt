@@ -193,7 +193,7 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
                     payload = api.prepareUpdate(latest!!, changed, payload)
                 } catch (e: UnsupportedContactEdit) { conflicts++; continue }
             }
-            val creationId = UUID.randomUUID().toString()
+            val creationId = api.newCreationId()
             if (kind == "create") payload.put("clientData", JSONArray().put(JSONObject()
                 .put("key", Person.CREATE_KEY).put("value", creationId)))
             val expected = existing.fields.toMutableMap()

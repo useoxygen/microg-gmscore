@@ -42,6 +42,14 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
     private val canUpload: () -> Boolean = { false }, private val deviceInfo: String = "microG - Android") : ContactsApi, PhotosApi, GroupsApi {
     companion object {
         const val ORIGIN = "https://people-pa.googleapis.com/v2/"
+        // Google's sync generates new contact IDs as (random & MASK) | BIT; other IDs are rejected.
+        private const val CLIENT_ID_MASK = 0x7fffffff87ffffffL
+        private const val CLIENT_ID_BIT = 0x08000000L
+        fun isClientContactId(value: String): Boolean {
+            if (!value.matches(Regex("[1-9][0-9]{0,18}"))) return false
+            val id = value.toLongOrNull() ?: return false
+            return id and CLIENT_ID_MASK.inv() == CLIENT_ID_BIT // bits 27-30 = 0001, bit 63 clear
+        }
         const val OWNER = "microg-people-fsa2-read-v1"
         private val fields = linkedMapOf("name" to "names", "phone" to "phoneNumbers", "email" to "emailAddresses",
             "address" to "addresses", "organization" to "organizations", "about" to "biographies", "birthday" to "birthdays",
@@ -262,15 +270,9 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
                             memberships.addAll(ids) // Product groups are not user labels.
                         }
                     }
-                    if (raw.has("clientData")) {
-                        val values = raw.getJSONArray("clientData"); val markers = JSONArray()
-                        for (i in 0 until values.length()) {
-                            val value = values.getJSONObject(i)
-                            if (belongs(value, id, sources.map { it.first }.toSet()) && value.optString("key") == Person.CREATE_KEY)
-                                markers.put(JSONObject().put("key", Person.CREATE_KEY).put("value", text(value, "value")))
-                        }
-                        normalized.put("clientData", markers)
-                    }
+                    // The contact ID is the creation marker (see newCreationId).
+                    normalized.put("clientData", JSONArray().put(JSONObject().put("key", Person.CREATE_KEY)
+                        .put("value", BigInteger(id, 16).toString())))
                     normalized.put("_privateUnsupported", unsupported)
                     normalized.put("memberships", Memberships.json(memberships))
                     normalized.put("_privateStarred", groupResource("starred") in memberships)
@@ -333,8 +335,8 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         catch (error: IllegalArgumentException) { skipped++; unreadable.addAll(resourceHints(values.optJSONObject(i))) }
         val nextPage = token(json, "nextPageToken")
         val nextSync = token(json, "nextSyncToken")
-        if (nextPage != null && nextSync != null) throw IOException("Premature contacts checkpoint")
-        return Page(people, nextPage, nextSync, skipped, unreadable)
+        // Intermediate pages may carry a sync token too; only the final page's token is a checkpoint.
+        return Page(people, nextPage, if (nextPage == null) nextSync else null, skipped, unreadable)
     }
     override fun get(resource: String): Person? {
         val suffix = resource.removePrefix("people/fsa_")
@@ -360,6 +362,11 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         put("deletionContext.mutationContext.source", "ANDROID_FSA2")
         put("deletionContext.mutationContext.androidDeviceInfo.id", deviceInfo)
     }
+    private val random = java.security.SecureRandom()
+    private fun postGetRequest() = JSONObject().put("context", context.json())
+        .put("requestMask", JSONObject().put("includeField", READ_MASK).put("productContactGroup", JSONArray().put("PRODUCT_BESTIES")))
+        .put("mergedPersonSourceOptions", JSONObject().put("personModelParams", JSONObject().put("personModel", "CONTACT_CENTRIC"))
+            .put("includedProfileStates", JSONArray().put("CORE_ID")))
     private fun postGetParams() = context.parameters().mapKeys { "getPeopleRequest." + it.key }.toMutableMap().apply {
         put("getPeopleRequest.requestMask.includeField", READ_MASK)
         put("getPeopleRequest.requestMask.productContactGroup", "PRODUCT_BESTIES")
@@ -435,14 +442,27 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         catch (error: IllegalArgumentException) { throw UnreadableContact() }
         catch (error: NoSuchElementException) { throw UnreadableContact() }
     }
+    // Like Google's sync, the client chooses the new contact's ID (same bit pattern) and journals
+    // it before sending. Google rejects client markers on contacts, but an insert that reuses the
+    // ID returns the existing contact, and every read reports the ID as the creation marker.
+    override fun newCreationId(): String =
+        java.lang.Long.toUnsignedString((random.nextLong() and CLIENT_ID_MASK) or CLIENT_ID_BIT)
     override fun create(body: JSONObject): Person {
         if (!canUpload()) throw UploadDisabled()
-        // Server allocates the contact ID. The durable client marker permits
-        // readback; missing/ambiguous marker recovery must never resend this POST.
+        val creationId = Person("", body).creationId()
+        require(creationId != null && isClientContactId(creationId)) { "Missing client contact ID" }
         val selected = body.keys().asSequence().filter {
-            it != "memberships" || body.getJSONArray(it).length() != 0
+            it != "clientData" && (it != "memberships" || body.getJSONArray(it).length() != 0)
         }.toSet()
-        return personReceipt(call("POST", "people", postGetParams(), writable(body, selected)))
+        val request = JSONObject().put("contactToInsert", JSONArray().put(JSONObject()
+                .put("contactId", creationId).put("contactPerson", writable(body, selected))))
+            .put("fieldMask", mask(selected)).put("getPeopleRequest", postGetRequest()).put("context", context.json())
+        val reply = call("POST", "people/bulkInsertContacts", emptyMap(), request)
+        val inserted = try { reply.getJSONArray("insertedPerson").also { require(it.length() == 1) }.getJSONObject(0) }
+            catch (error: org.json.JSONException) { throw UnreadableContact() }
+            catch (error: IllegalArgumentException) { throw UnreadableContact() }
+        val response = inserted.optJSONObject("personResponse") ?: throw UnreadableContact()
+        return personReceipt(JSONObject().put("personResponse", response), resource(BigInteger(creationId).toString(16)))
     }
     override fun update(person: Person, fields: Set<String>, body: JSONObject): Person {
         if (!canUpload()) throw UploadDisabled()
@@ -542,21 +562,30 @@ class PrivatePeopleApi(private val transport: HttpTransport, val context: Privat
         catch (error: IllegalArgumentException) { skipped++; groupHint(values.optJSONObject(i))?.let(unreadable::add) }
         val nextPage = token(result, "nextPageToken")
         val nextSync = token(result, "nextSyncToken")
-        if (nextPage != null && nextSync != null) throw IOException("Premature group checkpoint")
-        return GroupPage(groups, nextPage, nextSync, skipped, unreadable)
+        return GroupPage(groups, nextPage, if (nextPage == null) nextSync else null, skipped, unreadable)
     }
     private fun groupHint(raw: JSONObject?): String? = runCatching {
         val id = raw!!.optJSONObject("result")?.optJSONObject("id") ?: raw.optJSONObject("id")
         groupResource(id?.let { text(it, "id") } ?: text(raw, "groupId"))
     }.getOrNull()
+    // Google rejects direct group reads for this client (403). A complete fresh list is the
+    // authoritative view: a group that is missing or marked deleted there no longer exists.
     override fun getGroup(resource: String): ContactGroup? {
-        val result = call("GET", "people/contactGroups/get", context.parameters().apply { put("groupId", groupId(resource)) })
-        try {
-            val groups = result.getJSONArray("groups"); require(groups.length() == 1)
-            val group = parseGroup(groups.getJSONObject(0), true); require(group.resource == resource)
-            return group.takeUnless { it.deleted }
-        } catch (error: org.json.JSONException) { throw UnreadableContact() }
-        catch (error: IllegalArgumentException) { throw UnreadableContact() }
+        groupId(resource)
+        val seen = mutableSetOf<String>()
+        var pageToken: String? = null
+        var skipped = false
+        do {
+            val page = listGroups(null, pageToken)
+            if (resource in page.unreadable) throw UnreadableContact()
+            skipped = skipped || page.skipped > 0
+            page.groups.firstOrNull { it.resource == resource }?.let { return it.takeUnless { group -> group.deleted } }
+            pageToken = page.nextPage
+            check(pageToken == null || seen.add(pageToken) && seen.size <= 1_000) { "Invalid group pagination" }
+        } while (pageToken != null)
+        // An unreadable entry could be this group: absence is only proven by a fully readable list.
+        if (skipped) throw UnreadableContact()
+        return null
     }
     private fun groupReceipt(json: JSONObject, expected: String? = null, deleted: Boolean = false): ContactGroup? {
         try {

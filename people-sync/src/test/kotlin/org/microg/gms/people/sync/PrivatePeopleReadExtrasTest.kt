@@ -56,15 +56,30 @@ class PrivatePeopleReadExtrasTest {
         val error = assertThrows(UnreadableContact::class.java) { api.getGroup(PrivatePeopleApi.groupResource("42")) }
         assertFalse(error.toString().contains("secret"))
     }
-    @Test fun groupGetChecksEachResultAndTheRequestedIdentity() {
-        for (response in listOf("""{"groups":[{"id":{"id":"42"},"statusCode":"NOT_FOUND"}]}""",
-            """{"groups":[{"id":{"id":"43"},"statusCode":"NOT_FOUND"}]}""")) {
-            val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
-                assertEquals("42", query(url)["groupId"]); assertTrue(URI(url).path.endsWith("contactGroups/get")); HttpReply(200, response)
+    @Test fun groupLookupUsesAFullFreshListBecauseDirectGroupReadsAreRefused() {
+        val label = { id: String -> """{"result":{"id":{"id":"$id"},"name":{"value":"Label $id"},"groupType":{"type":"CONTACT_GROUP"}},"fingerprint":"f$id"}""" }
+        for ((second, expected) in listOf(label("42") to true, "" to false, """{"id":{"id":"9"},"statusCode":"INTERNAL"}""" to null)) {
+            val pages = mutableListOf<String?>()
+            val api = PrivatePeopleApi(HttpTransport { method, url, _ ->
+                assertEquals("GET", method); assertTrue(URI(url).path.endsWith("contactGroups/list"))
+                val params = query(url); assertNull(params["syncToken"]); pages.add(params["pageToken"])
+                if (params["pageToken"] == null) HttpReply(200, """{"groups":[${label("41")}],"nextPageToken":"p2","nextSyncToken":"early"}""")
+                else HttpReply(200, """{"groups":[$second],"nextSyncToken":"final"}""")
             }, context)
-            if (response.contains("43")) assertThrows(UnreadableContact::class.java) { api.getGroup(PrivatePeopleApi.groupResource("42")) }
-            else assertNull(api.getGroup(PrivatePeopleApi.groupResource("42")))
+            if (expected == null) { assertThrows(UnreadableContact::class.java) { api.getGroup(PrivatePeopleApi.groupResource("42")) }; continue }
+            val group = api.getGroup(PrivatePeopleApi.groupResource("42"))
+            assertEquals(listOf(null, "p2"), pages)
+            if (expected) assertEquals("Label 42", group!!.name) else assertNull(group)
         }
+    }
+    @Test fun intermediatePagesWithASyncTokenAreFollowedAndOnlyTheLastTokenIsKept() {
+        val api = PrivatePeopleApi(HttpTransport { _, url, _ ->
+            if (query(url)["pageToken"] == null) HttpReply(200, """{"groups":[],"nextPageToken":"p2","nextSyncToken":"early"}""")
+            else HttpReply(200, """{"groups":[],"nextSyncToken":"final"}""")
+        }, context)
+        val first = api.listGroups("old", null)
+        assertEquals("p2", first.nextPage); assertNull(first.nextSync)
+        assertEquals("final", api.listGroups("old", first.nextPage).nextSync)
     }
     @Test fun photosUseTheHexContactSourceEncodedBindingAndDecodeBoundedBytes() {
         val bytes = byteArrayOf(0, 1, 2, 3, 127, -1)

@@ -51,13 +51,13 @@ class PrivatePeopleMutationTest {
         fun edit(field: String, value: Any) { row = row!!.copy(version = row!!.version + 1, dirty = true, fields = row!!.fields + (field to canonical(value))) }
     }
     private inner class Server : HttpTransport {
-        var raw: JSONObject? = fixture(); var writes = 0; var drop = false; var conflict = false; var marker = true
+        var raw: JSONObject? = fixture(); var writes = 0; var drop = false; var conflict = false; var listed = true
         var beforeWrite: (() -> Unit)? = null
         var rejection: HttpReply? = null
         override fun request(method: String, url: String, body: String?): HttpReply {
             val path = URI(url).path; val params = query(url)
             if (method == "GET" && path.endsWith("/sync")) return HttpReply(200,
-                JSONObject().put("people", JSONArray().apply { raw?.let { put(it) } }).put("nextSyncToken", "next").toString())
+                JSONObject().put("people", JSONArray().apply { raw?.takeIf { listed }?.let { put(it) } }).put("nextSyncToken", "next").toString())
             if (method == "POST" && path.endsWith(":batchGet")) {
                 val requestId = JSONObject(body!!).getJSONArray("personId").getString(0)
                 return HttpReply(200, JSONObject().put("personResponse", JSONArray().put(JSONObject().put("personId", requestId).apply {
@@ -78,18 +78,29 @@ class PrivatePeopleMutationTest {
                     raw!!.getJSONObject("metadata").getJSONObject("identityInfo").getJSONArray("sourceIds").getJSONObject(0).put("sourceEtag", "fresh")
                 }
                 "POST" -> {
-                    val input = JSONObject(body!!)
-                    assertFalse(input.has("contactId")); assertFalse(input.has("personId"))
-                    raw = fixture().apply {
+                    // Google's behaviour (live-verified 10-24): the client's ID is kept, and an
+                    // insert that reuses it returns the existing contact instead of a copy.
+                    assertTrue(path.endsWith("/people/bulkInsertContacts"))
+                    val entry = JSONObject(body!!).getJSONArray("contactToInsert").getJSONObject(0)
+                    val id = entry.getString("contactId"); assertTrue(PrivatePeopleApi.isClientContactId(id))
+                    val hex = java.math.BigInteger(id).toString(16)
+                    val existing = raw?.getJSONObject("metadata")?.getJSONObject("identityInfo")?.getJSONArray("sourceIds")?.getJSONObject(0)?.getString("id")
+                    if (existing != hex) raw = fixture().apply {
                         for (key in keys().asSequence().toList()) if (key !in setOf("personId", "metadata")) remove(key)
-                        for (key in input.keys().asSequence()) put(key, input.get(key))
-                        if (!marker) remove("clientData")
+                        put("personId", "c$id"); getJSONObject("metadata").put("contactId", JSONArray().put(id))
+                            .getJSONObject("identityInfo").getJSONArray("sourceIds").getJSONObject(0).put("id", hex)
+                        val person = entry.getJSONObject("contactPerson")
+                        for (key in person.keys().asSequence()) put(key, JSONArray().apply {
+                            val values = person.getJSONArray(key)
+                            for (i in 0 until values.length()) put(values.getJSONObject(i).apply { getJSONObject("metadata").put("encodedContainerId", hex) })
+                        })
                     }
                 }
                 "DELETE" -> { assertEquals("17", params["contactId"]); assertEquals("ANDROID_FSA2", params["deletionContext.mutationContext.source"]); raw = null }
                 else -> error("Unexpected method")
             }
             if (drop) throw IOException("Reply lost")
+            if (method == "POST") return HttpReply(200, JSONObject().put("insertedPerson", JSONArray().put(JSONObject(receipt(raw!!)))).toString())
             return HttpReply(200, raw?.let(::receipt) ?: "{}")
         }
         fun api(canUpload: () -> Boolean = { true }) = PrivatePeopleApi(this, context, canUpload)
@@ -154,15 +165,25 @@ class PrivatePeopleMutationTest {
         assertThrows(IOException::class.java) { ContactsSync(server.api(), store) { SyncMode.TWO_WAY }.sync() }
         server.drop = false
         assertEquals(1, ContactsSync(server.api(), store) { SyncMode.TWO_WAY }.sync().uploaded)
-        assertEquals(1, server.writes); assertNull(store.row!!.pending); assertEquals("people/fsa_17", store.row!!.resource)
+        assertEquals(1, server.writes); assertNull(store.row!!.pending)
+        val created = server.raw!!.getJSONObject("metadata").getJSONObject("identityInfo").getJSONArray("sourceIds").getJSONObject(0).getString("id")
+        assertEquals("people/fsa_$created", store.row!!.resource)
+    }
+    @Test fun replayingACreateWithItsJournaledIdNeverMakesASecondContact() {
+        val server = Server().apply { raw = null }; val api = server.api()
+        val body = names("Synthetic").put("clientData", JSONArray().put(JSONObject().put("key", Person.CREATE_KEY).put("value", api.newCreationId())))
+        val first = api.create(JSONObject(body.toString())); val second = api.create(JSONObject(body.toString()))
+        assertEquals(first.resource, second.resource); assertEquals(2, server.writes)
+        assertThrows(IllegalArgumentException::class.java) { api.create(names("No journaled ID")) }
+        assertFalse(PrivatePeopleApi.isClientContactId("7212026102400001")) // Bits Google rejects (seen live).
+        repeat(100) { assertTrue(PrivatePeopleApi.isClientContactId(api.newCreationId())) }
     }
     @Test fun unobservableCreateMarkerRemainsUncertainAndNeverBlindlyRecreates() {
-        val server = Server().apply { raw = null; drop = true; marker = false }; val store = Store()
+        val server = Server().apply { raw = null; drop = true; listed = false }; val store = Store()
         store.row = LocalContact(1, 1, null, null, mapOf("names" to "[{\"givenName\":\"Synthetic\"}]"), emptyMap(), true, false)
         assertThrows(IOException::class.java) { ContactsSync(server.api(), store) { SyncMode.TWO_WAY }.sync() }
-        // Keep a single-row synthetic store: list results are enough to prove the
-        // missing marker cannot authorize replay, without importing another row.
-        server.raw = null; server.drop = false
+        // The created contact isn't visible in list results yet: recovery must wait, never re-send.
+        server.drop = false
         repeat(2) { assertEquals(1, ContactsSync(server.api(), store) { SyncMode.TWO_WAY }.sync().uncertain) }
         assertEquals(1, server.writes); assertNotNull(store.row!!.pending); assertNull(store.token)
     }
@@ -201,10 +222,11 @@ class PrivatePeopleMutationTest {
         assertEquals(0, server.writes); assertNull(store.row!!.pending)
     }
     @Test fun embeddedRejectionsAndMalformedMutationReceiptsAreNeverSuccessful() {
-        for (body in listOf("{}", """{"personResponse":{"status":"ERROR"}}""",
-            """{"personResponse":{"responseStatus":{"code":7,"message":"secret"}}}""")) {
+        for (body in listOf("{}", """{"insertedPerson":[{"personResponse":{"status":"ERROR"}}]}""",
+            """{"insertedPerson":[{"personResponse":{"responseStatus":{"code":7,"message":"secret"}}}]}""")) {
             val api = PrivatePeopleApi(HttpTransport { _, _, _ -> HttpReply(200, body) }, context, { true })
-            val error = assertThrows(IOException::class.java) { api.create(names("Synthetic")) }
+            val create = names("Synthetic").put("clientData", JSONArray().put(JSONObject().put("key", Person.CREATE_KEY).put("value", api.newCreationId())))
+            val error = assertThrows(IOException::class.java) { api.create(create) }
             assertFalse(error.toString().contains("secret"))
         }
     }

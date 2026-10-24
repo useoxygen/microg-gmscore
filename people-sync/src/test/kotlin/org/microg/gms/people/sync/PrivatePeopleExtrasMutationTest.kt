@@ -45,11 +45,15 @@ class PrivatePeopleExtrasMutationTest {
     }
     @Test fun groupDeleteNeverDeletesContactsAndRequiresCheckedAbsence() {
         val api = PrivatePeopleApi(HttpTransport { method, url, _ ->
-            val q = query(url); assertEquals("42", q["groupId"])
+            val q = query(url)
             if (method == "DELETE") {
+                assertEquals("42", q["groupId"])
                 assertEquals("false", q["deleteContacts"]); assertEquals("ANDROID_FSA2", q["deletionContext.mutationContext.source"])
                 groupReply(JSONObject().put("id", JSONObject().put("id", "42")).put("statusCode", "OK"))
-            } else groupReply(JSONObject().put("id", JSONObject().put("id", "42")).put("statusCode", "NOT_FOUND"))
+            } else {
+                // Absence is checked against a full fresh list; direct group reads are refused by Google.
+                assertTrue(java.net.URI(url).path.endsWith("contactGroups/list")); HttpReply(200, """{"groups":[]}""")
+            }
         }, context, { true })
         api.deleteGroup(PrivatePeopleApi.groupResource("42"))
         for (id in PrivatePeopleApi.SYSTEM_GROUPS) assertThrows(IllegalArgumentException::class.java) { api.deleteGroup(PrivatePeopleApi.groupResource(id)) }
