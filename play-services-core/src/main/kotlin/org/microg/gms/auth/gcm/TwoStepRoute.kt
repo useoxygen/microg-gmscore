@@ -10,9 +10,14 @@ import org.microg.gms.gcm.NotificationData
 /** GmsCore push messages for this route carry this `gcmb` body type. */
 internal const val GMS_GCM_NOTIFICATIONS = "notifications"
 
-/** Read states sent to GNOTS. The names are microG's reverse-engineered labels, not documented Google semantics. */
-internal const val NOTIFICATION_STATUS_READY = 2
-internal const val NOTIFICATION_STATUS_COMPLETE = 5
+/**
+ * Read states sent to GNOTS, as Google Play services 26.22.36 (`GunsIntentOperation`) sends them: shown when the
+ * notification is posted, opened when the owner taps it, dismissed when the owner swipes it away or it expires.
+ * Upstream microG sent 2 and then 5 on display, which told Google the prompt was already dismissed.
+ */
+internal const val NOTIFICATION_STATUS_OPENED = 2
+internal const val NOTIFICATION_STATUS_SHOWN = 4
+internal const val NOTIFICATION_STATUS_DISMISSED = 5
 
 internal const val NOTIFICATION_FETCH_ATTEMPTS = 3
 internal const val NOTIFICATION_FETCH_DELAY_MILLIS = 500L
@@ -103,6 +108,7 @@ internal class TwoStepRoute<A>(
     private val fetch: (A, NotificationData) -> List<NotificationData>,
     private val setReadState: (A, NotificationData, Int) -> Unit,
     private val show: (A, NotificationData) -> ShowResult,
+    private val dismiss: (String) -> Int,
     private val decodeBase64: (String) -> ByteArray,
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
     private val now: () -> Long = { System.currentTimeMillis() },
@@ -128,10 +134,11 @@ internal class TwoStepRoute<A>(
             diagnostics.event(TwoStepEvent.MALFORMED, session, "payload" to true)
             return
         }
-        // Upstream skips notifications flagged active, at the tickle and again after the fetch. What the flag means
-        // is not established (report §4), so this keeps the behaviour and records every skip for the device test.
+        // Field 3 (`isActive` in microG's proto) asks the device to take the notification down, for example after the
+        // prompt was answered on another device. Google Play services removes it and logs NOTIFICATION_DISMISSED_REMOTE.
         if (tickle.isActive == true) {
-            diagnostics.event(TwoStepEvent.ALREADY_ACTIVE, session, "stage" to Stage.TICKLE)
+            val removed = tickle.identifier?.uniqueId?.takeIf { it.isNotEmpty() }?.let(dismiss) ?: 0
+            diagnostics.event(TwoStepEvent.DISMISSED_REMOTE, session, "count" to removed)
             return
         }
         val candidates = accounts()
@@ -158,10 +165,7 @@ internal class TwoStepRoute<A>(
                     val timeoutMinutes = promptTimeoutMillis(notification.expiryTime, now()) / 60_000
                     val expiryUsed = promptExpiryRemainingMillis(notification.expiryTime, now()) != null
                     diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMinutes, "expiry" to expiryUsed)
-                    // Upstream reports READY then COMPLETE right after display; COMPLETE is sent again when Google's
-                    // page closes. Kept as is: the statuses' server meaning is not established (report §4).
-                    reportReadState(session, account, notification, NOTIFICATION_STATUS_READY)
-                    reportReadState(session, account, notification, NOTIFICATION_STATUS_COMPLETE)
+                    reportReadState(session, account, notification, NOTIFICATION_STATUS_SHOWN)
                 }
                 ShowResult.NOTIFICATIONS_BLOCKED -> diagnostics.event(TwoStepEvent.NOTIFICATIONS_BLOCKED, session)
                 ShowResult.NOT_SHOWABLE -> diagnostics.event(TwoStepEvent.NOT_SHOWABLE, session, "content" to (notification.content != null))
@@ -192,6 +196,6 @@ internal class TwoStepRoute<A>(
         }
     }
 
-    private enum class Stage { TICKLE, FETCHED }
+    private enum class Stage { FETCHED }
     private enum class FetchFailure { EMPTY, ERROR }
 }

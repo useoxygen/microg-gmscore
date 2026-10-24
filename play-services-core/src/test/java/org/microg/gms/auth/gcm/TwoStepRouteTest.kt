@@ -34,6 +34,7 @@ class TwoStepRouteTest {
     private val fetchedFor = mutableListOf<String>()
     private val shownFor = mutableListOf<String>()
     private val readStates = mutableListOf<Pair<String, Int>>()
+    private val dismissed = mutableListOf<String>()
     private val sleeps = mutableListOf<Long>()
 
     private val route = TwoStepRoute<String>(
@@ -43,6 +44,7 @@ class TwoStepRouteTest {
         fetch = { account, _ -> fetchedFor += account; fetchResults.removeAt(0)() },
         setReadState = { account, _, status -> readStates += account to status },
         show = { account, _ -> shownFor += account; showResult },
+        dismiss = { id -> dismissed += id; 1 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         sleep = { sleeps += it },
     )
@@ -69,7 +71,8 @@ class TwoStepRouteTest {
 
         assertEquals(listOf(ownerEmail), fetchedFor)
         assertEquals(listOf(ownerEmail), shownFor)
-        assertEquals(listOf(ownerEmail to NOTIFICATION_STATUS_READY, ownerEmail to NOTIFICATION_STATUS_COMPLETE), readStates)
+        // Like Google Play services: one "shown" report; upstream's 2 then 5 told Google the prompt was dismissed.
+        assertEquals(listOf(ownerEmail to NOTIFICATION_STATUS_SHOWN), readStates)
         assertEquals(listOf("received", "fetched", "shown"), events())
         val session = logs.first().substringAfter("session=").substringBefore(' ')
         assertTrue(logs.all { it.contains("session=$session") })
@@ -163,14 +166,23 @@ class TwoStepRouteTest {
     }
 
     @Test
-    fun activeNotificationsAreSkippedAndRecorded() {
+    fun aRemovalTickleTakesTheShownPromptDown() {
         route.route(GMS_GCM_NOTIFICATIONS, tickle(active = true))
+
+        assertEquals(listOf(uniqueId), dismissed)
+        assertTrue(fetchedFor.isEmpty())
+        assertEquals(listOf("received", "dismissed_remote"), events())
+        assertTrue(logs.last().endsWith("count=1"))
+    }
+
+    @Test
+    fun fetchedNotificationsFlaggedForRemovalAreNotShown() {
         fetchResults += { listOf(fetched.copy(isActive = true)) }
         route.route(GMS_GCM_NOTIFICATIONS, tickle())
 
-        assertEquals(1, fetchedFor.size)
         assertTrue(shownFor.isEmpty())
-        assertEquals(listOf("stage=tickle", "stage=fetched"), logs.filter { it.startsWith("event=already_active") }.map { it.substringAfterLast(' ') })
+        assertTrue(dismissed.isEmpty())
+        assertEquals(listOf("stage=fetched"), logs.filter { it.startsWith("event=already_active") }.map { it.substringAfterLast(' ') })
     }
 
     @Test
@@ -220,13 +232,16 @@ class TwoStepRouteTest {
     }
 
     @Test
-    fun readStatesFollowUpstream() {
-        val complete = readStateItems(fetched, NOTIFICATION_STATUS_COMPLETE)!!.single()
-        assertEquals(NOTIFICATION_STATUS_COMPLETE, complete.status)
-        assertNull(complete.state)
-        assertEquals("approve", readStateItems(fetched, NOTIFICATION_STATUS_READY)!!.single().state)
-        assertNull(readStateItems(fetched.copy(content = fetched.content!!.copy(actionButtons = emptyList())), NOTIFICATION_STATUS_READY))
-        assertNull(readStateItems(fetched.copy(identifier = NotificationIdentifier(uniqueId = "")), NOTIFICATION_STATUS_COMPLETE))
+    fun readStatesFollowGooglePlayServices() {
+        for (status in listOf(NOTIFICATION_STATUS_SHOWN, NOTIFICATION_STATUS_OPENED, NOTIFICATION_STATUS_DISMISSED)) {
+            val item = readStateItems(fetched.identifier, status)!!.single()
+            assertEquals(status, item.status)
+            assertEquals(uniqueId, item.notification?.uniqueId)
+            assertNull(item.state)
+        }
+        assertEquals(listOf(4, 2, 5), listOf(NOTIFICATION_STATUS_SHOWN, NOTIFICATION_STATUS_OPENED, NOTIFICATION_STATUS_DISMISSED))
+        assertNull(readStateItems(NotificationIdentifier(uniqueId = ""), NOTIFICATION_STATUS_SHOWN))
+        assertNull(readStateItems(null, NOTIFICATION_STATUS_SHOWN))
     }
 
     @Test
@@ -270,6 +285,7 @@ class TwoStepRouteTest {
             fetch = { _, _ -> listOf(fetched.copy(expiryTime = now + 3 * 60_000)) },
             setReadState = { _, _, _ -> },
             show = { _, _ -> ShowResult.SHOWN },
+            dismiss = { 0 },
             decodeBase64 = { Base64.getUrlDecoder().decode(it) },
             now = { now },
         )
@@ -288,6 +304,7 @@ class TwoStepRouteTest {
             fetch = { _, _ -> listOf(fetched.copy(expiryTime = (now + 5_000) * 1000)) },
             setReadState = { _, _, _ -> },
             show = { _, _ -> shown++; ShowResult.SHOWN },
+            dismiss = { 0 },
             decodeBase64 = { Base64.getUrlDecoder().decode(it) },
             now = { now },
         )
