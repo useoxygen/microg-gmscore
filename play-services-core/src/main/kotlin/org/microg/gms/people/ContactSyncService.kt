@@ -34,7 +34,9 @@ class ContactSyncService : Service() {
                     val mode = prefs.mode
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
-                    val api = contactsApi(token) { prefs.mode == SyncMode.TWO_WAY && mode == SyncMode.TWO_WAY }
+                    val api = contactsApi(token, canCreate = { prefs.uploadNewContacts }) {
+                        prefs.mode == SyncMode.TWO_WAY && mode == SyncMode.TWO_WAY
+                    }
                     val store = AndroidContactStore(provider, account, prefs)
                     store.configureMode()
                     val report = ContactsSync(api, store) { prefs.mode }.sync()
@@ -83,12 +85,14 @@ class ContactSyncService : Service() {
             return result.getString(AccountManager.KEY_AUTHTOKEN)?.takeIf { it.isNotBlank() }
                 ?: throw AuthenticatorException("Contacts authorization required")
         }
-        fun contactsApi(token: String, canUpload: () -> Boolean): PeopleApi {
+        fun contactsApi(token: String, canCreate: () -> Boolean = { true }, canUpload: () -> Boolean): PeopleApi {
             val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
                 .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
             return PeopleApi(HttpTransport { method, url, body ->
                 // Redirects and transparent POST retries must not forward tokens
                 // or duplicate contacts after a lost mutation response.
+                if (method == "POST" && url.substringBefore('?').endsWith("people:createContact") && !canCreate())
+                    throw UploadDisabled()
                 val request = Request.Builder().url(url).header("Authorization", "Bearer $token")
                     .method(method, body?.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
                 http.newCall(request).execute().use { response ->

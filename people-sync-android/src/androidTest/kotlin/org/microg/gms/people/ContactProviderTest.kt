@@ -180,7 +180,22 @@ class ContactProviderTest {
             assertEquals(it.project(api.remote!!), current.baseline)
         }
     }
+    @Test fun importedAccountRowsStayLocalUntilSeparateOwnerChoice() {
+        api.remote = null; prefs.configure(SyncMode.TWO_WAY, 0)
+        val id = insertLocal("Imported from iPhone")
+        sync(); assertEquals(0, api.writes)
+        store { assertTrue(it.contacts().none { row -> row.id == id }) }
+        // Choice survives construction of fresh preferences (process restart boundary).
+        prefs.uploadNewContacts = true
+        assertTrue(ContactSyncPreferences(context, account).uploadNewContacts)
+        assertEquals(1, sync().uploaded)
+        prefs.uploadNewContacts = false
+        val later = insertLocal("Later import")
+        sync(); assertEquals(1, api.writes)
+        store { assertTrue(it.contacts().none { row -> row.id == later }) }
+    }
     @Test fun newlyCreatedAccountContactUploadsWithStableSourceId() {
+        prefs.uploadNewContacts = true
         api.remote = null; prefs.configure(SyncMode.TWO_WAY, 0)
         val id = insertLocal("New contact")
         assertEquals(1, sync().uploaded)

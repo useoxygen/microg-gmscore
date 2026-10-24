@@ -208,6 +208,8 @@
         androidx.compose.ui.tooling.data, androidx.compose.ui.tooling.preview, androidx.compose.ui.tooling,androidx.compose.material" />
 
     <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
+    <uses-permission android:name="android.permission.BACKUP" tools:ignore="ProtectedPermissions" />
+
     <application
         android:allowBackup="true"
         android:forceQueryable="true"
@@ -452,6 +454,9 @@
         <!-- People -->
 
         <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <activity-alias android:name="org.microg.gms.people.ContactsSyncSettings"
+            android:targetActivity="org.microg.gms.people.ContactsSyncActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">

@@ -49,7 +49,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
 
     override fun contacts(): List<LocalContact> = provider.query(RawContacts.CONTENT_URI, null,
         "$scope AND (${RawContacts.SYNC4}=? OR (${RawContacts.SYNC4} IS NULL AND ${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>? AND ${RawContacts.DIRTY}=1))",
-        args + arrayOf(OWNER, prefs.adoptionFloor.toString()), "${RawContacts._ID} ASC")!!.use { cursor ->
+        args + arrayOf(OWNER, (if (prefs.uploadNewContacts) prefs.adoptionFloor else Long.MAX_VALUE).toString()), "${RawContacts._ID} ASC")!!.use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
                 fun text(column: String) = cursor.getString(cursor.getColumnIndexOrThrow(column))
@@ -110,6 +110,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     }
     override fun begin(existing: LocalContact, pending: JSONObject): LocalContact {
         check(prefs.mode == SyncMode.TWO_WAY)
+        check(existing.resource != null || prefs.uploadNewContacts) { "Uploading new/imported contacts is disabled" }
         provider.applyBatch(arrayListOf(assertVersion(existing), ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI))
             .withSelection(rawScope(existing.id), args).withValue(RawContacts.SYNC3, pending.toString())
             .withValue(RawContacts.SYNC4, OWNER).withExpectedCount(1).build()))
