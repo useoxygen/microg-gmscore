@@ -25,7 +25,7 @@ import org.robolectric.annotation.Config
 @Config(manifest = Config.NONE, sdk = [35])
 class PasswordDialogProtectionTest {
     @Test fun publicWindowCallbackGuardForwardsEveryOtherCallbackIncludingDefaultMethods() {
-        val context = RuntimeEnvironment.getApplication<android.app.Application>()
+        val context = RuntimeEnvironment.getApplication()
         val view = View(context)
         val menu = inertInterface(Menu::class.java) as Menu
         val mode = object : ActionMode() {
