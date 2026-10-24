@@ -20,13 +20,14 @@ import org.microg.gms.common.PackageUtils
 import org.microg.gms.migration.*
 import org.microg.gms.migration.controller.DctController
 import org.microg.gms.migration.dct.DeviceInfoResponse
-import org.microg.gms.migration.payload.DctPayloadBridge
+import org.microg.gms.migration.payload.*
 import org.microg.gms.migration.session.DctSession
 import org.microg.gms.migration.session.DctSessions
 import org.microg.gms.utils.ExtendedPackageInfo
 import java.io.Closeable
 import java.util.EnumSet
 import org.microg.gms.migration.ble.DctScanner
+import org.microg.gms.migration.android.ClassicNearbyBinder
 
 internal const val NEARBY_DESCRIPTOR = "com.google.android.gms.nearby.internal.connection.INearbyConnectionService"
 private const val PREFIX = "com.google.android.gms.nearby.internal.connection."
@@ -43,7 +44,7 @@ class NearbyDctService : LifecycleService() {
             val binder = NearbyDctBinder(this@NearbyDctService, Binder.getCallingUid())
             synchronized(clients) { clients.add(binder) }
             callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS, binder, ConnectionInfo().apply {
-                features = arrayOf(Feature("nearby_connections_v3", 1L))
+                features = arrayOf(Feature("nearby_connections_v3", 1L), Feature("nearby_connections", 3L), Feature("nearby_connections_v2", 2L))
             })
         }
     }
@@ -52,6 +53,8 @@ class NearbyDctService : LifecycleService() {
 }
 
 internal class NearbyDctBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR, uid), Closeable {
+    private var classic: ClassicNearbyBinder? = null
+    private val ownerUid = uid
     private var scanner: DctScanner? = null
     private val discovered = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Int>>()
     private var controller: DctController? = null
@@ -103,7 +106,11 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
             event(lifecycle, "IConnectionLifecycleListener", 5, DctRecord(DctSchemas.bandwidth,
                 mapOf(1 to device().text(1)!!, 2 to 3, 3 to medium, 4 to 3, 11 to device(), 12 to status)))
         }
-        override fun oneWay(type: String, bytes: ByteArray) { bridge?.oneWay(type, bytes) ?: controller?.fail(8009) }
+        override fun request(request: DctHttpRequest): DctHttpReply? = bridge?.incoming(request)
+        override fun oneWay(type: String, bytes: ByteArray): Boolean {
+            val target = bridge ?: return false
+            target.oneWay(type, bytes); return true
+        }
         override fun closed(status: Int) {
             if (startResult != null) advertising(status)
             if (!connected) connectionResult(status)
@@ -119,6 +126,15 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
         return endpoint != null && endpoint == controller?.session?.sessionId
     }
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
+        if (code in listOf(2001, 2003, 2005)) {
+            check(controller == null) { "Cannot mix DCT and classic Nearby clients" }
+            if (classic == null) classic = ClassicNearbyBinder(context, ownerUid)
+        }
+        classic?.let {
+            val handled=it.handle(code,data,reply)
+            if(code==2010 || code==2011) { it.close(); classic=null }
+            return handled
+        }
         val schema = when (code) {
             3001 -> DctSchemas.start
             3002 -> DctSchemas.discovery
@@ -201,8 +217,9 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
                             event(payloadListener, "IPayloadListener", 3, DctRecord(DctSchemas.update,
                                 mapOf(1 to device().text(1)!!, 2 to DctRecord(DctSchemas.transfer,
                                     mapOf(1 to id, 2 to status, 3 to total, 4 to transferredBytes)), 3 to 3, 6 to device())))
-                        })
-                        accepted = true; controller?.claimActive(); result(callback, 0); connectionResult(0)
+                        }, { id, type, bytes, consumed -> controller?.publisher?.oneWay(type, bytes, id, consumed) == true },
+                            { id -> controller?.publisher?.cancel(id) == true })
+                        accepted = true; controller?.claimActive(); result(callback, 0); connectionResult(0); controller?.applicationReady(listener)
                     }
                 }
                 2007 -> { result(callback, if (matches(request, 6, 2)) 0 else 8005); if (matches(request, 6, 2)) controller?.fail(8004) }
@@ -225,6 +242,7 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
         synchronized(lock) {
             if (closed) return
             closed = true; scanner?.close(); scanner = null; bridge?.close(); bridge = null
+            classic?.close(); classic = null
             deaths.forEach { (binder, death) -> runCatching { binder.unlinkToDeath(death, 0) } }; deaths.clear()
             controller?.release(listener)
             // Switch is the terminal cluster owner. Its Binder death cancels radios, sockets and descriptors.

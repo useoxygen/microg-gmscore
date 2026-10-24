@@ -351,7 +351,8 @@ public enum GmsService {
     PHOTOPICKER(330),
     SEALEDCOMPUTING(331),
     APPSEARCH(332),
-    ESIM(333),
+    ESIM(333, "com.google.android.gms.esim.service.START"),
+    ESIM_PROVISIONING(508, "com.google.android.gms.esim.provisioning.service.START"),
     APP_ERROR(334, "com.google.android.gms.apperrors.service.START_APP_ERROR"),
     ADID(335),
 

@@ -2,6 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.migration
 
+import org.microg.gms.migration.android.AndroidTargetDeviceBinder
+import org.microg.gms.migration.android.AndroidSessionStore
+import org.microg.gms.migration.android.LegacyTargetBootstrap
 import org.microg.gms.migration.nearby.DctRecord
 import org.microg.gms.migration.nearby.DctSchemas
 import org.microg.gms.migration.session.DctSessions
@@ -31,10 +34,12 @@ internal const val PAIR_CALLBACK = "com.google.android.gms.smartdevice.postsetup
 internal const val TARGET_DESCRIPTOR = "com.google.android.gms.smartdevice.d2d.internal.ITargetDeviceService"
 internal const val POST_DESCRIPTOR = "com.google.android.gms.smartdevice.postsetup.internal.IPostSetupService"
 
-/** Only the optional, empty-state queries used before iOS import are supported here. */
+/** Signature-bound Switch target contracts. No Android paired state or account result is manufactured. */
 class SwitchSupportService : LifecycleService() {
+    private val targets = mutableListOf<AndroidTargetDeviceBinder>()
     private val broker = object : AbstractGmsServiceBroker(EnumSet.of(
-        GmsService.SMARTDEVICE_D2D_TARGET_DEVICE, GmsService.SMARTDEVICE_POST_SETUP
+        GmsService.SMARTDEVICE_D2D_TARGET_DEVICE, GmsService.SMARTDEVICE_POST_SETUP,
+        GmsService.SMARTDEVICE_TARGET_DIRECT_TRANSFER
     )) {
         override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest, service: GmsService) {
             val caller = PackageUtils.getAndCheckCallingPackage(this@SwitchSupportService, request.packageName)
@@ -43,20 +48,47 @@ class SwitchSupportService : LifecycleService() {
                 callback.onPostInitComplete(ConnectionResult.DEVELOPER_ERROR, null, null)
                 return
             }
-            val target = service == GmsService.SMARTDEVICE_D2D_TARGET_DEVICE
-            val features = if (target) arrayOf(Feature("post_setup_restore_api", 1L))
+            val direct = service == GmsService.SMARTDEVICE_TARGET_DIRECT_TRANSFER
+            val target = service == GmsService.SMARTDEVICE_D2D_TARGET_DEVICE || direct
+            val features = if (direct) emptyArray() else if (target) arrayOf(Feature("post_setup_restore_api", 1L), Feature("post_setup_pair", 4L), Feature("post_setup_clean_restore_api", 1L))
                 else arrayOf(Feature("post_setup_3p_restore_api", 1L), Feature("post_setup_api", 1L))
-            callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS,
-                EmptySetupStateBinder(Binder.getCallingUid(), target), ConnectionInfo().apply { this.features = features })
+            val uid = Binder.getCallingUid()
+            val sessions = AndroidSessionStore(java.io.File(noBackupFilesDir, "migration-android"))
+            val binder = if (target) AndroidTargetDeviceBinder(uid,
+                sessions.load(uid), direct = direct, reload = { sessions.load(uid) }, bootstrapFactory = { options, listener, started ->
+                    LegacyTargetBootstrap(this@SwitchSupportService,options,listener,{ sessions.commit(uid,it) },started)
+                }, advertisingName = { LegacyTargetBootstrap.advertisingName(this@SwitchSupportService) }).also {
+                synchronized(targets) { targets.add(it) }
+            } else EmptySetupStateBinder(Binder.getCallingUid(), false)
+            callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS, binder,
+                ConnectionInfo().apply { this.features = features })
         }
     }
 
     override fun onBind(intent: Intent): IBinder { super.onBind(intent); return broker }
+    override fun onDestroy() {
+        synchronized(targets) { targets.forEach { it.close() }; targets.clear() }
+        super.onDestroy()
+    }
 }
 
 internal class EmptySetupStateBinder(uid: Int, private val target: Boolean) :
     MigrationBinder(if (target) TARGET_DESCRIPTOR else POST_DESCRIPTOR, uid) {
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
+        if (!target && code == 9) {
+            val callback = requireNotNull(data.readStrongBinder())
+            require(data.dataAvail() <= 65536)
+            requireNotNull(data.readString()); requireNotNull(data.readString())
+            val present = data.readInt()
+            require(present in 0..1)
+            if (present == 1) Bundle.CREATOR.createFromParcel(data) // Keep contents lazy; never invoke/start them.
+            data.skipApiMetadata(); data.requireEnd()
+            sendCallback(callback, PAIR_CALLBACK, 8) {
+                writeNullable(Status(10590)) // No authenticated Android source session.
+                writeNullable(DctRecord(mapOf(1 to DctRecord.Kind.IntValue), mapOf(1 to 0)))
+            }
+            reply?.writeNoException(); return true
+        }
         if (!target && code == 1) {
             val callback = requireNotNull(data.readStrongBinder())
             data.skipApiMetadata(); data.requireEnd()
