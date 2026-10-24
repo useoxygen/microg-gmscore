@@ -26,8 +26,10 @@ rows, Device imports, and other apps' raw contacts remain outside this set.
 Remote identifiers, etags, baselines, and pending uploads are stored in the
 owned raw contacts' sync columns. Provider updates assert the observed row
 version and use `CALLER_IS_SYNCADAPTER`. Contact and group metadata checkpoints
-advance after durable provider writes; per-row photo work and photo journals
-remain retryable independently of those metadata checkpoints.
+advance after durable provider writes. A pending photo mutation holds the contact
+metadata checkpoint: after photo recovery, the next metadata pass must revisit
+and apply any cloud fields skipped while that journal was pending. Photo download
+hints remain durable independently of metadata checkpoints.
 
 ## Sync and recovery
 

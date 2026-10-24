@@ -118,7 +118,11 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
 
         for (existing in store.contacts().filter { it.dirty || it.pending != null }) try {
             if (existing.resource in snapshot.unreadable || existing.deleted && skipped > 0) continue
-            if (existing.pending?.optString("kind") == "photo") continue // PhotosSync owns this durable operation.
+            if (existing.pending?.optString("kind") == "photo") {
+                // Photo recovery does not apply metadata skipped above. Hold the
+                // checkpoint so a later pass revisits it after the journal clears.
+                uncertain++; continue
+            }
             if (existing.pending != null) {
                 val pending = existing.pending
                 val resolved = when (pending.getString("kind")) {

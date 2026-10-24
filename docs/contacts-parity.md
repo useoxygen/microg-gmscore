@@ -172,9 +172,10 @@ photo download/upload/delete, groups/labels, My Contacts and starred, including
 provider code and durable mutation recovery. See `people-sync/README.md` for the
 state layout and recovery rules.
 
-Photo operations have independent per-row durable work: metadata checkpoints
-can advance after their provider writes while a photo hint or upload journal
-remains pending. Photo mutations use dedicated endpoints, bounded images,
+Photo download hints have independent per-row durable work. Pending photo
+mutation journals hold the contact metadata checkpoint so the next metadata pass
+revisits cloud fields skipped before photo recovery cleared the journal. Photo
+mutations use dedicated endpoints, bounded images,
 provider display-photo reads and atomic photo/baseline writes. Unknown upload
 replies require exact readback equality; transformed or different readback stays
 uncertain without automatic replay. The endpoint has no etag precondition, so
@@ -198,6 +199,14 @@ merge and acceptance. CYC-721 must not be described as full stock parity or a
 proven real-account activation fix.
 
 ## Validation receipt
+
+Review follow-up: the combined metadata/photo recovery regression fails at
+`766cdf4c` because a pending photo journal allows the metadata checkpoint to
+advance. Holding that checkpoint fixes the loss: the next pass applies the cloud
+name after photo recovery without replaying the upload. All 118 engine tests
+passed (`photo-checkpoint-before.log` / `photo-checkpoint-after.log` in the
+research folder). The Android build/lint receipts below precede this engine-only
+follow-up; those checks were not rerun.
 
 Final photo/group validation is recorded in
 `/Users/thomas/research/cyc721-contacts/photos-groups-final-verification.log`.

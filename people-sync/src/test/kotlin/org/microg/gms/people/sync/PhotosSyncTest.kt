@@ -12,7 +12,24 @@ class PhotosSyncTest {
         .put("resourceName", "people/a").put("metadata", JSONObject().put("sources", JSONArray().put(JSONObject().put("type", "CONTACT").put("etag", etag))))
         .apply { if (url != null) put("photos", JSONArray().put(JSONObject().put("url", url).put("metadata", JSONObject()
             .put("source", JSONObject().put("type", "CONTACT"))))) })
-    private class Store : PhotoStore {
+    private class Store : PhotoStore, ContactStore {
+        var saved: String? = null
+        override fun checkpoint() = saved
+        override fun checkpoint(token: String) { saved = token }
+        override fun contacts() = listOf(value.contact)
+        override fun project(person: Person): Fields = person.json.optJSONArray("names")?.let {
+            mapOf("names" to canonical(it))
+        }.orEmpty()
+        override fun apply(person: Person, existing: LocalContact?, readOnly: Boolean) {
+            check(existing != null && value.contact.version == existing.version)
+            value = value.copy(contact = existing.copy(version = existing.version + 1, etag = person.etag,
+                fields = project(person), baseline = project(person), dirty = false),
+                remoteHint = ContactPhotos.reference(person), remoteRevision = ContactPhotos.revision(person))
+        }
+        override fun remove(existing: LocalContact) = error("Unexpected metadata deletion")
+        override fun begin(existing: LocalContact, pending: JSONObject): LocalContact = error("Unexpected metadata upload")
+        override fun rejected(existing: LocalContact) = error("Unexpected metadata rejection")
+        override fun acknowledge(existing: LocalContact, remote: Person?) = error("Unexpected metadata acknowledgment")
         var value = PhotoContact(LocalContact(1, 1, "people/a", "e1", emptyMap(), emptyMap(), false, false), ContactPhotos.NONE, null, null)
         var bytes: ByteArray? = null; var installs = 0; var afterBegin: (() -> Unit)? = null
         override fun photoContacts() = listOf(value)
@@ -43,8 +60,9 @@ class PhotosSyncTest {
     private inner class Api : ContactsApi, PhotosApi {
         var remote: Person? = person(); val images = mutableMapOf<String, ByteArray>(); var writes = 0; var reads = 0
         var afterWrite: (() -> Unit)? = null; var loseReply = false; var reject: ApiException? = null
+        var page: ((String?, String?) -> Page)? = null
         override fun get(resource: String): Person? { reads++; return remote }
-        override fun list(syncToken: String?, pageToken: String?) = Page(listOfNotNull(remote), null, "checkpoint")
+        override fun list(syncToken: String?, pageToken: String?) = page?.invoke(syncToken, pageToken) ?: Page(listOfNotNull(remote), null, "checkpoint")
         override fun create(body: JSONObject): Person = error("Unexpected contact create")
         override fun update(person: Person, fields: Set<String>, body: JSONObject): Person = error("Unexpected text mutation")
         override fun delete(resource: String) = error("Unexpected contact delete")
@@ -62,6 +80,36 @@ class PhotosSyncTest {
         val store = Store(); val api = Api()
         PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
         return store to api
+    }
+    @Test fun lostPhotoReplyHoldsMetadataCheckpointUntilCloudNameIsApplied() {
+        val (store, api) = setup()
+        fun named(person: Person, name: String) = Person.parse(JSONObject(person.json.toString()).put("names",
+            JSONArray().put(JSONObject().put("givenName", name))))
+        val before = named(api.remote!!, "Before")
+        store.value = store.value.copy(contact = store.value.contact.copy(fields = store.project(before), baseline = store.project(before)))
+        store.saved = "old"
+        store.edit(byteArrayOf(1, 2, 3)); api.loseReply = true
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        api.remote = named(api.remote!!, "CloudEdit")
+        api.page = { token, _ -> Page(if (token == "old") listOf(api.remote!!) else emptyList(), null, "new") }
+
+        val blocked = ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals("old", store.saved)
+        assertEquals(1, blocked.uncertain)
+        assertEquals(store.project(before), store.value.contact.fields)
+        assertNotNull(store.value.contact.pending)
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertNull(store.value.contact.pending); assertFalse(store.value.contact.dirty)
+
+        // A fresh engine must revisit the old incremental range after recovery,
+        // even though photo completion deliberately keeps the text baseline.
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(store.project(api.remote!!), store.value.contact.fields)
+        assertEquals(store.value.contact.fields, store.value.contact.baseline)
+        assertEquals("new", store.saved)
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(store.project(api.remote!!), store.value.contact.fields)
+        assertEquals(1, api.writes) // Recovery never replays the photo upload.
     }
     @Test fun confirmedMutationIsAcknowledgedEvenIfOptionalImageReadFails() {
         val (store, api) = setup(); store.edit(byteArrayOf(1)); var fail = true
