@@ -96,6 +96,17 @@ class DctHttpServerTest {
         try { assertTrue(entered.await(3, TimeUnit.SECONDS)); assertEquals(0, server.cancel(requestId.get())); assertTrue(future.get(2, TimeUnit.SECONDS)) }
         finally { server.close(); executor.shutdownNow() }
     }
+    @Test fun closeBeforeHttpWriterRunsCancelsOwnedResponseWithoutFalseSuccess() {
+        val events = CopyOnWriteArrayList<Pair<Long,Int>>()
+        lateinit var server: DctServerPayloads
+        server = DctServerPayloads(RuntimeEnvironment.getApplication(), { incoming ->
+            assertEquals(0, server.send(response(700, incoming.obj(15)!!.long(1), "value", true, true)))
+        }, { id, status, _, _ -> events.add(id to status) })
+        val reply = server.incoming(DctHttpRequest("GET", "/communications", emptyMap(), null))
+        server.close()
+        assertThrows(IOException::class.java) { reply.body.writeTo(okio.Buffer()) }
+        assertTrue(events.contains(700L to 4)); assertFalse(events.contains(700L to 1))
+    }
     @Test fun parserPreservesNullGetVersusEmptyPostAndRejectsSmuggling() {
         fun read(value: String) = DctHttpServer.read(ByteArrayInputStream(value.toByteArray()))
         assertNull(read("GET /x HTTP/1.1\r\nx-dct-version: v1\r\n\r\n").bytes)
