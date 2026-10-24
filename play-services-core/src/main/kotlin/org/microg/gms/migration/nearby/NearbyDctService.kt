@@ -130,7 +130,11 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
             check(controller == null) { "Cannot mix DCT and classic Nearby clients" }
             if (classic == null) classic = ClassicNearbyBinder(context, ownerUid)
         }
-        classic?.let { return it.handle(code, data, reply) }
+        classic?.let {
+            val handled=it.handle(code,data,reply)
+            if(code==2010 || code==2011) { it.close(); classic=null }
+            return handled
+        }
         val schema = when (code) {
             3001 -> DctSchemas.start
             3002 -> DctSchemas.discovery

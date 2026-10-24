@@ -22,6 +22,8 @@ internal class ClassicBleRadio(private val context: Context, private val service
     private val adapter get()=(context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
     private val handler=Handler(Looper.getMainLooper())
     private val closed=AtomicBoolean(false)
+    private val scanning=AtomicBoolean(false)
+    private val advertisingEpoch=java.util.concurrent.atomic.AtomicInteger(0)
     private var advertiser: AdvertiseCallback?=null
     private var scanner: ScanCallback?=null
     private var server: BluetoothGattServer?=null
@@ -33,9 +35,10 @@ internal class ClassicBleRadio(private val context: Context, private val service
     fun advertise(fastUuid: ParcelUuid?, ready: (Int) -> Unit) {
         try {
             check(!closed.get() && advertiser==null && adapter.isEnabled)
+            val epoch=advertisingEpoch.incrementAndGet()
             val bytes=if(fastUuid!=null) ClassicBleCodec.fast(service,localId,info,pcp) else ClassicBleCodec.regular(service,localId,info,pcp,adapter.address)
             val begin={
-                if(!closed.get()) {
+                if(!closed.get() && advertisingEpoch.get()==epoch) {
                     val callback=object: AdvertiseCallback() { override fun onStartSuccess(settingsInEffect: AdvertiseSettings) { ready(0) }; override fun onStartFailure(errorCode: Int) { ready(8000); stopAdvertising() } }
                     advertiser=callback
                     adapter.bluetoothLeAdvertiser.startAdvertising(AdvertiseSettings.Builder().setConnectable(fastUuid==null).setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).build(),AdvertiseData.Builder().addServiceData(fastUuid ?: ParcelUuid(serviceUuid),if(fastUuid==null)ClassicBleCodec.header(service,bytes) else bytes).build(),callback)
@@ -61,11 +64,12 @@ internal class ClassicBleRadio(private val context: Context, private val service
     fun scan(fastUuid: ParcelUuid?, ready: (Int) -> Unit) {
         try {
             check(!closed.get() && scanner==null && adapter.isEnabled)
+            scanning.set(true)
             val uuid=fastUuid ?: ParcelUuid(serviceUuid)
             val callback=object: ScanCallback() {
                 override fun onScanFailed(errorCode: Int) { ready(8000) }
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
-                    if(closed.get())return
+                    if(closed.get() || !scanning.get())return
                     val data=result.scanRecord?.getServiceData(uuid) ?: return
                     if(fastUuid!=null) { publish(data); return }
                     // Extended advertisements carry the medium record directly.
@@ -83,11 +87,11 @@ internal class ClassicBleRadio(private val context: Context, private val service
         val (endpoint,address)=ClassicBleCodec.parse(service,bytes)
         // A BLE random address is not evidence of an RFCOMM address.
         val bt=address
-        if(!closed.get() && endpoint.id!=localId && endpoint.pcp==pcp)found(ClassicRadio.Peer(endpoint,bluetooth=bt))
+        if(!closed.get() && scanning.get() && endpoint.id!=localId && endpoint.pcp==pcp)found(ClassicRadio.Peer(endpoint,bluetooth=bt))
     } }
     private fun fetch(device: BluetoothDevice, slots: Int) {
         synchronized(clients) {
-            if(closed.get() || clients.size>=2 || fetched.size>=256 || (fetched[device.address] ?: 0)>SystemClock.elapsedRealtime()-60000)return
+            if(closed.get() || !scanning.get() || clients.size>=2 || fetched.size>=256 || (fetched[device.address] ?: 0)>SystemClock.elapsedRealtime()-60000)return
             fetched[device.address]=SystemClock.elapsedRealtime()
             var index=0
             val callback=object: BluetoothGattCallback() {
@@ -108,7 +112,7 @@ internal class ClassicBleRadio(private val context: Context, private val service
             handler.postDelayed({ if(clients.remove(device.address,gatt)) { runCatching { gatt.disconnect() }; gatt.close() } },15000)
         }
     }
-    fun stopAdvertising() { advertiser?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }; advertiser=null; server?.close(); server=null; mtus.clear() }
-    fun stopDiscovery() { scanner?.let { runCatching { adapter.bluetoothLeScanner?.stopScan(it) } }; scanner=null; clients.values.toList().forEach { runCatching { it.disconnect(); it.close() } }; clients.clear(); fetched.clear() }
+    fun stopAdvertising() { advertisingEpoch.incrementAndGet(); advertiser?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }; advertiser=null; server?.close(); server=null; mtus.clear() }
+    fun stopDiscovery() { scanning.set(false); scanner?.let { runCatching { adapter.bluetoothLeScanner?.stopScan(it) } }; scanner=null; clients.values.toList().forEach { runCatching { it.disconnect(); it.close() } }; clients.clear(); fetched.clear() }
     override fun close() { if(closed.compareAndSet(false,true)) { stopAdvertising(); stopDiscovery() } }
 }

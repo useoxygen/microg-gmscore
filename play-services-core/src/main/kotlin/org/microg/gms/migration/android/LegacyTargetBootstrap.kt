@@ -98,15 +98,8 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
     private var endpoint: String? = null
     private var finished = false
     val isActive: Boolean get() = !closed.get()
-    val name: String = run {
-        val address=runCatching { (context.getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager).adapter.address }.getOrNull()
-        // gelh/gesc: abs(Objects.hash(adapterAddress)), final three digits.
-        val disambiguation=kotlin.math.abs(java.util.Objects.hash(address)).toString().takeLast(3).padStart(3,'0')
-        val suffix=" ($disambiguation)"
-        var base = android.provider.Settings.Global.getString(context.contentResolver,"device_name") ?: Build.MODEL
-        while(base.toByteArray(Charsets.UTF_8).size > 18-suffix.length) base = base.dropLast(1)
-        base+suffix
-    }
+    val name: String = advertisingName(context)
+    var pin: String?=null; private set
     private val death = IBinder.DeathRecipient { close() }
     private val prefix = "com.google.android.gms.nearby.internal.connection."
     private val listenerDescriptor = "com.google.android.gms.smartdevice.d2d.internal.ITargetBootstrapListener"
@@ -149,7 +142,7 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
         when(code) {
             2 -> DctRecord.nullable(data,ClassicSchemas.initiated)?.use { value ->
                 val peer=requireNotNull(value.text(1)); val pin=requireNotNull(value.text(3))
-                worker.execute { if(endpoint == null) { endpoint=peer; notify(6) { writeString(pin) }; call(2006,DctRecord(ClassicSchemas.accept,mapOf(1 to result,3 to peer,5 to payload))) } else call(2007,DctRecord(ClassicSchemas.reject,mapOf(1 to result,2 to peer))) }
+                worker.execute { if(endpoint == null) { endpoint=peer; this.pin=pin; notify(6) { writeString(pin) }; call(2006,DctRecord(ClassicSchemas.accept,mapOf(1 to result,3 to peer,5 to payload))) } else call(2007,DctRecord(ClassicSchemas.reject,mapOf(1 to result,2 to peer))) }
             }
             3 -> DctRecord.nullable(data,ClassicSchemas.connected)?.use { value -> val status=value.int(2); worker.execute {
                 if(status != 0) fail(10557) else {
@@ -171,6 +164,17 @@ internal class LegacyTargetBootstrap(private val context: Context, options: DctR
         } catch (_: Exception) { started(10557); close() } }
     }
     private fun fail(status: Int) { if(closed.get()) return; runCatching { if(endpoint != null) send(exchange.terminal(3,status)) }; runCatching { notify(7) { writeInt(status) } }; close() }
-    override fun close() { if(!closed.compareAndSet(false,true)) return; nearby.close(); exchange.close(); runCatching { listener.unlinkToDeath(death,0) }; worker.shutdownNow() }
-    companion object { const val SERVICE_ID = "com.google.android.gms.smartdevice.NC_ID" }
+    override fun close() { if(!closed.compareAndSet(false,true)) return; nearby.close(); exchange.close(); runCatching { listener.unlinkToDeath(death,0) }; worker.shutdownNow(); pin=null }
+    companion object {
+        const val SERVICE_ID = "com.google.android.gms.smartdevice.NC_ID"
+        fun advertisingName(context: Context): String = run {
+        val address=runCatching { (context.getSystemService(Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager).adapter.address }.getOrNull()
+        // gelh/gesc: abs(Objects.hash(adapterAddress)), final three digits.
+        val disambiguation=kotlin.math.abs(java.util.Objects.hash(address)).toString().takeLast(3).padStart(3,'0')
+        val suffix=" ($disambiguation)"
+        var base = android.provider.Settings.Global.getString(context.contentResolver,"device_name") ?: Build.MODEL
+        while(base.toByteArray(Charsets.UTF_8).size > 18-suffix.length) base = base.dropLast(1)
+        base+suffix
+    }
+    }
 }

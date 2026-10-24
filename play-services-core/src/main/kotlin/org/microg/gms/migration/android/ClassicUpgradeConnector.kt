@@ -79,9 +79,11 @@ internal class ClassicUpgradeConnector(private val context: Context) {
         require(credentials.ssid.startsWith("DIRECT-") && credentials.ssid.length<=32 && credentials.password.length in 8..63 && credentials.port in 1..65535)
         val manager=context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager ?: throw UnsupportedOperationException("No Wi-Fi Direct")
         val channel=manager.initialize(context,Looper.getMainLooper(),null)
-        val group=CompletableFuture<android.net.wifi.p2p.WifiP2pGroup?>()
-        manager.requestGroupInfo(channel) { group.complete(it) }
-        check(group.get(3,TimeUnit.SECONDS)==null) { "Another Wi-Fi Direct group is active" }
+        try {
+            val group=CompletableFuture<android.net.wifi.p2p.WifiP2pGroup?>()
+            manager.requestGroupInfo(channel) { group.complete(it) }
+            check(group.get(3,TimeUnit.SECONDS)==null) { "Another Wi-Fi Direct group is active" }
+        } catch(e: Exception) { channel.close(); throw e }
         val started=CompletableFuture<Unit>(); val owner=CompletableFuture<InetAddress>(); val retired=AtomicBoolean(false)
         var joinedGroupId: Int?=null
         val handler=Handler(Looper.getMainLooper())

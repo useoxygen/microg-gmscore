@@ -18,7 +18,8 @@ internal class AndroidTargetDeviceBinder(
     private var state: AndroidPostSetupState = AndroidPostSetupState(),
     private val direct: Boolean = false,
     private val reload: (() -> AndroidPostSetupState)? = null,
-    private val bootstrapFactory: ((DctRecord, IBinder, (Int) -> Unit) -> LegacyTargetBootstrap)? = null
+    private val bootstrapFactory: ((DctRecord, IBinder, (Int) -> Unit) -> LegacyTargetBootstrap)? = null,
+    private val advertisingName: () -> String = { "" }
 ) : MigrationBinder(if (direct) DIRECT_TARGET_DESCRIPTOR else TARGET_DESCRIPTOR, uid), Closeable {
     private var bootstrap: LegacyTargetBootstrap? = null
     override fun dispatch(transaction: Int, data: Parcel, reply: Parcel?): Boolean {
@@ -27,7 +28,7 @@ internal class AndroidTargetDeviceBinder(
         if(code in listOf(13,14,15,17) && state.hint() == null && reload != null) { state.close(); state = reload.invoke() }
         if (code == 4) {
             data.skipSafeParcelable(); data.skipApiMetadata(); data.requireEnd()
-            reply?.writeNoException(); reply?.writeString(bootstrap?.name ?: "")
+            reply?.writeNoException(); reply?.writeString(bootstrap?.name ?: advertisingName())
             return true
         }
         val callback = requireNotNull(data.readStrongBinder())
@@ -111,7 +112,7 @@ internal class AndroidTargetDeviceBinder(
                 data.skipApiMetadata(); data.requireEnd()
                 when (code) {
                     3 -> { bootstrap?.close(); bootstrap = null; status(callback,3,0) }
-                    5 -> status(callback, 4, 10552, textResult = true)
+                    5 -> status(callback,4,if(bootstrap?.pin==null)10552 else 0,textResult=true,textValue=bootstrap?.pin)
                     11 -> status(callback, 6, 10565)
                     16 -> status(callback, 7, 10581, nullResult = true)
                     18 -> status(callback, 8, 10581, emptyList = true)
@@ -137,10 +138,10 @@ internal class AndroidTargetDeviceBinder(
         }
     }
     private fun status(callback: IBinder, operation: Int, code: Int, message: String? = null,
-                       textResult: Boolean = false, nullResult: Boolean = false, emptyList: Boolean = false) {
+                       textResult: Boolean = false, nullResult: Boolean = false, emptyList: Boolean = false, textValue: String? = null) {
         sendCallback(callback, if (direct) DIRECT_CALLBACK else TARGET_CALLBACK, if (direct) 1 else operation) {
             writeNullable(Status(code, message))
-            if (textResult) writeString(null)
+            if (textResult) writeString(textValue)
             if (nullResult) writeInt(0)
             if (emptyList) writeInt(0)
         }

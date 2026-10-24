@@ -28,14 +28,15 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     var endpointId: String? = null
         private set
 
-    fun requestConnection(localId: String, localInfo: ByteArray, peerId: String): ByteArray {
+    fun requestConnection(localId: String, localInfo: ByteArray, peerId: String,
+        upgradeMediums: List<ConnectionRequestFrame.Medium> = listOf(ConnectionRequestFrame.Medium.WIFI_LAN)): ByteArray {
         check(!closed && !pending && context == null)
         require(localId.length == 4 && peerId.length == 4 && localInfo.size <= 131)
         val request = ConnectionRequestFrame.newBuilder().setEndpointId(localId)
             .setEndpointName(localInfo.toString(Charsets.UTF_8))
             .setEndpointInfo(org.microg.gms.migration.protobuf.ByteString.copyFrom(localInfo))
             .setNonce(java.security.SecureRandom().nextInt())
-            .addMediums(ConnectionRequestFrame.Medium.WIFI_LAN)
+            .addAllMediums(upgradeMediums)
             .setKeepAliveIntervalMillis(5000).setKeepAliveTimeoutMillis(30000)
         writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.CONNECTION_REQUEST)
             .setConnectionRequest(request).build(), false)
@@ -75,7 +76,9 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         require(MessageDigest.isEqual(verification, verifiedToken)) { "Wrong peer verification token" }
         writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.CONNECTION_RESPONSE)
             .setConnectionResponse(ConnectionResponseFrame.newBuilder().setStatus(0)
-                .setResponse(ConnectionResponseFrame.ResponseStatus.ACCEPT)).build(), encrypted = false)
+                .setResponse(ConnectionResponseFrame.ResponseStatus.ACCEPT)
+                .setOsInfo(OsInfo.newBuilder().setType(OsInfo.OsType.ANDROID))
+                .setSafeToDisconnectVersion(0)).build(), encrypted = false)
         var response: V1Frame
         do {
             response = parse(readPacket())
@@ -153,8 +156,8 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
                 require(ack.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
                     ack.bandwidthUpgradeNegotiation.eventType == BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION_ACK)
             }
+            committed = true // A partial LAST_WRITE is already a committed handoff.
             send(negotiation(BandwidthUpgradeNegotiationFrame.EventType.LAST_WRITE_TO_PRIOR_CHANNEL))
-            committed = true
             var last = false; var safe = false
             val deadline = System.nanoTime()+30_000_000_000L
             var count = 0

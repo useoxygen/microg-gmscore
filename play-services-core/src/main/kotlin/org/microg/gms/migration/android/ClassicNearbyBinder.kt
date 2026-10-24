@@ -75,7 +75,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
         val upgrades = ConcurrentHashMap.newKeySet<Closeable>()
         override fun close() { decision.countDown(); outputs.values.toList().forEach { runCatching { it.close() } }; outputs.clear(); upgrades.toList().forEach { runCatching { it.close() } }; upgrades.clear(); runCatching { link.close() }; receiver?.close(); runCatching { channel.close() }; cacheFiles.toList().forEach { it.delete() }; cacheFiles.clear(); token.fill(0) }
     }
-    private fun watch(binder: IBinder) { if (deaths.containsKey(binder)) return; val death = IBinder.DeathRecipient { close() }; binder.linkToDeath(death,0); if (deaths.putIfAbsent(binder,death) != null) binder.unlinkToDeath(death,0) }
+    private fun watch(binder: IBinder) { if (deaths.containsKey(binder)) return; require(deaths.size<256); val death = IBinder.DeathRecipient { close() }; binder.linkToDeath(death,0); if (deaths.putIfAbsent(binder,death) != null) binder.unlinkToDeath(death,0) }
     private fun event(target: IBinder?, name: String, code: Int, value: DctRecord) { if (target == null || closed.get()) return; try { sendCallback(target,prefix+name,code) { writeNullable(value) } } catch (_: Exception) { close() } }
     private fun result(target: IBinder?, code: Int) { if (target != null) sendCallback(target,prefix+"IResultListener",2) { writeInt(code) } }
     private fun update(session: Session, endpoint: String, id: Long, status: Int, total: Long, bytes: Long) = event(session.payload,"IPayloadListener",3,DctRecord(ClassicSchemas.update,mapOf(1 to endpoint,2 to DctRecord(ClassicSchemas.progress,mapOf(1 to id,2 to status,3 to total,4 to bytes)),3 to 0)))
@@ -102,7 +102,11 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 val info: ByteArray
                 val incoming = peer == null
                 if (incoming) { val (request,token) = channel.receiveConnection(); endpoint = request.endpointId; info = request.endpointInfo.toByteArray().takeIf { it.isNotEmpty() } ?: request.endpointName.toByteArray(); session.token = token }
-                else { endpoint = requireNotNull(peer).endpoint.id; info = peer.endpoint.info; session.token = channel.requestConnection(localId,localInfo,endpoint) }
+                else { endpoint = requireNotNull(peer).endpoint.id; info = peer.endpoint.info; session.token = channel.requestConnection(localId,localInfo,endpoint,buildList {
+                    add(ConnectionRequestFrame.Medium.WIFI_LAN)
+                    if(android.os.Build.VERSION.SDK_INT>=29 && context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WIFI))add(ConnectionRequestFrame.Medium.WIFI_HOTSPOT)
+                    if(android.os.Build.VERSION.SDK_INT>=29 && context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WIFI_DIRECT))add(ConnectionRequestFrame.Medium.WIFI_DIRECT)
+                }) }
                 val ep = requireNotNull(endpoint)
                 check(sessions.putIfAbsent(ep,session) == null)
                 event(lifecycle,"IConnectionLifecycleListener",2,DctRecord(ClassicSchemas.initiated,mapOf(1 to ep,2 to info.toString(Charsets.UTF_8),3 to Base64.encodeToString(session.token,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING).take(5).uppercase(java.util.Locale.ROOT),4 to incoming,6 to session.token.copyOf(),7 to info,9 to 0)))
@@ -180,7 +184,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
         val schema = when(code) { 2001 -> ClassicSchemas.start; 2003 -> ClassicSchemas.discovery; 2005 -> ClassicSchemas.request; 2006 -> ClassicSchemas.accept; 2007 -> ClassicSchemas.reject; 2008 -> ClassicSchemas.send; 2009 -> ClassicSchemas.endpoint; 2012 -> ClassicSchemas.cancel; 2002,2004,2010,2011,2014 -> ClassicSchemas.result; else -> return false }
         val request = requireNotNull(DctRecord.nullable(data,schema)); data.requireEnd()
         try {
-            check(!closed.get()); val callback = request.binder(1); callback?.let(::watch)
+            check(!closed.get()); val callback = request.binder(1)
             when(code) {
                 2001 -> {
                     lifecycle = requireNotNull(request.binder(7)); watch(lifecycle!!)

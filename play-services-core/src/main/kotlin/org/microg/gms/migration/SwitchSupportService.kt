@@ -57,7 +57,7 @@ class SwitchSupportService : LifecycleService() {
             val binder = if (target) AndroidTargetDeviceBinder(uid,
                 sessions.load(uid), direct = direct, reload = { sessions.load(uid) }, bootstrapFactory = { options, listener, started ->
                     LegacyTargetBootstrap(this@SwitchSupportService,options,listener,{ sessions.commit(uid,it) },started)
-                }).also {
+                }, advertisingName = { LegacyTargetBootstrap.advertisingName(this@SwitchSupportService) }).also {
                 synchronized(targets) { targets.add(it) }
             } else EmptySetupStateBinder(Binder.getCallingUid(), false)
             callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS, binder,

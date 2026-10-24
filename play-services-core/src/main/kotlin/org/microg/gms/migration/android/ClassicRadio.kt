@@ -33,6 +33,7 @@ internal class ClassicRadio(private val context: Context, private val service: S
     private val adapter get() = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     private val workers = Executors.newFixedThreadPool(3)
     private val closed = AtomicBoolean(false)
+    private val discoveryEpoch = java.util.concurrent.atomic.AtomicInteger(0)
     private var server: ServerSocket? = null
     private var bluetoothServer: android.bluetooth.BluetoothServerSocket? = null
     private var registration: NsdManager.RegistrationListener? = null
@@ -59,6 +60,7 @@ internal class ClassicRadio(private val context: Context, private val service: S
     }
     fun discoverLan(ready: (Int) -> Unit) {
         check(!closed.get() && discovery == null)
+        val epoch=discoveryEpoch.incrementAndGet()
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(type: String) { ready(0) }
             override fun onStartDiscoveryFailed(type: String, code: Int) { ready(8000) }
@@ -66,11 +68,11 @@ internal class ClassicRadio(private val context: Context, private val service: S
             override fun onDiscoveryStopped(type: String) {}
             override fun onServiceLost(serviceInfo: NsdServiceInfo) { peers.remove(serviceInfo.serviceName)?.let(lost) }
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (closed.get() || serviceInfo.serviceType.trimEnd('.') != ClassicDiscoveryCodec.serviceType(service).trimEnd('.')) return
+                if (closed.get() || discoveryEpoch.get()!=epoch || serviceInfo.serviceType.trimEnd('.') != ClassicDiscoveryCodec.serviceType(service).trimEnd('.')) return
                 nsd.resolveService(serviceInfo, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, code: Int) {}
                     override fun onServiceResolved(resolved: NsdServiceInfo) {
-                        if (closed.get()) return
+                        if (closed.get() || discoveryEpoch.get()!=epoch) return
                         runCatching { val ep = ClassicDiscoveryCodec.parseLan(service,resolved.serviceName,resolved.attributes["n"])
                             if (peers.size<256 && ep.id != localId && ep.pcp == pcp && resolved.port in 1..65535) { peers[resolved.serviceName] = ep.id; found(Peer(ep,resolved.host,resolved.port)) } }
                     }
@@ -97,6 +99,6 @@ internal class ClassicRadio(private val context: Context, private val service: S
     }
     private fun link(socket: Socket) = Link(socket.getInputStream(),socket.getOutputStream(),5) { sockets.remove(socket); socket.close() }
     fun stopAdvertising() { ble.stopAdvertising(); registration?.let { runCatching { nsd.unregisterService(it) } }; registration = null; val old = server; server = null; runCatching { old?.close() }; val bt = bluetoothServer; bluetoothServer = null; runCatching { bt?.close() }; advertiser?.let { runCatching { adapter?.bluetoothLeAdvertiser?.stopAdvertising(it) } }; advertiser = null }
-    fun stopDiscovery() { ble.stopDiscovery(); discovery?.let { runCatching { nsd.stopServiceDiscovery(it) } }; discovery = null; scanner?.let { runCatching { adapter?.bluetoothLeScanner?.stopScan(it) } }; scanner = null; peers.clear() }
+    fun stopDiscovery() { discoveryEpoch.incrementAndGet(); ble.stopDiscovery(); discovery?.let { runCatching { nsd.stopServiceDiscovery(it) } }; discovery = null; scanner?.let { runCatching { adapter?.bluetoothLeScanner?.stopScan(it) } }; scanner = null; peers.clear() }
     override fun close() { if (!closed.compareAndSet(false,true)) return; stopAdvertising(); stopDiscovery(); sockets.toList().forEach { runCatching { it.close() } }; sockets.clear(); workers.shutdownNow() }
 }
