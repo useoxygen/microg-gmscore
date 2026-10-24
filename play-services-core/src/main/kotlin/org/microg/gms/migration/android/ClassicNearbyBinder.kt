@@ -88,8 +88,8 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
     }
     private fun mediumResults(count: Int, complete: (Int) -> Unit): (Int) -> Unit {
         var remaining=count; var done=false
-        if(count==0) { complete(8000); done=true }
-        return { status -> synchronized(complete) { if(!done) { remaining--; if(status==0 || remaining==0) { done=true; complete(if(status==0)0 else 8000) } } } }
+        if(count==0) { complete(ClassicStatus.CAPABILITY); done=true }
+        return { status -> synchronized(complete) { if(!done) { remaining--; if(status==0 || remaining==0) { done=true; complete(status) } } } }
     }
     private fun pcp(options: DctRecord?): Int = when(options?.obj(1)?.int(4,3) ?: 3) { 3 -> 2; 2 -> 1; 1 -> 3; else -> throw IllegalArgumentException("Unsupported strategy") }
     private var discoveryListener: IBinder? = null
@@ -189,6 +189,8 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 2001 -> {
                     lifecycle = requireNotNull(request.binder(7)); watch(lifecycle!!)
                     localInfo = request.bytes(8) ?: (request.text(3) ?: "").toByteArray(); require(localInfo.size <= 131)
+                    if(radio?.isAdvertising==true) { event(callback,"IStartAdvertisingResultListener",2,DctRecord(ClassicSchemas.started,mapOf(1 to ClassicStatus.ALREADY_ADVERTISING,2 to localId))); reply?.writeNoException(); return true }
+                    if(radio!=null && service!=request.text(4)) { event(callback,"IStartAdvertisingResultListener",2,DctRecord(ClassicSchemas.started,mapOf(1 to ClassicStatus.ACTIVE_STRATEGY,2 to localId))); reply?.writeNoException(); return true }
                     val options=request.obj(6); val selected=options?.fields?.get(24) as? IntArray
                     fun enabled(field: Int, medium: Int)=if(selected!=null && selected.isNotEmpty())medium in selected else options?.fields?.get(field) as? Boolean ?: true
                     val lan=enabled(9,5); val bt=enabled(4,2); val ble=enabled(5,4)
@@ -200,6 +202,8 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 }
                 2003 -> {
                     discoveryListener = requireNotNull(request.binder(6)); watch(discoveryListener!!)
+                    if(radio?.isDiscovering==true) { result(callback,ClassicStatus.ALREADY_DISCOVERING); reply?.writeNoException(); return true }
+                    if(radio!=null && service!=request.text(3)) { result(callback,ClassicStatus.ACTIVE_STRATEGY); reply?.writeNoException(); return true }
                     val options=request.obj(5); val selected=options?.fields?.get(16) as? IntArray
                     fun enabled(field: Int, medium: Int)=if(selected!=null && selected.isNotEmpty())medium in selected else options?.fields?.get(field) as? Boolean ?: true
                     val lan=enabled(8,5); val ble=enabled(4,4)
@@ -208,9 +212,9 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                     if(lan)radio.discoverLan(ready)
                     if(ble)radio.scanBle(options?.fields?.get(6) as? android.os.ParcelUuid,ready)
                 }
-                2005 -> { lifecycle = requireNotNull(request.binder(7)); watch(lifecycle!!); val peer = peers[request.text(5)]; if(peer == null) result(callback,8005) else { localInfo = request.bytes(8) ?: (request.text(4) ?: "").toByteArray(); workers.execute { try { val link = requireNotNull(radio).connect(peer); open(link,peer); result(callback,0) } catch (_: Exception) { result(callback,8012) } } } }
-                2006 -> { val session = sessions[request.text(3)]; if(session == null || session.connected) result(callback,8009) else { session.payload = requireNotNull(request.binder(5)); watch(session.payload!!); session.accepted = true; session.decision.countDown(); result(callback,0) } }
-                2007 -> { val session = sessions[request.text(2)]; if(session == null) result(callback,8005) else { session.accepted = false; session.decision.countDown(); result(callback,0) } }
+                2005 -> { lifecycle = requireNotNull(request.binder(7)); watch(lifecycle!!); val peer = peers[request.text(5)]; if(peer == null) result(callback,ClassicStatus.ENDPOINT_UNKNOWN) else { localInfo = request.bytes(8) ?: (request.text(4) ?: "").toByteArray(); workers.execute { try { val link = requireNotNull(radio).connect(peer); open(link,peer); result(callback,0) } catch (_: Exception) { result(callback,8012) } } } }
+                2006 -> { val session = sessions[request.text(3)]; if(session == null || session.connected) result(callback,if(session==null)ClassicStatus.OUT_OF_ORDER else ClassicStatus.ALREADY_CONNECTED) else { session.payload = requireNotNull(request.binder(5)); watch(session.payload!!); session.accepted = true; session.decision.countDown(); result(callback,0) } }
+                2007 -> { val session = sessions[request.text(2)]; if(session == null) result(callback,ClassicStatus.ENDPOINT_UNKNOWN) else { session.accepted = false; session.decision.countDown(); result(callback,0) } }
                 2008 -> sendPayload(request,callback)
                 2009 -> request.text(1)?.let { disconnect(it,0) }
                 2002 -> { radio?.stopAdvertising(); result(callback,0) }
@@ -222,7 +226,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                         session.outputs[id]?.let { session.cancelled.add(id); it.close(); found=true; runCatching { session.receiver?.cancel(id) } }
                         if(found)runCatching { session.channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.CONTROL).setPayloadHeader(PayloadTransferFrame.PayloadHeader.newBuilder().setId(id)).setControlMessage(PayloadTransferFrame.ControlMessage.newBuilder().setEvent(PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_CANCELED))).build()) }
                     }
-                    result(callback,if(found)0 else 8005)
+                    result(callback,if(found)0 else ClassicStatus.PAYLOAD_UNKNOWN)
                 }
                 2014 -> { reply?.writeNoException(); reply?.writeString(localId); return true }
             }
@@ -232,8 +236,9 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
     private fun sendPayload(request: DctRecord, callback: IBinder?) {
         val ids = (request.fields[2] as? Array<*>)?.filterIsInstance<String>() ?: emptyList()
         val target = ids.map { sessions[it] }; val payload = requireNotNull(request.obj(3)); val id = payload.long(1); val type = payload.int(2)
+        if(ids.size!=ids.toSet().size) { result(callback,13); return }
         if(ids.isEmpty() || ids.size > 4 || target.any { it?.connected != true } || transfers.containsKey(id) || transfers.size>=16) { result(callback,8005); return }
-        val input: InputStream = when(type) { 1 -> ByteArrayInputStream(requireNotNull(payload.bytes(3)).also { require(it.size <= 1048576) }); 2,3 -> DeadlineFdStreams.input(ParcelFileDescriptor.dup(requireNotNull(payload.fields[4] as? ParcelFileDescriptor).fileDescriptor)); else -> { result(callback,8017); return } }
+        val input: InputStream = when(type) { 1 -> ByteArrayInputStream(requireNotNull(payload.bytes(3)).also { require(it.size <= 1048576) }); 2,3 -> DeadlineFdStreams.input(ParcelFileDescriptor.dup(requireNotNull(payload.fields[4] as? ParcelFileDescriptor).fileDescriptor)); else -> { result(callback,ClassicStatus.PAYLOAD_TYPE); return } }
         val completion = if(type==3) (payload.fields[7] as? ParcelFileDescriptor)?.let { DeadlineFdStreams.input(ParcelFileDescriptor.dup(it.fileDescriptor)) } else null
         val outgoing=Outgoing(input,completion)
         if(transfers.putIfAbsent(id,outgoing)!=null) { outgoing.close(); result(callback,8005); return }
@@ -247,7 +252,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
             } catch (_: Exception) { ids.zip(target).forEach { (ep,s) -> update(s!!,ep,id,if(outgoing.cancelled.get())4 else 2,total,offset); runCatching { s.channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.PAYLOAD_TRANSFER).setPayloadTransfer(PayloadTransferFrame.newBuilder().setPacketType(PayloadTransferFrame.PacketType.CONTROL).setPayloadHeader(header).setControlMessage(PayloadTransferFrame.ControlMessage.newBuilder().setEvent(if(outgoing.cancelled.get())PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_CANCELED else PayloadTransferFrame.ControlMessage.EventType.PAYLOAD_ERROR).setOffset(offset))).build()) } } }
             finally { transfers.remove(id,outgoing); outgoing.close() }
         }
-        } catch(_: RejectedExecutionException) { transfers.remove(id,outgoing); outgoing.close(); result(callback,8000); return }
+        } catch(_: RejectedExecutionException) { transfers.remove(id,outgoing); outgoing.close(); result(callback,13); return }
         result(callback,0)
     }
     override fun close() { if(!closed.compareAndSet(false,true)) return; radio?.close(); sessions.values.toList().forEach { it.close() }; sessions.clear(); transfers.values.toList().forEach { runCatching { it.close() } }; transfers.clear(); deaths.forEach { (binder,death) -> runCatching { binder.unlinkToDeath(death,0) } }; deaths.clear(); timer.shutdownNow(); workers.shutdownNow() }

@@ -30,6 +30,8 @@ internal class ClassicBleRadio(private val context: Context, private val service
     private val mtus=ConcurrentHashMap<String,Int>()
     private val clients=ConcurrentHashMap<String,BluetoothGatt>()
     private val fetched=ConcurrentHashMap<String,Long>()
+    val isAdvertising get() = advertiser!=null || server!=null
+    val isDiscovering get() = scanner!=null
     private val serviceUuid=UUID.fromString("0000fef3-0000-1000-8000-00805f9b34fb")
     private fun slotUuid(slot: Int)=UUID(0x3000,Long.MIN_VALUE or slot.toLong())
     fun advertise(fastUuid: ParcelUuid?, ready: (Int) -> Unit) {
@@ -39,14 +41,14 @@ internal class ClassicBleRadio(private val context: Context, private val service
             val bytes=if(fastUuid!=null) ClassicBleCodec.fast(service,localId,info,pcp) else ClassicBleCodec.regular(service,localId,info,pcp,adapter.address)
             val begin={
                 if(!closed.get() && advertisingEpoch.get()==epoch) {
-                    val callback=object: AdvertiseCallback() { override fun onStartSuccess(settingsInEffect: AdvertiseSettings) { ready(0) }; override fun onStartFailure(errorCode: Int) { ready(8000); stopAdvertising() } }
+                    val callback=object: AdvertiseCallback() { override fun onStartSuccess(settingsInEffect: AdvertiseSettings) { ready(0) }; override fun onStartFailure(errorCode: Int) { ready(ClassicStatus.RADIO_ERROR); stopAdvertising() } }
                     advertiser=callback
                     adapter.bluetoothLeAdvertiser.startAdvertising(AdvertiseSettings.Builder().setConnectable(fastUuid==null).setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).build(),AdvertiseData.Builder().addServiceData(fastUuid ?: ParcelUuid(serviceUuid),if(fastUuid==null)ClassicBleCodec.header(service,bytes) else bytes).build(),callback)
                 }
             }
             if(fastUuid!=null) { begin(); return }
             val callback=object: BluetoothGattServerCallback() {
-                override fun onServiceAdded(status: Int, service: BluetoothGattService) { if(status==BluetoothGatt.GATT_SUCCESS)begin() else { ready(8000); stopAdvertising() } }
+                override fun onServiceAdded(status: Int, service: BluetoothGattService) { if(status==BluetoothGatt.GATT_SUCCESS)begin() else { ready(ClassicStatus.RADIO_ERROR); stopAdvertising() } }
                 override fun onMtuChanged(device: BluetoothDevice, mtu: Int) { if(mtus.size<16) mtus[device.address]=mtu.coerceIn(23,517) }
                 override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) { if(newState==BluetoothProfile.STATE_DISCONNECTED)mtus.remove(device.address) }
                 override fun onCharacteristicReadRequest(device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic) {
@@ -59,7 +61,7 @@ internal class ClassicBleRadio(private val context: Context, private val service
             server=(context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).openGattServer(context,callback)
             val gattService=BluetoothGattService(serviceUuid,BluetoothGattService.SERVICE_TYPE_PRIMARY).apply { addCharacteristic(BluetoothGattCharacteristic(slotUuid(0),BluetoothGattCharacteristic.PROPERTY_READ,BluetoothGattCharacteristic.PERMISSION_READ)) }
             check(requireNotNull(server).addService(gattService))
-        } catch(_: Exception) { ready(8000); stopAdvertising() }
+        } catch(error: Exception) { ready(if(error is SecurityException)8038 else if(error is IllegalArgumentException)ClassicStatus.CAPABILITY else ClassicStatus.RADIO_ERROR); stopAdvertising() }
     }
     fun scan(fastUuid: ParcelUuid?, ready: (Int) -> Unit) {
         try {
@@ -67,7 +69,7 @@ internal class ClassicBleRadio(private val context: Context, private val service
             scanning.set(true)
             val uuid=fastUuid ?: ParcelUuid(serviceUuid)
             val callback=object: ScanCallback() {
-                override fun onScanFailed(errorCode: Int) { ready(8000) }
+                override fun onScanFailed(errorCode: Int) { ready(ClassicStatus.RADIO_ERROR) }
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
                     if(closed.get() || !scanning.get())return
                     val data=result.scanRecord?.getServiceData(uuid) ?: return
@@ -81,7 +83,7 @@ internal class ClassicBleRadio(private val context: Context, private val service
             scanner=callback
             adapter.bluetoothLeScanner.startScan(listOf(ScanFilter.Builder().setServiceData(uuid,byteArrayOf()).build()),ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),callback)
             ready(0) // Android startScan has no success callback; failures arrive onScanFailed.
-        } catch(_: Exception) { ready(8000); stopDiscovery() }
+        } catch(error: Exception) { ready(if(error is SecurityException)8037 else ClassicStatus.RADIO_ERROR); stopDiscovery() }
     }
     private fun publish(bytes: ByteArray) { runCatching {
         val (endpoint,address)=ClassicBleCodec.parse(service,bytes)
