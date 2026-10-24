@@ -46,6 +46,15 @@ internal object ClassicSchemas {
 
 /** Classic Nearby per-UID client. Advertising/discovery completion comes from the
  * actual medium; connection success follows both UKEY2 acceptances. */
+/**
+ * Runs an outgoing connection on a worker and reports its status. Switch may die meanwhile; a dead callback must not
+ * escape the worker thread (that would end GmsCore), so a failed report closes the session instead.
+ */
+internal fun reportConnection(connect: () -> Unit, report: (Int) -> Unit, failed: () -> Unit) {
+    val status = try { connect(); 0 } catch (_: Exception) { 8012 }
+    try { report(status) } catch (_: Exception) { failed() }
+}
+
 internal class ClassicNearbyBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
     private val closed = AtomicBoolean(false)
     private val ownerUid=uid
@@ -218,7 +227,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                     if(lan)radio.discoverLan(ready)
                     if(ble)radio.scanBle(options?.fields?.get(6) as? android.os.ParcelUuid,ready)
                 }
-                2005 -> { lifecycle = requireNotNull(request.binder(7)); watch(lifecycle!!); val peer = peers[request.text(5)]; if(peer == null) result(callback,ClassicStatus.ENDPOINT_UNKNOWN) else { localInfo = request.bytes(8) ?: (request.text(4) ?: "").toByteArray(); workers.execute { try { val link = requireNotNull(radio).connect(peer); open(link,peer); result(callback,0) } catch (_: Exception) { result(callback,8012) } } } }
+                2005 -> { lifecycle = requireNotNull(request.binder(7)); watch(lifecycle!!); val peer = peers[request.text(5)]; if(peer == null) result(callback,ClassicStatus.ENDPOINT_UNKNOWN) else { localInfo = request.bytes(8) ?: (request.text(4) ?: "").toByteArray(); workers.execute { reportConnection({ open(requireNotNull(radio).connect(peer),peer) }, { result(callback,it) }, ::close) } } }
                 2006 -> { val session = sessions[request.text(3)]; if(session == null || session.connected) result(callback,if(session==null)ClassicStatus.OUT_OF_ORDER else ClassicStatus.ALREADY_CONNECTED) else { session.payload = requireNotNull(request.binder(5)); watch(session.payload!!); session.accepted = true; session.decision.countDown(); result(callback,0) } }
                 2007 -> { val session = sessions[request.text(2)]; if(session == null) result(callback,ClassicStatus.ENDPOINT_UNKNOWN) else { session.accepted = false; session.decision.countDown(); result(callback,0) } }
                 2008 -> sendPayload(request,callback)

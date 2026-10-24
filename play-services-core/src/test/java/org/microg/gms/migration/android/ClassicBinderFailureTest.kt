@@ -15,6 +15,15 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest=Config.NONE,sdk=[35])
 class ClassicBinderFailureTest {
+    @Test fun deadSwitchCallbackAfterAConnectionClosesInsteadOfThrowing() {
+        var closed=0; var reported=-1
+        reportConnection({}, { throw DeadObjectException() }, { closed++ })
+        assertEquals(1,closed)
+        reportConnection({ throw java.io.IOException("refused") }, { reported=it }, { closed++ })
+        assertEquals(8012,reported); assertEquals(1,closed)
+        reportConnection({ throw java.io.IOException("refused") }, { throw DeadObjectException() }, { closed++ })
+        assertEquals(2,closed)
+    }
     @Test fun unconnectedClientUsesExactEndpointAndPayloadFailureCodes() {
         ClassicNearbyBinder(RuntimeEnvironment.getApplication(),Binder.getCallingUid()).use { target ->
             fun result(code: Int, schema: Map<Int,DctRecord.Kind>, fields: Map<Int,Any>, expected: Int) {
