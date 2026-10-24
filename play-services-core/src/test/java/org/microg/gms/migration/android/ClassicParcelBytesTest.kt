@@ -7,6 +7,11 @@ import org.junit.Test
 import java.io.*
 
 class ClassicParcelBytesTest {
+    @Test fun sdkStreamStatusZeroCompletesAndErrorOrAbsentStatusCannotSucceed() {
+        DeadlineFdStreams.requireProducerSuccess(ByteArrayInputStream(byteArrayOf(0)))
+        assertThrows(IllegalArgumentException::class.java) { DeadlineFdStreams.requireProducerSuccess(ByteArrayInputStream(byteArrayOf(1))) }
+        assertThrows(IllegalArgumentException::class.java) { DeadlineFdStreams.requireProducerSuccess(ByteArrayInputStream(byteArrayOf())) }
+    }
     @Test fun teleporterReadsTheWholeBodyInsteadOfTheCompatibilityPrefix() {
         val body=ByteArray(100003) { (it%251).toByte() }
         val file=ByteArrayOutputStream().apply { DataOutputStream(this).apply { writeInt(body.size); write(body) } }.toByteArray()

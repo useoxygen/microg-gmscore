@@ -105,7 +105,7 @@ object GmsClassicPeerProbe {
                     val pipe=ParcelFileDescriptor.createPipe(); val completion=ParcelFileDescriptor.createPipe()
                     try { call(binder,2008,DctRecord(ClassicSchemas.send,mapOf(1 to result,2 to arrayOf(endpoint),3 to DctRecord(ClassicSchemas.payload,mapOf(1 to id,2 to 3,6 to -1L,4 to pipe[0],7 to completion[0]))))) }
                     finally { pipe[0].close(); completion[0].close() }
-                    Thread { ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(streamFixture) }; ParcelFileDescriptor.AutoCloseOutputStream(completion[1]).use { it.write(1) } }.start()
+                    Thread { ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(streamFixture) }; ParcelFileDescriptor.AutoCloseOutputStream(completion[1]).use { it.write(0) } }.start()
                 }
                 streamTo(target!!,targetPeer.get(),712003L)
                 check(sourceStream.await(15,TimeUnit.SECONDS) && sourceStreamComplete.await(5,TimeUnit.SECONDS)) { "GMS stream FD bytes differ or stalled" }

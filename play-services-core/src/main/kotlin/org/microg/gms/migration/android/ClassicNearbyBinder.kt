@@ -279,7 +279,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 } else {
                     val buffer=ByteArray(32768)
                     while(true) { val count=input.read(buffer); if(count==-1)break; if(count==0)continue; chunk(buffer.copyOf(count),false); ids.zip(targets).forEach { (ep,s) -> update(s!!,ep,id,3,total,offset) } }
-                    if(completion!=null)require(completion.read()==1) { "Nearby stream producer failed" }
+                    if(completion!=null)DeadlineFdStreams.requireProducerSuccess(completion)
                 }
                 require(total == -1L || total==offset)
                 chunk(byteArrayOf(),true)

@@ -30,6 +30,8 @@ internal object DeadlineFdStreams {
         }
         override fun close() { if(closed.compareAndSet(false,true)) fd.close() }
     }
+    // GMS efkf/efkg: byte0 means successful EOF; byte1 reports a producer error.
+    fun requireProducerSuccess(input: InputStream) { require(input.read()==0) { "Nearby stream producer failed" } }
     private const val TimeUnitNanos = 30_000_000_000L
     fun input(owned: ParcelFileDescriptor): InputStream {
         val handle = Owned(owned,false)
