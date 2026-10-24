@@ -26,7 +26,15 @@ class BootstrapActivity : Activity() {
                     1 -> { data.skipSafeParcelable(); status("SOURCE_CONNECTED") }
                     2 -> status("SOURCE_DISCONNECTED")
                     5 -> { data.readString(); status("SOURCE_DISPLAY_TEXT") }
-                    6 -> { data.readString(); status("PIN_RECEIVED (not logged)") }
+                    6 -> {
+                        val pin=requireNotNull(data.readString())
+                        // A one-way digest lets the host compare the source's visible
+                        // code without printing or retaining the raw code/token.
+                        val digest=java.security.MessageDigest.getInstance("SHA-256").digest(pin.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }
+                        File(filesDir,"bootstrap-pin-sha256.txt").writeText(digest)
+                        status("PIN_RECEIVED (not logged)")
+                        runOnUiThread { text.text="Compare on the old phone: $pin" }
+                    }
                     7 -> status("SOURCE_FAILURE="+data.readInt())
                     8 -> { data.skipSafeParcelable(); status("SOURCE_COMPLETED") }
                     else -> return false
