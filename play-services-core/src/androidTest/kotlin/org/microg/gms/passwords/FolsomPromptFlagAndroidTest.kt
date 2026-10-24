@@ -53,13 +53,17 @@ class FolsomPromptFlagAndroidTest {
         try {
             resolver.delete(uri, null, null)
             expected = Bundle()
-            assertFalse(FolsomPhenotypeConfiguration.read(context).promptEnabled)
+            val serverDefaults = FolsomPhenotypeConfiguration.read(context)
             fun writeBoolean(name: String, value: Boolean) {
                 val count = resolver.update(uri, ContentValues().apply { put("name", name); put("value", value) }, null, null)
                 if (count == 1) expected.putBoolean(name, value)
                 assertEquals(1, count)
             }
+            writeBoolean("KeychainConsent__skip_consent", false)
             writeBoolean("ZuulMvp__enable_notifications", true)
+            val delayOverride = ContentValues().apply { put("name", "ZuulMvp__lskf_notification_delay"); put("value", 86_400_000L) }
+            assertEquals(1, resolver.update(uri, delayOverride, null, null))
+            expected.putLong("ZuulMvp__lskf_notification_delay", 86_400_000L)
             assertTrue(FolsomPhenotypeConfiguration.read(context).promptEnabled)
             val rows = linkedMapOf<String, String>()
             resolver.query(uri, null, null, null, null)!!.use { while (it.moveToNext()) rows[it.getString(0)] = it.getString(1) }
@@ -77,7 +81,9 @@ class FolsomPromptFlagAndroidTest {
             assertFalse(FolsomPhenotypeConfiguration.read(context).promptEnabled)
             resolver.delete(uri, null, arrayOf("KeychainConsent__skip_consent"))
             expected.remove("KeychainConsent__skip_consent")
-            assertTrue(FolsomPhenotypeConfiguration.read(context).promptEnabled)
+            assertEquals(!serverDefaults.skipConsent, FolsomPhenotypeConfiguration.read(context).promptEnabled)
+            // Reassert a local false only for the remaining local-override assertions; the genuine server snapshot is untouched.
+            writeBoolean("KeychainConsent__skip_consent", false)
             val bad = ContentValues().apply { put("name", "ZuulMvp__enable_notifications"); put("value", "true") }
             assertThrows(IllegalArgumentException::class.java) { resolver.update(uri, bad, null, null) }
             assertTrue(FolsomPhenotypeConfiguration.read(context).promptEnabled)

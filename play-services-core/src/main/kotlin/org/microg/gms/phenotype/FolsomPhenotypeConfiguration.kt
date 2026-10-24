@@ -9,9 +9,9 @@ import android.os.Bundle
 import android.os.Process
 import com.google.android.gms.phenotype.Flag
 
-/** A small local DeviceFlag store, shared by the provider, SDK reads and the native prompt.
+/** DeviceFlag store, shared by the provider, SDK reads and the native prompt.
  * The provider owns access in the default process; UI callers use ContentResolver, not preferences.
- * No remote assignment, experiment token or account value is synthesized here.
+ * Explicit native fetches commit genuine device assignments; local overrides remain separate.
  */
 object FolsomPhenotypeConfiguration {
     private const val PREFERENCES = "folsom_local_device_flags"
@@ -48,7 +48,9 @@ object FolsomPhenotypeConfiguration {
     @JvmStatic fun rows(context: Context, namespace: String?): Map<String, String>? {
         if (namespace != FolsomPromptFlagPolicy.NAMESPACE) return null
         // Called by ConfigurationProvider in its authoritative process. Do not recurse through read().
-        val current = synchronized(storeLock) { FolsomPromptFlagPolicy.resolve(namespace, preferences(context).all) }
+        val current = synchronized(storeLock) {
+            FolsomPromptFlagPolicy.resolve(namespace, FolsomPhenotypeClient.committedValues(context) + preferences(context).all)
+        }
         return linkedMapOf(FolsomPromptFlagPolicy.SKIP_CONSENT to current.skipConsent.toString(),
             FolsomPromptFlagPolicy.ENABLE_NOTIFICATIONS to current.notificationsEnabled.toString(),
             FolsomPromptFlagPolicy.NOTIFICATION_DELAY to current.notificationDelayMillis.toString())

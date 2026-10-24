@@ -11,6 +11,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.microg.gms.auth.folsom.utils.LocalKeyManager
 import java.security.MessageDigest
 
 /** Explicit live acceptance only. The ordinary suite never selects accounts, calls providers, or mutates credentials. */
@@ -40,6 +41,97 @@ class PasswordParityAcceptanceAndroidTest {
             PasswordAcceptanceAccounts.resolve(context, run, role)
             status("nativeSelectionReady" to true)
         } catch (_: Exception) { status("nativeSelectionReady" to false); throw AssertionError("Native synthetic account selection did not complete") }
+    }
+
+    /** Discovery only: cached keys cannot trigger the repository's automatic SDS key retrieval. */
+    @Test fun readCachedSyntheticPeerInventoryWithoutProviderCalls() {
+        assumeTrue(arguments.getString("passwordAcceptance") == "cyc689-local-peer-inventory")
+        runId()
+        try {
+            check(com.google.android.gms.BuildConfig.DEBUG)
+            LegacyPasskeyTicketStore.system(context)
+            val candidates = PasswordAcceptanceAccounts.candidates(context)
+            var readable = 0; var blocked = 0; var unreadable = 0
+            val approved = HashSet<String>(); val sharing = HashSet<String>()
+            candidates.forEach { selected ->
+                try {
+                    cachedPeer(selected)?.let { found ->
+                        readable++
+                        if (found.approved) {
+                            approved.add(selected.accountId)
+                            if (found.sharingKeys) sharing.add(selected.accountId)
+                        }
+                    }
+                } catch (_: PendingMutationException) { blocked++ }
+                catch (_: Exception) { unreadable++ }
+            }
+            LegacyPasskeyTicketStore.system(context)
+            val lock = context.getSystemService(KeyguardManager::class.java)
+            check(!lock.isDeviceLocked && !lock.isKeyguardLocked)
+            candidates.forEach { PasswordAcceptanceAccounts.verify(context, it) }
+            instrumentation.sendStatus(2, Bundle().apply {
+                putBoolean("localPeerInventoryReadSucceeded", true)
+                putInt("scannedStableAccountCandidateCount", candidates.size)
+                putBoolean("localCandidateScanLimitReached", candidates.size == 20)
+                putInt("locallyReadableEnabledVaultCount", readable)
+                putInt("cachedApprovedSyntheticFixtureCount", approved.size)
+                putInt("cachedApprovedSharingKeyFixtureCount", sharing.size)
+                putInt("blockedCachedVaultCount", blocked)
+                putInt("unreadableCachedVaultCount", unreadable)
+                putBoolean("twoDistinctCachedSyntheticFixtures", approved.size >= 2)
+            })
+        } catch (_: Exception) {
+            status("localPeerInventoryReadSucceeded" to false)
+            throw AssertionError("Local synthetic peer inventory did not complete; no provider call was made")
+        }
+    }
+
+    private class CachedPeer(val approved: Boolean, val sharingKeys: Boolean)
+    private fun cachedPeer(selected: PasswordAcceptanceAccounts.Selected): CachedPeer? {
+        val local = LocalKeyManager.getInstance(context)
+        return local.withRecoveryAuthority(selected.account.name, selected.accountId) {
+            fun verify() {
+                LegacyPasskeyTicketStore.system(context)
+                val lock = context.getSystemService(KeyguardManager::class.java)
+                check(!lock.isDeviceLocked && !lock.isKeyguardLocked)
+                PasswordAcceptanceAccounts.verify(context, selected)
+                if (local.hasPendingDomainReset(selected.account.name, "chromesync") ||
+                    local.hasPendingDomainReset(selected.account.name, "hw_protected")) throw PendingMutationException()
+            }
+            verify()
+            val store = AndroidVaultStore(context, "google:" + selected.accountId, ::verify)
+            if (!store.enabled) { verify(); return@withRecoveryAuthority null }
+            store.locked { session ->
+                val state = session.load()
+                try {
+                    if (state.pendingMetadata != null || state.mutations.isNotEmpty() || state.preferenceMutations.isNotEmpty() ||
+                        state.ownerTransfers.isNotEmpty() || PasswordEncryptionState.fences(state.passwordEncryptionFlow)) throw PendingMutationException()
+                    val metadata = state.metadata ?: throw VaultLockedException()
+                    // This pure overload only uses metadata and already cached keys. Never use
+                    // PasswordRepository.list/refresh, unlockTrustedVault, or getLocalKeysOrSync here.
+                    val keys = VaultKeys.unlock(metadata, trustedVaultKeys = state.trustedVaultKeys, customKey = state.customKey)
+                    try {
+                        val tags = HashSet<String>()
+                        var markers = 0
+                        state.records.forEach { raw ->
+                            val data = PasswordResourceCodec.read(raw, keys)
+                            check(Proto.decode(raw).string(2) == data.tag() && tags.add(data.tag()))
+                            if (data.realm == PasswordAcceptanceAccounts.REALM && data.username == PasswordAcceptanceAccounts.USERNAME &&
+                                !data.blocked && data.password.isNotEmpty()) markers++
+                        }
+                        check(markers <= 1)
+                        val hasSharingKeys = if (markers == 1) try {
+                            PasswordSharingKeys.read(metadata, keys).also { it.destroy() }; true
+                        } catch (_: VaultLockedException) { false } else false
+                        verify()
+                        CachedPeer(markers == 1, hasSharingKeys)
+                    } finally { keys.destroy() }
+                } finally {
+                    state.customKey?.fill(0); state.trustedVaultKeys.forEach { it.fill(0) }
+                    state.versionedTrustedVaultKeys?.destroy(); state.metadata?.fill(0); state.pendingMetadata?.fill(0)
+                }
+            }
+        }
     }
 
     @Test fun readActualFamilyEligibilityAndNativeRecipientMatchingWithoutSending() {
