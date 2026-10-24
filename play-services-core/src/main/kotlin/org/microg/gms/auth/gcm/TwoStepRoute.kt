@@ -30,29 +30,37 @@ internal const val PROMPT_MIN_TIMEOUT_MILLIS = 60 * 1000L
 internal const val PROMPT_MAX_TIMEOUT_MILLIS = 60 * 60 * 1000L
 /** Google Play services 26.22 skips GUNS notifications with 10 s or less left ("Received expired payload"). */
 internal const val PROMPT_EXPIRED_MARGIN_MILLIS = 10 * 1000L
+private const val PROMPT_PLAUSIBLE_MILLIS = 24 * 60 * 60 * 1000L
 
 /**
- * How long a shown prompt may stay before Android removes it, from GNOTS `expiryTime`. Without this, a prompt that
- * was never answered stayed until another prompt for the account was completed. The field's unit is not documented,
- * so seconds, milliseconds and microseconds since the epoch are told apart by size. A missing or implausible expiry
- * falls back to [PROMPT_DEFAULT_TIMEOUT_MILLIS]; the result is kept within one minute and one hour, so a skewed clock
- * neither hides a fresh prompt at once nor keeps it all day. Google Play services removes its notifications at the expiry
- * with an alarm; a missing expiry keeps them there, while this falls back to the default. Android applies the timeout from Android 8 (API 26); on
- * older versions an unanswered prompt still stays until another prompt for the account is completed.
+ * Milliseconds from [referenceMillis] until GNOTS `expiryTime`, or null if it is missing or implausible (more than a
+ * day from the reference either way). Google Play services 26.22.36 reads the field as microseconds since the epoch
+ * and measures it against the server time sent with the push, not the phone's clock.
  */
-internal fun promptTimeoutMillis(expiryTime: Long?, nowMillis: Long): Long =
-    promptExpiryRemainingMillis(expiryTime, nowMillis)?.coerceIn(PROMPT_MIN_TIMEOUT_MILLIS, PROMPT_MAX_TIMEOUT_MILLIS)
+internal fun promptExpiryRemainingMillis(expiryTime: Long?, referenceMillis: Long): Long? {
+    if (expiryTime == null || expiryTime <= 0) return null
+    return (expiryTime / 1000 - referenceMillis).takeIf { it in -PROMPT_PLAUSIBLE_MILLIS..PROMPT_PLAUSIBLE_MILLIS }
+}
+
+/**
+ * How long a shown prompt may stay before Android removes it. Without this, a prompt that was never answered stayed
+ * until another prompt for the account was completed; Google Play services removes its notifications at the expiry
+ * with an alarm. A missing or implausible expiry falls back to [PROMPT_DEFAULT_TIMEOUT_MILLIS] (Google keeps such a
+ * notification), and the result is kept within one minute and one hour. Android applies the timeout from Android 8
+ * (API 26); on older versions an unanswered prompt stays.
+ */
+internal fun promptTimeoutMillis(expiryTime: Long?, referenceMillis: Long): Long =
+    promptExpiryRemainingMillis(expiryTime, referenceMillis)?.coerceIn(PROMPT_MIN_TIMEOUT_MILLIS, PROMPT_MAX_TIMEOUT_MILLIS)
         ?: PROMPT_DEFAULT_TIMEOUT_MILLIS
 
-/** Milliseconds until `expiryTime`, or null if it is missing or implausible (more than a day away). */
-internal fun promptExpiryRemainingMillis(expiryTime: Long?, nowMillis: Long): Long? {
-    val expiryMillis = when {
-        expiryTime == null || expiryTime <= 0 -> return null
-        expiryTime >= 100_000_000_000_000L -> expiryTime / 1000
-        expiryTime >= 100_000_000_000L -> expiryTime
-        else -> expiryTime * 1000
-    }
-    return (expiryMillis - nowMillis).takeIf { it <= 24 * PROMPT_MAX_TIMEOUT_MILLIS }
+/**
+ * Whether a prompt is too close to its expiry to show. Only judged against Google's server time ([serverTimeMillis],
+ * the push's send time): with the phone's own clock, a phone running fast would hide valid prompts.
+ */
+internal fun promptExpired(expiryTime: Long?, serverTimeMillis: Long?): Boolean {
+    if (serverTimeMillis == null) return false
+    val remaining = promptExpiryRemainingMillis(expiryTime, serverTimeMillis) ?: return false
+    return remaining <= PROMPT_EXPIRED_MARGIN_MILLIS
 }
 
 internal enum class MatchFailure { NO_USER_ID, NO_ACCOUNT, AMBIGUOUS }
@@ -107,13 +115,14 @@ internal class TwoStepRoute<A>(
     private val accounts: () -> List<Pair<A, String?>>,
     private val fetch: (A, NotificationData) -> List<NotificationData>,
     private val setReadState: (A, NotificationData, Int) -> Unit,
-    private val show: (A, NotificationData) -> ShowResult,
+    private val show: (A, NotificationData, Long) -> ShowResult,
     private val dismiss: (String) -> Int,
     private val decodeBase64: (String) -> ByteArray,
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
-    fun route(gcmBody: String?, payload: String?) {
+    /** [serverTimeMillis] is the push's send time from Google's server, if the push carried one. */
+    fun route(gcmBody: String?, payload: String?, serverTimeMillis: Long? = null) {
         val session = diagnostics.newSession()
         if (gcmBody != GMS_GCM_NOTIFICATIONS) {
             diagnostics.event(TwoStepEvent.IGNORED, session, "has_body" to (gcmBody != null))
@@ -154,17 +163,18 @@ internal class TwoStepRoute<A>(
                 diagnostics.event(TwoStepEvent.ALREADY_ACTIVE, session, "stage" to Stage.FETCHED)
                 continue
             }
-            if ((promptExpiryRemainingMillis(notification.expiryTime, now()) ?: Long.MAX_VALUE) <= PROMPT_EXPIRED_MARGIN_MILLIS) {
+            if (promptExpired(notification.expiryTime, serverTimeMillis)) {
                 diagnostics.event(TwoStepEvent.EXPIRED, session)
                 continue
             }
-            when (show(account, notification)) {
+            val reference = serverTimeMillis ?: now()
+            val timeoutMillis = promptTimeoutMillis(notification.expiryTime, reference)
+            when (show(account, notification, timeoutMillis)) {
                 ShowResult.SHOWN -> {
                     // Whole minutes until the notification times out, so a device test can see the expiry was used.
                     // `expiry` says whether Google's expiry was usable or the default timeout applied.
-                    val timeoutMinutes = promptTimeoutMillis(notification.expiryTime, now()) / 60_000
-                    val expiryUsed = promptExpiryRemainingMillis(notification.expiryTime, now()) != null
-                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMinutes, "expiry" to expiryUsed)
+                    val expiryUsed = promptExpiryRemainingMillis(notification.expiryTime, reference) != null
+                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMillis / 60_000, "expiry" to expiryUsed, "server_time" to (serverTimeMillis != null))
                     reportReadState(session, account, notification, NOTIFICATION_STATUS_SHOWN)
                 }
                 ShowResult.NOTIFICATIONS_BLOCKED -> diagnostics.event(TwoStepEvent.NOTIFICATIONS_BLOCKED, session)

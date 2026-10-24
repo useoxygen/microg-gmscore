@@ -139,10 +139,14 @@ class GcmReceiverService : ReceiverService(TAG) {
             },
             fetch = { account, tickle -> requestNotificationInfo(accountManager, account, tickle).notifications?.notificationDataList.orEmpty() },
             setReadState = { account, notification, status -> notification.identifier?.let { sendReadState(accountManager, account, it, status) } },
-            show = { account, notification -> showNotification(account, notification) },
+            show = { account, notification, timeoutMillis -> showNotification(account, notification, timeoutMillis) },
             dismiss = { uniqueId -> cancelPrompts(uniqueId) },
             decodeBase64 = { Base64.decode(it, DEFAULT_FLAGS) },
-        ).route(intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY), intent.getStringExtra(GcmConstants.EXTRA_GMS_GNOTS_PAYLOAD))
+        ).route(
+            intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY),
+            intent.getStringExtra(GcmConstants.EXTRA_GMS_GNOTS_PAYLOAD),
+            intent.getLongExtra(GcmConstants.EXTRA_SENT_TIME, 0L).takeIf { it > 0 },
+        )
     }
 
     /**
@@ -150,7 +154,7 @@ class GcmReceiverService : ReceiverService(TAG) {
      * sign-in, and nothing is started in the background: Android blocks background activity starts, and the owner
      * should choose when to look. The owner's notification permission and channel settings are respected.
      */
-    private fun showNotification(account: Account, notificationData: NotificationData): ShowResult {
+    private fun showNotification(account: Account, notificationData: NotificationData, timeoutMillis: Long): ShowResult {
         val content = notificationData.content ?: return ShowResult.NOT_SHOWABLE
         val intentExtras = notificationData.intentActions?.primaryPayload?.extras ?: return ShowResult.NOT_SHOWABLE
         if (!twoStepNotificationsAllowed()) return ShowResult.NOTIFICATIONS_BLOCKED
@@ -191,7 +195,7 @@ class GcmReceiverService : ReceiverService(TAG) {
             .setDeleteIntent(deletePendingIntent)
             .addExtras(Bundle().apply { putString(EXTRA_GNOTS_UNIQUE_ID, notificationData.identifier?.uniqueId) })
             .setAutoCancel(true)
-            .setTimeoutAfter(promptTimeoutMillis(notificationData.expiryTime, System.currentTimeMillis()))
+            .setTimeoutAfter(timeoutMillis)
             .setSmallIcon(R.drawable.ic_google_logo)
         try {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_TAG, notificationId, builder.build())
