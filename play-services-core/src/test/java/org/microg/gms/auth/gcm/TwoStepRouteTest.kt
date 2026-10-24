@@ -278,6 +278,25 @@ class TwoStepRouteTest {
     }
 
     @Test
+    fun promptsAboutToExpireAreNotShown() {
+        val now = 1_792_800_000_000L
+        var shown = 0
+        val route = TwoStepRoute<String>(
+            diagnostics = diagnostics,
+            enabled = { true },
+            accounts = { accounts },
+            fetch = { _, _ -> listOf(fetched.copy(expiryTime = (now + 5_000) * 1000)) },
+            setReadState = { _, _, _ -> },
+            show = { _, _ -> shown++; ShowResult.SHOWN },
+            decodeBase64 = { Base64.getUrlDecoder().decode(it) },
+            now = { now },
+        )
+        route.route(GMS_GCM_NOTIFICATIONS, tickle())
+        assertEquals(0, shown)
+        assertEquals(listOf("received", "fetched", "expired"), events())
+    }
+
+    @Test
     fun sizeBucketsHidePreciseLengths() {
         assertEquals(listOf(0, 256, 256, 1024, 4096, 65536), listOf(0, 1, 256, 257, 4000, 100_000).map(::sizeBucket))
     }

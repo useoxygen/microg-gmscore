@@ -33,6 +33,8 @@ internal enum class TwoStepEvent {
     FETCHED,
     /** The fetched notification lacks the content or the confirmation page's intent. */
     NOT_SHOWABLE,
+    /** Google's expiry leaves too little time to answer, so the prompt is not shown (as Google Play services does). */
+    EXPIRED,
     /** The owner blocked this app's notifications or the prompt channel. */
     NOTIFICATIONS_BLOCKED,
     SHOWN,

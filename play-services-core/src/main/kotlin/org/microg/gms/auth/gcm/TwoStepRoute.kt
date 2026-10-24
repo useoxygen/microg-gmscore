@@ -23,13 +23,16 @@ internal enum class ShowResult { SHOWN, NOTIFICATIONS_BLOCKED, NOT_SHOWABLE }
 internal const val PROMPT_DEFAULT_TIMEOUT_MILLIS = 10 * 60 * 1000L
 internal const val PROMPT_MIN_TIMEOUT_MILLIS = 60 * 1000L
 internal const val PROMPT_MAX_TIMEOUT_MILLIS = 60 * 60 * 1000L
+/** Google Play services 26.22 skips GUNS notifications with 10 s or less left ("Received expired payload"). */
+internal const val PROMPT_EXPIRED_MARGIN_MILLIS = 10 * 1000L
 
 /**
  * How long a shown prompt may stay before Android removes it, from GNOTS `expiryTime`. Without this, a prompt that
  * was never answered stayed until another prompt for the account was completed. The field's unit is not documented,
  * so seconds, milliseconds and microseconds since the epoch are told apart by size. A missing or implausible expiry
  * falls back to [PROMPT_DEFAULT_TIMEOUT_MILLIS]; the result is kept within one minute and one hour, so a skewed clock
- * neither hides a fresh prompt at once nor keeps it all day. Android applies the timeout from Android 8 (API 26); on
+ * neither hides a fresh prompt at once nor keeps it all day. Google Play services removes its notifications at the expiry
+ * with an alarm; a missing expiry keeps them there, while this falls back to the default. Android applies the timeout from Android 8 (API 26); on
  * older versions an unanswered prompt still stays until another prompt for the account is completed.
  */
 internal fun promptTimeoutMillis(expiryTime: Long?, nowMillis: Long): Long =
@@ -142,6 +145,10 @@ internal class TwoStepRoute<A>(
         for (notification in notifications) {
             if (notification.isActive == true) {
                 diagnostics.event(TwoStepEvent.ALREADY_ACTIVE, session, "stage" to Stage.FETCHED)
+                continue
+            }
+            if ((promptExpiryRemainingMillis(notification.expiryTime, now()) ?: Long.MAX_VALUE) <= PROMPT_EXPIRED_MARGIN_MILLIS) {
+                diagnostics.event(TwoStepEvent.EXPIRED, session)
                 continue
             }
             when (show(account, notification)) {
