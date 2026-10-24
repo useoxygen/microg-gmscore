@@ -358,7 +358,33 @@ public class AuthManager {
         } else {
             request.callerIsApp();
         }
-        AuthResponse response = request.getResponse();
+        boolean contactsSelfRequest = context.getPackageName().equals(packageName) &&
+                org.microg.gms.people.sync.ContactsDiagnostics.isContactsService(service);
+        if (contactsSelfRequest) {
+            // Public request identity only; PM may return a spoofed certificate.
+            String signature = request.appSignature != null && request.appSignature.matches("[0-9a-fA-F]{40}")
+                    ? request.appSignature : "UNKNOWN";
+            String callerSignature = request.callerSignature != null && request.callerSignature.matches("[0-9a-fA-F]{40}")
+                    ? request.callerSignature : "UNKNOWN";
+            Log.i("GmsContactSync", "stage=authorization client=com.google.android.gms client_sig_presented=" + signature
+                    + " caller=com.google.android.gms caller_sig=" + callerSignature + " is_gms_app=" + isGmsApp);
+        }
+        request.suppressSensitiveLogs = contactsSelfRequest;
+        AuthResponse response;
+        try {
+            response = request.getResponse();
+        } catch (NotOkayException error) {
+            if (!contactsSelfRequest) throw error;
+            String safeError = org.microg.gms.people.sync.ContactsDiagnostics.authError(error.getMessage());
+            Log.w("GmsContactSync", "stage=authorization error=" + safeError + " http_status=" + error.getHttpStatus());
+            // All subsequent resolver/consent paths may log exception messages.
+            // Keep the structured diagnostic, never a response body or URL.
+            throw new NotOkayException("Error=" + safeError, error.getHttpStatus());
+        } catch (IOException error) {
+            if (contactsSelfRequest) throw new IOException("Contacts authorization failed");
+            throw error;
+        }
+        if (contactsSelfRequest) Log.i("GmsContactSync", "stage=authorization http_status=200 token_present_server=" + (response.auth != null));
         if (!isPermitted() && !isTrustGooglePermitted(context)) {
             response.auth = null;
         } else {

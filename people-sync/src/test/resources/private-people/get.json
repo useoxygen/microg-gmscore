@@ -1,0 +1,246 @@
+{
+  "personResponse": [
+    {
+      "personId": "c23",
+      "status": "SUCCESS",
+      "person": {
+        "personId": "c23",
+        "metadata": {
+          "contactId": [
+            "23"
+          ],
+          "model": "CONTACT_CENTRIC",
+          "identityInfo": {
+            "sourceIds": [
+              {
+                "container": "CONTACT",
+                "containerType": "CONTACT",
+                "id": "17",
+                "sourceEtag": "synthetic-etag"
+              }
+            ]
+          }
+        },
+        "name": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "givenName": "Synthetic",
+            "familyName": "Person",
+            "yomiGivenName": "phonetic",
+            "yomiMiddleName": "middle"
+          }
+        ],
+        "email": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "synthetic@example.invalid",
+            "type": "other",
+            "displayName": "Synthetic Mail"
+          }
+        ],
+        "phone": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "+15550100000",
+            "type": "mobile"
+          }
+        ],
+        "address": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "formatted": "Synthetic Address",
+            "streetAddress": "1 Synthetic Street",
+            "locality": "Example",
+            "country": "US",
+            "type": "home"
+          }
+        ],
+        "organization": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "name": "Synthetic Org",
+            "title": "Example",
+            "description": "Description",
+            "yomiName": "phonetic org",
+            "type": "WORK"
+          }
+        ],
+        "about": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "Synthetic note",
+            "contentType": "TEXT_PLAIN"
+          }
+        ],
+        "birthday": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "calendarDay": {
+              "month": 2,
+              "day": 3
+            }
+          }
+        ],
+        "nickname": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "Example"
+          }
+        ],
+        "website": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "https://example.invalid",
+            "type": "home"
+          }
+        ],
+        "relation": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "Synthetic Relation",
+            "type": "friend"
+          }
+        ],
+        "event": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "calendarDay": {
+              "year": 2001,
+              "month": 4,
+              "day": 5
+            },
+            "type": "anniversary"
+          }
+        ],
+        "im": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "synthetic-chat",
+            "protocol": "skype",
+            "type": "home"
+          }
+        ],
+        "sipAddress": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "value": "sip:synthetic@example.invalid",
+            "type": "home"
+          }
+        ],
+        "userDefined": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "key": "Example Key",
+            "value": "Example Value"
+          }
+        ],
+        "photo": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "url": "https://lh3.googleusercontent.com/synthetic-photo",
+            "photoToken": "synthetic-photo-token",
+            "isDefault": false
+          }
+        ],
+        "contactGroupMembership": [
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "systemContactGroupId": "STARRED"
+          },
+          {
+            "metadata": {
+              "containerType": "CONTACT",
+              "container": "CONTACT",
+              "encodedContainerId": "17",
+              "containerPrimary": true
+            },
+            "systemContactGroupId": "MY_CONTACTS"
+          }
+        ],
+        "fingerprint": "must-not-be-copied",
+        "privateDebug": "must-not-be-copied"
+      },
+      "responseStatus": {}
+    }
+  ]
+}

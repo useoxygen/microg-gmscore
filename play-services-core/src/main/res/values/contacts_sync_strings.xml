@@ -1,35 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <resources>
-    <string name="contacts_sync_title">Contacts sync</string>
-    <string name="contacts_sync_description">Keep Google contacts on this phone up to date. Device contacts and contacts belonging to other apps are kept separately.</string>
-    <string name="contacts_sync_off">Off</string>
-    <string name="contacts_sync_download">Download only</string>
-    <string name="contacts_sync_two_way">Two-way sync</string>
-    <string name="contacts_sync_two_way_consent">Allow changes to contacts in this Google account to be uploaded, including new contacts and deletions. Existing Device contacts will not be uploaded. Names, numbers, email addresses, postal addresses, organizations, notes, birthdays, nicknames and websites are supported. Conflicting edits are kept for review.</string>
-    <string name="contacts_sync_enable">Enable</string>
-    <string name="contacts_sync_no_accounts">Add a Google account in microG first.</string>
-    <string name="contacts_sync_enable_failed">Contacts access could not be enabled. Check the permission request, Google authorization and connection, then try again.</string>
-    <string name="contacts_sync_enable_permission">Android Contacts access is denied. Allow Contacts in app permissions, then try again.</string>
-    <string name="contacts_sync_enable_cancelled">Google authorization was cancelled. Try again to finish enabling Contacts sync.</string>
-    <string name="contacts_sync_enable_authorization">Google authorization could not be completed. Try again to sign in or grant Contacts access.</string>
-    <string name="contacts_sync_enable_network">Google could not be reached. Check your internet connection, then try again.</string>
-    <string name="contacts_sync_enable_api_denied">Google refused Contacts API access. Try reconnecting your account. If this continues, the API access needs investigation.</string>
-    <string name="contacts_sync_enable_api_unavailable">The Google Contacts API could not complete the access check. Try again later.</string>
-    <string name="contacts_sync_enable_retry_later">Google has temporarily limited Contacts requests. Wait a little before trying again.</string>
-    <string name="contacts_sync_enable_account_removed">This Google account was removed. Add it again before enabling Contacts sync.</string>
-    <string name="contacts_sync_enable_local">Android Contacts storage could not be accessed. Try again; if this continues, check the device diagnostics.</string>
-    <string name="contacts_sync_enable_timeout">The Contacts access check timed out. Check your connection and try again.</string>
-    <string name="contacts_sync_open_permissions">Open app permissions</string>
-    <string name="contacts_sync_retry">Try again</string>
-    <string name="contacts_sync_ready">Waiting to sync</string>
-    <string name="contacts_sync_success">Contacts are up to date</string>
-    <string name="contacts_sync_conflict">Some changes need review. Conflicting or unsupported edits have been preserved.</string>
-    <string name="contacts_sync_uncertain">An upload could not be confirmed. Sync will look for the result without creating another copy.</string>
-    <string name="contacts_sync_authorization">Google authorization needs to be renewed.</string>
-    <string name="contacts_sync_network">Sync will retry when the connection is available.</string>
-    <string name="contacts_sync_local">Sync stopped while applying contacts. Try syncing again to finish.</string>
-    <string name="contacts_sync_last_success">Last successful sync: %1$s</string>
+    <string name="contacts_sync_title">Google Contacts sync</string>
+    <string name="contacts_sync_description">Keep your contacts synced with Google Contacts so you never lose them</string>
+    <string name="contacts_sync_header">Keep your contacts synced with Google Contacts (contacts.google.com) so you never lose them. Contacts saved on the device or by other apps aren\'t affected.</string>
+    <string name="contacts_sync_open_google_contacts">Open Google Contacts</string>
+    <string name="contacts_sync_no_accounts">Google Contacts sync requires a signed-in Google account.</string>
+    <string name="contacts_sync_add_account">Add Google account</string>
+
+    <!-- Per-account controls -->
+    <string name="contacts_sync_switch_on">Sync on</string>
+    <string name="contacts_sync_switch_off">Sync off</string>
+    <string name="contacts_sync_upload_title">Upload changes from this phone</string>
+    <string name="contacts_sync_upload_on">Contacts you add, edit or delete here are also changed in Google Contacts</string>
+    <string name="contacts_sync_upload_off">Google contacts are only downloaded. Changes made on this phone stay here.</string>
     <string name="contacts_sync_refresh">Sync now</string>
     <string name="contacts_sync_reconnect">Reconnect</string>
+    <string name="contacts_sync_retry">Try again</string>
+    <string name="contacts_sync_open_permissions">Permission settings</string>
+
+    <!-- Status line -->
+    <string name="contacts_sync_ready">Waiting to sync</string>
+    <string name="contacts_sync_in_progress">Sync in progress</string>
+    <string name="contacts_sync_last_sync">Last sync %1$s</string>
+    <string name="contacts_sync_last_sync_just_now">Last sync just now</string>
+    <string name="contacts_sync_network">Trouble syncing, waiting to try again</string>
+    <string name="contacts_sync_authorization">Sign-in needed. Reconnect your Google account to keep syncing.</string>
+    <string name="contacts_sync_permission_needed">Permission needed. Allow Contacts access so changes can sync.</string>
+    <string name="contacts_sync_local">Sync stopped before it finished. Tap Sync now to finish.</string>
+    <string name="contacts_sync_partial">Some contacts couldn\'t be downloaded. All other contacts are up to date.</string>
+    <string name="contacts_sync_conflict">Some contacts were changed both here and in Google Contacts. Your changes on this phone are kept and weren\'t uploaded.</string>
+    <string name="contacts_sync_uncertain">Checking whether your last change reached Google. It won\'t be uploaded twice.</string>
+    <string name="contacts_sync_needs_review">Paused: Google contacts on this phone have unsynced changes from an older version of sync. They\'re kept as they are.</string>
+    <string name="contacts_sync_needs_update">Google stopped accepting sync requests from this version. Update Cyclon Services, then tap Try again.</string>
+    <string name="contacts_sync_two_way_unavailable">Uploading changes isn\'t available yet. Contacts are only downloaded.</string>
+
+    <!-- Turning sync on: problems -->
+    <string name="contacts_sync_enable_permission">Contacts access is off. Allow Contacts in permission settings, then try again.</string>
+    <string name="contacts_sync_enable_cancelled">Sign-in was cancelled.</string>
+    <string name="contacts_sync_enable_authorization">Couldn\'t sign in to your Google account. Try again.</string>
+    <string name="contacts_sync_enable_network">Couldn\'t reach Google. Check your internet connection and try again.</string>
+    <string name="contacts_sync_enable_api_denied">Google refused access to your contacts. Try reconnecting your account.</string>
+    <string name="contacts_sync_enable_api_unavailable">Google Contacts isn\'t responding right now. Try again later.</string>
+    <string name="contacts_sync_enable_retry_later">Too many requests. Wait a little, then try again.</string>
+    <string name="contacts_sync_enable_account_removed">This Google account was removed from the phone.</string>
+    <string name="contacts_sync_enable_local">Couldn\'t access the contacts on this phone. Try again.</string>
+    <string name="contacts_sync_enable_timeout">This took too long. Check your connection and try again.</string>
+
+    <!-- Turning sync off -->
+    <string name="contacts_sync_turn_off_title">Turn off Google Contacts sync?</string>
+    <string name="contacts_sync_turn_off_body">Contacts from %1$s will be removed from this phone. You can still find them at contacts.google.com, and you can turn sync back on at any time.</string>
+    <plurals name="contacts_sync_turn_off_unsynced">
+        <item quantity="one">Important: %1$d change hasn\'t been synced yet and will be lost. To keep it, cancel and tap Sync now first.</item>
+        <item quantity="other">Important: %1$d changes haven\'t been synced yet and will be lost. To keep them, cancel and tap Sync now first.</item>
+    </plurals>
+    <plurals name="contacts_sync_turn_off_unsynced_download">
+        <item quantity="one">Important: %1$d change made on this phone hasn\'t been uploaded and will be lost. To keep it, cancel and turn on Upload changes from this phone first.</item>
+        <item quantity="other">Important: %1$d changes made on this phone haven\'t been uploaded and will be lost. To keep them, cancel and turn on Upload changes from this phone first.</item>
+    </plurals>
+    <string name="contacts_sync_turn_off_confirm">Turn off</string>
+    <string name="contacts_sync_cancel">Cancel</string>
+    <string name="contacts_sync_turn_off_done">Sync turned off</string>
+    <string name="contacts_sync_turn_off_failed">Couldn\'t remove the synced contacts. Sync is off; try again later.</string>
 </resources>

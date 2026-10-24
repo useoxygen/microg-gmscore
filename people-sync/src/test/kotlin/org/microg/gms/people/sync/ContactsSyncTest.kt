@@ -54,7 +54,7 @@ class ContactsSyncTest {
                 val sent = existing.pending?.optJSONObject("local")?.let { ContactsSync.jsonFields(it) } ?: existing.fields
                 val merged = project(remote).toMutableMap()
                 for (field in PeopleApi.EDITABLE_FIELDS) if ((current.fields[field] ?: "[]") != (sent[field] ?: "[]")) {
-                    merged[field] = current.fields[field] ?: "[]"
+                    merged[field] = if (field == "memberships") Memberships.merge(sent[field], current.fields[field], project(remote)[field]) else current.fields[field] ?: "[]"
                 }
                 rows[existing.id] = current.copy(resource = remote.resource, etag = remote.etag,
                     fields = merged.filterValues { it != "[]" }, baseline = project(remote), pending = null, dirty = true)
@@ -67,6 +67,7 @@ class ContactsSyncTest {
     private inner class Api : ContactsApi {
         val remote = linkedMapOf<String, Person>()
         var page: ((String?, String?) -> Page)? = null
+        var unreadableResource: String? = null
         var writes = 0
         var creates = 0
         var createFailure = false
@@ -75,7 +76,10 @@ class ContactsSyncTest {
         var mask: Set<String>? = null
         override fun list(syncToken: String?, pageToken: String?) = page?.invoke(syncToken, pageToken)
             ?: Page(remote.values.toList(), null, "checkpoint")
-        override fun get(resource: String) = remote[resource]
+        override fun get(resource: String): Person? {
+            if (resource == unreadableResource) throw UnreadableContact()
+            return remote[resource]
+        }
         override fun create(body: JSONObject): Person {
             writes++; creates++
             val result = person("created", "created-etag", body.keys().asSequence().filter { it in PeopleApi.EDITABLE_FIELDS }
@@ -105,6 +109,125 @@ class ContactsSyncTest {
         return store to api
     }
 
+    @Test fun unreadableContactPreservesItsStoredCopyAndHoldsCheckpoint() {
+        val (store, api) = setup()
+        api.page = { _, _ -> Page(listOf(person("b")), null, "new", 1, setOf("people/a")) }
+        val report = ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(1, report.skipped)
+        assertEquals(setOf("people/a", "people/b"), store.rows.values.map { it.resource }.toSet())
+        assertEquals("checkpoint", store.token)
+    }
+    @Test fun partialFullReadCannotDeleteEvenWithUnknownMalformedIdentityOrTombstone() {
+        val (store, api) = setup(); store.token = null; api.remote.clear()
+        api.page = { _, _ -> Page(listOf(deleted("a"), person("b")), null, "new", 1) }
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(2, store.rows.size); assertNull(store.token)
+    }
+    @Test fun unreadableIdentityQuarantinesAReadableDuplicateAcrossPagesAndDirtyDeletes() {
+        val (store, api) = setup(); store.edit(deleted = true)
+        api.page = { _, page -> if (page == null) Page(listOf(person()), "p", null)
+            else Page(emptyList(), null, "new", 1, setOf("people/a")) }
+        val report = ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(0, api.writes); assertTrue(store.rows.getValue(1).deleted)
+        assertEquals(1, report.skipped); assertEquals("checkpoint", store.token)
+    }
+    @Test fun unreadableDirectReadKeepsEarlierTombstonesAndAllowsReadableSiblings() {
+        val (store, api) = setup()
+        api.remote["people/b"] = person("b")
+        ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        api.unreadableResource = "people/b"
+        api.page = { _, _ -> Page(listOf(deleted("a"), person("b", "changed"), person("c")), null, "new") }
+        val report = ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+        assertEquals(1, report.skipped)
+        assertEquals(setOf("people/a", "people/b", "people/c"), store.rows.values.map { it.resource }.toSet())
+        assertEquals("checkpoint", store.token)
+    }
+    @Test fun retryAfterMalformedEntryRecoversAndCommitsCheckpoint() {
+        val (store, api) = setup()
+        api.page = { _, _ -> Page(emptyList(), null, "new", 1, setOf("people/a")) }
+        assertEquals(1, ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync().skipped)
+        api.page = { _, _ -> Page(listOf(person(etag = "repaired")), null, "new") }
+        assertEquals(0, ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync().skipped)
+        assertEquals("new", store.token); assertEquals(1, store.rows.size)
+    }
+    @Test fun partialReadDoesNotDuplicateOrResolveAnUncertainCreate() {
+        val store = Store(); val api = Api()
+        store.rows[1] = LocalContact(1, 1, null, null, fields(), emptyMap(), true, false)
+        store.nextId = 2
+        api.createFailure = true
+        assertThrows(IOException::class.java) { ContactsSync(api, store) { SyncMode.TWO_WAY }.sync() }
+        api.createFailure = false
+        api.page = { _, _ -> Page(api.remote.values.toList(), null, "new", 1) }
+        val report = ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, store.rows.size); assertEquals(1, api.creates)
+        assertNotNull(store.rows.getValue(1).pending); assertEquals(1, report.uncertain)
+        assertNull(store.token)
+    }
+    @Test fun contactDeletionConflictsWithChangedPhotoEvenWhenContactSourceEtagIsUnchanged() {
+        val (store, api) = setup()
+        store.rows[1] = store.rows.getValue(1).copy(photoRevision = ContactPhotos.revision(api.remote.getValue("people/a")))
+        store.edit(deleted = true)
+        api.remote.getValue("people/a").json.put("photos", JSONArray().put(JSONObject().put("url", "https://lh3.googleusercontent.com/new-photo")
+            .put("metadata", JSONObject().put("source", JSONObject().put("type", "CONTACT")))))
+        assertEquals(1, ContactsSync(api, store) { SyncMode.TWO_WAY }.sync().conflicts)
+        assertEquals(0, api.writes); assertTrue(store.rows.getValue(1).deleted)
+    }
+    @Test fun blankExistingContactCanBeStarredButNewMembershipOnlyRowIsNotCreated() {
+        val store = Store(); val api = Api()
+        val original = mapOf("memberships" to Memberships.field(setOf(MY_CONTACTS)))
+        api.remote["people/a"] = person(fields = original)
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        store.edit(fields = mapOf("memberships" to Memberships.field(setOf(MY_CONTACTS, STARRED))))
+        assertEquals(1, ContactsSync(api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        val empty = Store(); empty.rows[1] = LocalContact(1, 1, null, null, original, emptyMap(), true, false)
+        val freshApi = Api()
+        assertEquals(1, ContactsSync(freshApi, empty) { SyncMode.TWO_WAY }.sync().conflicts)
+        assertEquals(0, freshApi.creates)
+    }
+    @Test fun photoOnlyNewContactCanObtainAResourceWithoutPuttingPhotoInPersonMask() {
+        val store = Store(); val api = Api()
+        store.rows[1] = LocalContact(1, 1, null, null, mapOf("memberships" to Memberships.field(setOf(MY_CONTACTS))), emptyMap(), true, false, hasPhoto = true)
+        assertEquals(1, ContactsSync(api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, api.creates); assertNotNull(store.rows.getValue(1).resource)
+    }
+    @Test fun disjointCloudLabelAndLocalStarChangesMergeAndRecoverLostReply() {
+        val store = Store(); val api = Api()
+        val original = fields() + ("memberships" to Memberships.field(setOf(MY_CONTACTS)))
+        api.remote["people/a"] = person(fields = original)
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        store.edit(fields = original + ("memberships" to Memberships.field(setOf(MY_CONTACTS, STARRED))))
+        api.remote["people/a"] = person(etag = "e2", fields = original + ("memberships" to Memberships.field(setOf(MY_CONTACTS, "contactGroups/cloud"))))
+        api.afterWrite = { throw IOException("Lost response") }
+        assertThrows(IOException::class.java) { ContactsSync(api, store) { SyncMode.TWO_WAY }.sync() }
+        api.afterWrite = null
+        assertEquals(setOf(MY_CONTACTS, STARRED, "contactGroups/cloud"), Memberships.resources(api.remote.getValue("people/a")))
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, api.writes); assertNull(store.rows.getValue(1).pending)
+        assertEquals(setOf("memberships"), api.mask)
+    }
+    @Test fun membershipMergePreservesConcurrentLocalUnstarAndCloudLabel() {
+        val store = Store(); val api = Api()
+        val original = fields() + ("memberships" to Memberships.field(setOf(MY_CONTACTS)))
+        api.remote["people/a"] = person(fields = original)
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        store.edit(fields = original + ("memberships" to Memberships.field(setOf(MY_CONTACTS, STARRED))))
+        api.remote["people/a"] = person(etag = "cloud", fields = original + ("memberships" to Memberships.field(setOf(MY_CONTACTS, "contactGroups/cloud"))))
+        api.afterWrite = { store.edit(fields = original) }
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        val local = store.rows.getValue(1)
+        assertEquals(Memberships.field(setOf(MY_CONTACTS, "contactGroups/cloud")), local.fields["memberships"])
+        assertTrue(local.dirty)
+    }
+    @Test fun incompatibleLastMembershipRemovalsRemainAConflict() {
+        val store = Store(); val api = Api()
+        val original = fields() + ("memberships" to Memberships.field(setOf(MY_CONTACTS, "contactGroups/a")))
+        api.remote["people/a"] = person(fields = original)
+        ContactsSync(api, store) { SyncMode.TWO_WAY }.sync()
+        store.edit(fields = original + ("memberships" to Memberships.field(setOf("contactGroups/a"))))
+        api.remote["people/a"] = person(etag = "cloud", fields = original + ("memberships" to Memberships.field(setOf(MY_CONTACTS))))
+        assertEquals(1, ContactsSync(api, store) { SyncMode.TWO_WAY }.sync().conflicts)
+        assertEquals(0, api.writes); assertTrue(store.rows.getValue(1).dirty)
+    }
     @Test fun offDoesNotReadOrWrite() {
         val store = Store(); val api = Api().apply { page = { _, _ -> error("Unexpected read") } }
         assertEquals(SyncReport(0, 0, 0, 0), ContactsSync(api, store) { SyncMode.OFF }.sync())

@@ -449,7 +449,14 @@
 
         <!-- People -->
 
-        <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="true"
+            android:theme="@style/Theme.Cyclon">
+            <intent-filter>
+                <action android:name="com.google.android.gms.people.sync.CONTACTS_SYNC_SETTINGS" />
+                <action android:name="com.google.android.gms.people.sync.CONTACTS_SYNC_SETTINGS_V3" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
