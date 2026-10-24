@@ -113,7 +113,7 @@ class PasswordVaultAndroidTest {
             keyStore.deleteEntry(alias)
             assertThrows(VaultLockedException::class.java) { AndroidVaultStore(context, identity).locked { it.load() } }
             assertFalse(keyStore.containsAlias(alias))
-        } finally { store.clear() }
+        } finally { AndroidVaultStore.eraseAccountVault(context, hash(identity)) }
     }
 
     @Test fun copiedCiphertextCannotCrossAccountBoundary() {
@@ -130,7 +130,7 @@ class PasswordVaultAndroidTest {
             }
             assertThrows(VaultLockedException::class.java) { second.locked { it.load() } }
             assertArrayEquals("first synthetic value".toByteArray(), first.locked { it.load().chromeLocalData["fixture"] })
-        } finally { first.clear(); second.clear() }
+        } finally { first.clear(); AndroidVaultStore.eraseAccountVault(context, hash(b)) }
     }
 
     @Test fun revokedAccountGuardBlocksBothReadAndPostNetworkCommit() {

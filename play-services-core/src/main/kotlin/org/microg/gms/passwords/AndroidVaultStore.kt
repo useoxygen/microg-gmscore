@@ -20,8 +20,10 @@ import javax.crypto.spec.GCMParameterSpec
 
 /** Per-account durable transactions; no vault plaintext or keys enter SQLite/WAL/journal files. */
 class AndroidVaultStore private constructor(context: Context, identity: String, private val verifyAccess: () -> Unit,
-    alreadyHashed: Boolean) : VaultStore {
-    constructor(context: Context, identity: String, verifyAccess: () -> Unit = {}) : this(context, identity, verifyAccess, false)
+    alreadyHashed: Boolean, private val verifyState: (VaultState) -> Unit) : VaultStore {
+    constructor(context: Context, identity: String, verifyAccess: () -> Unit = {}) : this(context, identity, verifyAccess, false, {})
+    constructor(context: Context, identity: String, verifyAccess: () -> Unit,
+        verifyState: (VaultState) -> Unit) : this(context, identity, verifyAccess, false, verifyState)
     private val context = context.applicationContext
     private val id = if (alreadyHashed) identity else MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -33,12 +35,14 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
         arrayOf(id), null, null, null).use { it.moveToFirst() && it.getInt(0) == 1 }
     fun registerAccount() = locked {
         verifyAccess()
+        it.load()
         val values = ContentValues().apply { put("account_id", id); put("enabled", 0) }
         database.writableDatabase.insertWithOnConflict("accounts", null, values, SQLiteDatabase.CONFLICT_IGNORE)
         Unit
     }
     fun setEnabled(value: Boolean) = locked {
         verifyAccess()
+        it.load()
         val values = ContentValues().apply { put("account_id", id); put("enabled", if (value) 1 else 0) }
         if (database.writableDatabase.insertWithOnConflict("accounts", null, values, SQLiteDatabase.CONFLICT_REPLACE) < 0) throw VaultLockedException()
         Unit
@@ -54,13 +58,16 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
                         verifyAccess()
                         val ciphertext = database.readableDatabase.query("vaults", arrayOf("ciphertext"), "account_id=?",
                             arrayOf(id), null, null, null).use { cursor -> if (cursor.moveToFirst()) cursor.getBlob(0) else null }
-                        if (ciphertext == null) return VaultState()
+                        if (ciphertext == null) return VaultState().also(verifyState)
                         val plain = decrypt(ciphertext)
-                        return try { VaultState.decode(plain) } finally { plain.fill(0) }
+                        return try { VaultState.decode(plain).also(verifyState) } finally { plain.fill(0) }
                     }
 
                     override fun save(state: VaultState) {
                         verifyAccess()
+                        // A stale object cannot strip the durable launch fence.
+                        load()
+                        verifyState(state)
                         val plain = state.encode()
                         val encrypted = try { encrypt(plain) } finally { plain.fill(0) }
                         val db = database.writableDatabase
@@ -79,6 +86,11 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
 
     /** Account removal is explicit. Recreating a missing key for an existing blob is forbidden. */
     fun clear() = locked {
+        it.load()
+        eraseUnlocked()
+    }
+    private fun eraseRemovedAccount() = locked { eraseUnlocked() }
+    private fun eraseUnlocked() {
         database.writableDatabase.delete("vaults", "account_id=?", arrayOf(id))
         database.writableDatabase.delete("accounts", "account_id=?", arrayOf(id))
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -142,7 +154,7 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
             null, null, null, null, null).use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
         fun eraseAccountVault(context: Context, hash: String) {
             require(Regex("[0-9a-f]{64}").matches(hash))
-            AndroidVaultStore(context, hash, {}, true).clear()
+            AndroidVaultStore(context, hash, {}, true, {}).eraseRemovedAccount()
         }
         private val LOCKS = ConcurrentHashMap<String, Any>()
         @Volatile private var DB: Database? = null

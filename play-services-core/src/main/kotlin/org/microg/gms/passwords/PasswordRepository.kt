@@ -20,7 +20,9 @@ import org.microg.gms.common.Constants
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-class PasswordRepository(context: Context, val account: Account, private val expectedVaultParent: String? = null) : ManagedPasswordVault {
+class PasswordRepository private constructor(context: Context, val account: Account, private val expectedVaultParent: String?,
+    encryptionOwner: Boolean) : ManagedPasswordVault {
+    constructor(context: Context, account: Account, expectedVaultParent: String? = null) : this(context, account, expectedVaultParent, false)
     private val context = context.applicationContext
     private val accounts = AccountManager.get(this.context)
     private val userId: String
@@ -31,12 +33,14 @@ class PasswordRepository(context: Context, val account: Account, private val exp
         if (account.type != "com.google" || !accounts.getAccountsByType("com.google").contains(account)) throw VaultLockedException()
         userId = accounts.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
         marker = hash("google:$userId")
-        store = AndroidVaultStore(this.context, "google:$userId", ::checkAccount)
+        store = AndroidVaultStore(this.context, "google:$userId", ::checkAccount) { state ->
+            if (!encryptionOwner && PasswordEncryptionState.fences(state.passwordEncryptionFlow)) throw PendingMutationException()
+        }
         store.registerAccount()
     }
 
     override val enabled: Boolean get() = store.enabled
-    override fun setEnabled(value: Boolean) {
+    override fun setEnabled(value: Boolean): Unit = LocalKeyManager.getInstance(context).withRecoveryAuthority(account.name, userId) {
         checkAccount()
         store.setEnabled(value)
         if (value) {
@@ -52,6 +56,7 @@ class PasswordRepository(context: Context, val account: Account, private val exp
             RemoteWorkManager.getInstance(context).cancelUniqueWork("password-periodic-$marker").get(30, TimeUnit.SECONDS)
             RemoteWorkManager.getInstance(context).cancelUniqueWork("password-now-$marker").get(30, TimeUnit.SECONDS)
         }
+        Unit
     }
 
     fun schedule() {
@@ -77,12 +82,16 @@ class PasswordRepository(context: Context, val account: Account, private val exp
     }
 
     override fun initializeEmptyVault() {
-        checkEnabled()
-        val api = PasswordApi(authenticatedTransport())
-        try { api.metadata(); return } catch (failure: PasswordRpcException) { if (failure.code != 5) throw failure }
-        // Called only from the owner's explicit enable/create UI, never from background reads.
-        val metadata = api.initialize()
-        store.locked { session -> val state = session.load(); state.metadata = metadata; session.save(state) }
+        LocalKeyManager.getInstance(context).withRecoveryAuthority(account.name, userId) {
+            checkEnabled()
+            store.locked { session ->
+                val state = session.load() // Before even a remote metadata create.
+                val api = PasswordApi(authenticatedTransport())
+                try { api.metadata(); return@locked } catch (failure: PasswordRpcException) { if (failure.code != 5) throw failure }
+                val metadata = api.initialize()
+                state.metadata = metadata; session.save(state)
+            }
+        }
     }
 
     override fun list(ensureInitialSync: Boolean): List<PasswordView> {
@@ -409,6 +418,8 @@ class PasswordRepository(context: Context, val account: Account, private val exp
     private fun localPreferences() = PreferenceSync(PasswordApi(PasswordTransport { _, _ -> error("enqueue is local") }), store)
     override fun toString(): String = "PasswordRepository[redacted]"
     companion object {
+        /** Only the private Google owner-flow adapter reconciles its own durable launch fence. */
+        internal fun encryptionOwner(context: Context, account: Account) = PasswordRepository(context, account, null, true)
         private const val CHROMESYNC_SCOPE = "https://www.googleapis.com/auth/chromesync"
         internal fun hash(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }

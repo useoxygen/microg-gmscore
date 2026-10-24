@@ -51,7 +51,8 @@ class VaultState(
     val trustedVaultKeys: MutableList<ByteArray> = ArrayList(),
     var sharingJournal: ByteArray? = null,
     var wifiSync: ByteArray? = null,
-    var versionedTrustedVaultKeys: VersionedTrustedVaultKeys? = null
+    var versionedTrustedVaultKeys: VersionedTrustedVaultKeys? = null,
+    var passwordEncryptionFlow: ByteArray? = null
 ) {
     fun encode(): ByteArray {
         val out = ByteArrayOutputStream()
@@ -61,10 +62,8 @@ class VaultState(
             if (value.size > Proto.MAX_BYTES - out.size()) throw ProtocolException()
             out.write(value, 0, value.size)
         }
-        // Earlier writers must refuse unknown durable registration/journal fields rather
-        // than erase them on their next save. v6 additionally fences recovered key epochs:
-        // an older raw-key writer must not erase or manufacture enrollment authority.
-        append(Proto.integer(1, 6))
+        // Earlier writers must not erase the Google owner-page launch fence on their next save.
+        append(Proto.integer(1, 7))
         metadata?.let { append(Proto.field(2, it)) }
         records.forEach { append(Proto.field(3, it)) }
         mutations.forEach { append(Proto.field(4, it.encode())) }
@@ -88,14 +87,19 @@ class VaultState(
             if (it.parent != Proto.decode(metadata ?: pendingMetadata ?: throw VaultLockedException()).string(1)) throw VaultResetException()
             append(Proto.field(20, it.encode()))
         }
+        passwordEncryptionFlow?.let {
+            if (it.size > Proto.MAX_BYTES / 2) throw ProtocolException()
+            PasswordEncryptionState.decode(it)?.close()
+            append(Proto.field(21, it))
+        }
         return out.toByteArray()
     }
     override fun toString(): String = "VaultState[redacted]"
     companion object {
         fun decode(data: ByteArray): VaultState = Proto.decode(data).let { proto ->
             val schema = proto.integer(1)
-            if (schema !in setOf(1L, 2L, 3L, 4L, 5L, 6L)) throw ProtocolException()
-            if (schema != 6L && proto.optional(20) != null) throw ProtocolException()
+            if (schema !in setOf(1L, 2L, 3L, 4L, 5L, 6L, 7L)) throw ProtocolException()
+            if (schema !in setOf(6L, 7L) && proto.optional(20) != null || schema != 7L && proto.optional(21) != null) throw ProtocolException()
             val state = VaultState(proto.optional(2), proto.bytes(3).toMutableList(),
                 proto.bytes(4).map(Mutation::decode).toMutableList(), proto.integer(5) ?: 0)
             proto.bytes(6).forEach { raw -> Proto.decode(raw).let { state.chromeLocalData[it.string(1)] = it.one(2) } }
@@ -113,6 +117,10 @@ class VaultState(
             state.sharingJournal = proto.optional(18)
             state.wifiSync = proto.optional(19)
             state.versionedTrustedVaultKeys = proto.optional(20)?.let(VersionedTrustedVaultKeys::decode)
+            state.passwordEncryptionFlow = proto.optional(21)?.also {
+                if (it.size > Proto.MAX_BYTES / 2) throw ProtocolException()
+                PasswordEncryptionState.decode(it)?.close()
+            }
             state.versionedTrustedVaultKeys?.let {
                 if (it.parent != Proto.decode(state.metadata ?: state.pendingMetadata ?: throw VaultLockedException()).string(1)) throw VaultResetException()
             }

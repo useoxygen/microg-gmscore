@@ -71,7 +71,7 @@ class VersionedTrustedVaultKeyTest {
         assertArrayEquals(shared, migrated.trustedVaultKeys.single())
         VaultKeys.unlock(migrated.metadata!!, trustedVaultKeys = migrated.trustedVaultKeys).destroy()
         val encoded = migrated.encode()
-        assertEquals(6L, Proto.decode(encoded).integer(1)); assertNull(Proto.decode(encoded).optional(20))
+        assertEquals(7L, Proto.decode(encoded).integer(1)); assertNull(Proto.decode(encoded).optional(20))
         assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.integer(1, 7)) }
         val epochs = bundle()
         try {

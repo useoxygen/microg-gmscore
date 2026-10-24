@@ -56,6 +56,12 @@ interface PasswordTransferEndpoint {
 class PasswordTransferEngine(private val journal: VaultStore,
     private val endpoint: (PasswordStoreIdentity) -> PasswordTransferEndpoint) {
     fun operations(): List<PasswordTransferOperation> = journal.locked { it.load().ownerTransfers.toList() }
+    /** Hold the real global journal before account/repository locks, matching resume's lock order. */
+    fun <T> withQuiescedAccount(userId: String, action: () -> T): T = journal.locked { session ->
+        if (userId.isBlank()) throw ProtocolException()
+        if (session.load().ownerTransfers.any { it.source?.userId == userId || it.destination.userId == userId }) throw PendingMutationException()
+        action()
+    }
     fun start(source: PasswordStoreIdentity?, destination: PasswordStoreIdentity, original: ByteArray?, desired: ByteArray): String = journal.locked { session ->
         if ((source == null) != (original == null)) throw ProtocolException()
         val data = PasswordData.decode(Proto.decode(desired).one(1))
@@ -65,6 +71,10 @@ class PasswordTransferEngine(private val journal: VaultStore,
         if (state.ownerTransfers.size >= 1000) throw ProtocolException()
         if (state.ownerTransfers.any { it.destination.same(destination) && tag(it.desired) == data.tag() ||
                 source != null && it.source?.same(source) == true && it.original?.let(::tag) == old?.tag() }) throw PendingMutationException()
+        // Admission only: normal endpoints verify current account/fence under this journal
+        // lock. A page launch cannot slip between an earlier selection and durable queueing.
+        source?.let { endpoint(it) }
+        endpoint(destination)
         val id = UUID.randomUUID().toString()
         state.ownerTransfers.add(PasswordTransferOperation(id, source, destination, original?.copyOf(), desired.copyOf()))
         session.save(state)

@@ -210,7 +210,7 @@ class PreferenceSyncTest {
         val server = Server(); val store = Store(); val sync = engine(server, store)
         sync.synchronize(server.parent)
         sync.enqueue("credentials_enable_service", "true")
-        assertEquals(6L, Proto.decode(store.bytes).integer(1))
+        assertEquals(7L, Proto.decode(store.bytes).integer(1))
         val reopened = VaultState.decode(store.bytes)
         assertEquals(1, reopened.preferenceMutations.size)
         assertEquals("true", engine(server, store).value("credentials_enable_service"))

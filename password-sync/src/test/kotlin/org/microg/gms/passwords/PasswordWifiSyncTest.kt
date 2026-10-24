@@ -230,7 +230,7 @@ class PasswordWifiSyncTest {
     @Test fun wifiJournalSurvivesVaultSerializationAndFutureWriterFence() {
         val state = VaultState(); val wifi = PasswordWifiState.decode(null); wifi.enabled = true
         state.wifiSync = wifi.encode(); state.sharingJournal = byteArrayOf(9)
-        val raw = state.encode(); assertEquals(6L, Proto.decode(raw).integer(1))
+        val raw = state.encode(); assertEquals(7L, Proto.decode(raw).integer(1))
         assertTrue(PasswordWifiState.decode(VaultState.decode(raw).wifiSync).enabled)
         assertArrayEquals(byteArrayOf(9), VaultState.decode(raw).sharingJournal)
         assertThrows(ProtocolException::class.java) { VaultState.decode(Proto.decode(raw).replaceInteger(1, 7).encode()) }

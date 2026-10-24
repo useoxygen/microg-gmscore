@@ -129,6 +129,13 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                             } })
                             Text(stringResource(R.string.passwords_sync), Modifier.padding(top = 12.dp))
                         }
+                        if (selected != null && android.os.Build.VERSION.SDK_INT >= 28) TextButton(onClick = {
+                            requireOwner()
+                            val account = selected ?: return@TextButton
+                            val identity = ownerOperations.identity(account)
+                            startActivity(Intent(this@PasswordManagerActivity, PasswordEncryptionActivity::class.java)
+                                .putExtra("account", account.name).putExtra("google_user_id", identity.userId))
+                        }, enabled = !busy) { Text(stringResource(R.string.passwords_encryption_manage)) }
                         if (enabled) {
                             if (selected != null) TextButton(onClick = {
                                 requireOwner()

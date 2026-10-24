@@ -685,6 +685,8 @@
             android:exported="false" android:excludeFromRecents="true" android:process=":ui" />
         <activity android:name="org.microg.gms.passwords.PasswordRecoveryEnrollmentActivity"
             android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordEncryptionActivity"
+            android:exported="false" android:excludeFromRecents="true" android:process=":password_encryption" />
         <activity android:name="org.microg.gms.auth.folsom.ui.SecurityDomainLifecycleActivity"
             android:exported="false" android:process=":ui" />
         <activity android:name="org.microg.gms.auth.folsom.ui.FolsomConsentActivity"

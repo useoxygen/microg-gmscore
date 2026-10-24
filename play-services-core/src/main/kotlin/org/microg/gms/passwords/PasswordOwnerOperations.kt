@@ -19,9 +19,13 @@ class PasswordOwnerOperations(context: Context) {
         if (identity.accountName == null) return DevicePasswordVault(context)
         val account = accounts.getAccountsByType("com.google").singleOrNull { it.name == identity.accountName } ?: throw VaultLockedException()
         if (accounts.getUserData(account, "GoogleUserId") != identity.userId) throw VaultLockedException()
-        return PasswordRepository(context, account, identity.vaultParent).also { if (!it.enabled) throw VaultLockedException() }
+        return PasswordRepository(context, account, identity.vaultParent).also {
+            if (!accounts.getAccountsByType("com.google").contains(account) || accounts.getUserData(account, "GoogleUserId") != identity.userId ||
+                !it.enabled) throw VaultLockedException()
+        }
     }
     fun verifyIdentity(identity: PasswordStoreIdentity) { vault(identity) }
+    internal fun <T> withAccountTransfersQuiesced(userId: String, action: () -> T): T = engine.withQuiescedAccount(userId, action)
     fun pending(): List<PasswordTransferOperation> { purgeRemovedAccounts(context); return engine.operations() }
     private fun transferIdentity(account: Account?): PasswordStoreIdentity {
         val identity = identity(account)
@@ -48,6 +52,7 @@ class PasswordOwnerOperations(context: Context) {
             val existing = state.ownerTransfers.filter { it.destination.same(target) }
                 .map { PasswordData.decode(Proto.decode(it.desired).one(1)).tag() }.toSet()
             if (passwords.any { it.tag() in existing }) throw PendingMutationException()
+            vault(target) // Repeat normal account/fence admission while the global journal is held.
             val operations = passwords.map { data -> PasswordTransferOperation(java.util.UUID.randomUUID().toString(), null, target, null, Proto.field(1, data.encode())) }
             state.ownerTransfers.addAll(operations); session.save(state)
             operations.map { it.id }

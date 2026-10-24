@@ -43,6 +43,38 @@ class PasswordTransferTest {
     private val local = PasswordStoreIdentity()
     private val account = PasswordStoreIdentity("fixture@example.invalid", "fixture-id")
 
+    @Test fun queuedGlobalImportBlocksOwnerPageAndFreshAdmissionRechecksTheLaunchFence() {
+        val store = Store(); val target = Endpoint(); var fenced = false; var admissions = 0
+        val engine = PasswordTransferEngine(store) {
+            admissions++
+            if (fenced && it.userId == account.userId) throw PendingMutationException()
+            target
+        }
+        val id = engine.start(null, account, null, chrome())
+        assertEquals(1, admissions)
+        var opened = false
+        assertThrows(PendingMutationException::class.java) { engine.withQuiescedAccount(account.userId!!) { opened = true } }
+        assertFalse(opened); assertEquals(0, target.writes)
+        assertEquals(id, engine.operations().single().id)
+        engine.drop(id)
+        engine.withQuiescedAccount(account.userId!!) { fenced = true; opened = true }
+        assertTrue(opened)
+        assertThrows(PendingMutationException::class.java) { engine.start(null, account, null, chrome()) }
+        assertTrue(engine.operations().isEmpty()); assertEquals(0, target.writes)
+        assertEquals(0, target.deletes)
+    }
+
+    @Test fun globalQuiescenceMatchesStableGaiaForEitherSideAndLeavesUnrelatedAccountsAvailable() {
+        val store = Store(); val target = Endpoint()
+        val other = PasswordStoreIdentity("other@example.invalid", "other-id")
+        val engine = PasswordTransferEngine(store) { target }
+        engine.start(account, other, chrome(), chrome(user = "other-fixture"))
+        assertThrows(PendingMutationException::class.java) { engine.withQuiescedAccount(account.userId!!) {} }
+        assertThrows(PendingMutationException::class.java) { engine.withQuiescedAccount(other.userId!!) {} }
+        assertEquals("read-only", engine.withQuiescedAccount("unrelated-id") { "read-only" })
+        assertEquals(1, engine.operations().size); assertEquals(0, target.writes)
+    }
+
     @Test fun lostDestinationResponseSurvivesReopenAndNeverDuplicatesOrPrematurelyDeletes() {
         val store = Store(); val source = Endpoint(); val destination = Endpoint(); val data = chrome()
         source.records[tag(data)] = data; destination.loseCopy = true
@@ -103,7 +135,7 @@ class PasswordTransferTest {
         val engine = PasswordTransferEngine(store) { endpoint }
         val id = engine.start(null, account, null, data)
         store.locked { session -> val state = session.load(); state.affiliationCache = byteArrayOf(8); session.save(state) }
-        assertEquals(6L, Proto.decode(store.bytes).integer(1))
+        assertEquals(7L, Proto.decode(store.bytes).integer(1))
         assertArrayEquals(byteArrayOf(8), VaultState.decode(store.bytes).affiliationCache)
         engine.resume(id)
         assertEquals(1, endpoint.writes); assertEquals(0, endpoint.deletes)
