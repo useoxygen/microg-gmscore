@@ -27,7 +27,9 @@ import com.google.android.gms.maps.GoogleMapOptions
 import com.google.android.gms.maps.internal.*
 import com.google.android.gms.maps.model.*
 import com.google.android.gms.maps.model.internal.*
+import com.mapbox.mapboxsdk.LibraryLoader
 import com.mapbox.mapboxsdk.Mapbox
+import org.microg.gms.maps.mapbox.utils.MultiArchLoader
 import com.mapbox.mapboxsdk.WellKnownTileServer
 import com.mapbox.mapboxsdk.location.engine.*
 import com.mapbox.mapboxsdk.plugins.annotation.SymbolOptions
@@ -120,6 +122,9 @@ class LiteGoogleMapImpl(context: Context, var options: GoogleMapOptions) : Abstr
         }
 
         BitmapDescriptorFactoryImpl.initialize(mapContext.resources, context.resources)
+        // Cyclon: a lite map can be the first map in a process; without our loader MapLibre looks for the engine
+        // in the app's own libraries and fails (CYC-765).
+        LibraryLoader.setLibraryLoader(MultiArchLoader(mapContext, context))
 
         // noinspection ClickableViewAccessibility; touch listener only has side effects
         map.setOnTouchListener { _, event ->
