@@ -1502,6 +1502,18 @@
             </intent-filter>
         </service>
 
+        <service android:name="org.microg.gms.common.ClientNotificationTelemetryService">
+            <intent-filter>
+                <action android:name="com.google.android.gms.common.telemetry.notification.service.START" />
+            </intent-filter>
+        </service>
+
+        <service android:name="org.microg.gms.common.ClientThrottlingTelemetryService">
+            <intent-filter>
+                <action android:name="com.google.android.gms.common.telemetry.throttling.service.START" />
+            </intent-filter>
+        </service>
+
         <service android:name="org.microg.gms.common.GmsCommonService">
             <intent-filter>
                 <action android:name="com.google.android.gms.common.service.START" />

@@ -10,25 +10,32 @@ apply from: file('../version.gradle')
 tasks.register('testVersionAllocation') {
     doLast {
         def release = new JsonSlurper().parse(file('../version.json'))
-        def allocated = cyclonValidateVersion(release, 252432, 40226)
-        assert allocated.gmsVersionCode > 252432035
-        assert allocated.vendingVersionCode > 84022635
+        def allocated = cyclonValidateVersion(release, 40226)
+        // Every shipped APK must be replaceable: 252432074/84022674 is the last 25.24 delivery.
+        assert allocated.gmsVersionCode > 252432074
+        assert allocated.vendingVersionCode > 84022674
+        assert allocated.gmsCode == Integer.parseInt(release.reportedGmsVersion.replaceAll('\\.', ''))
+        // Stay below Cloud Messaging's 26.12 gate until microG implements that service.
+        assert allocated.gmsCode < 261200
         [
-            [gmsVersionCode: 252432034],
+            [format: 1],
+            [reportedGmsVersion: '25.41'],
+            [reportedGmsVersion: '25.20.32'],
+            [gmsVersionCode: 252432075],
+            [gmsVersionCode: (allocated.gmsCode * 1000 + 1000)],
             [vendingVersionCode: 84022634],
-            [gmsVersionCode: 252433000],
             [vendingVersionCode: 84022700],
-            [gmsVersionCode: '252432036'],
-            [upstreamTag: 'v0.3.17.252433']
+            [gmsVersionCode: "${allocated.gmsVersionCode}"],
+            [upstreamTag: 'v0.3.17']
         ].each { change ->
             try {
-                cyclonValidateVersion(release + change, 252432, 40226)
-                throw new AssertionError('An invalid APK version allocation was accepted')
+                cyclonValidateVersion(release + change, 40226)
+                throw new AssertionError("An invalid APK version allocation was accepted: $change")
             } catch (GradleException expected) {
                 assert expected.message.contains('allocation')
             }
         }
-        println('Verified upgrade from both shipped APK versions and rejection of invalid allocations.')
+        println('Verified upgrade from the shipped APK versions, the Cloud Messaging ceiling and rejection of invalid allocations.')
     }
 }
 
