@@ -34,6 +34,11 @@ import com.google.android.gms.fido.fido2.api.common.PublicKeyCredentialRequestOp
 import com.google.android.gms.fido.fido2.api.common.PublicKeyCredentialUserEntity
 import com.google.android.gms.fido.fido2.api.common.UserVerificationRequirement
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.microg.gms.fido.core.AccountPasskeyBackendProvider
+import org.microg.gms.fido.core.hybrid.HybridAccountSessions
+import org.microg.gms.fido.core.hybrid.HybridPrf
 import org.microg.gms.fido.core.hybrid.controller.HybridAuthenticatorController
 import org.microg.gms.fido.core.hybrid.model.QrCodeData
 import org.microg.gms.fido.core.protocol.AttestationObject
@@ -44,7 +49,7 @@ import org.microg.gms.fido.core.protocol.msgs.AuthenticatorGetInfoResponse
 import org.microg.gms.fido.core.protocol.msgs.AuthenticatorMakeCredentialRequest
 import org.microg.gms.fido.core.protocol.msgs.AuthenticatorMakeCredentialResponse
 import org.microg.gms.fido.core.ui.AuthenticatorActivity
-import kotlin.coroutines.Continuation
+import kotlinx.coroutines.CancellableContinuation
 import kotlin.coroutines.resume
 
 private const val TAG = "HybridAuthenticate"
@@ -58,18 +63,17 @@ class HybridAuthenticateActivity : AppCompatActivity() {
     private var hybridAuthenticatorController: HybridAuthenticatorController? = null
 
     private lateinit var waitingLauncher: ActivityResultLauncher<Intent>
-    private var waitingLauncherContinuation: Continuation<ActivityResult>? = null
+    private var waitingLauncherContinuation: CancellableContinuation<ActivityResult>? = null
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val fidoUrl = intent.dataString
         if (fidoUrl == null || !fidoUrl.startsWith(QrCodeData.PREFIX_FIDO, ignoreCase = true)) {
-            Log.w(TAG, "Invalid FIDO URL: $fidoUrl")
-            finishWithError("Invalid FIDO URL: $fidoUrl")
+            Log.w(TAG, "Invalid FIDO URL")
+            finishWithError("Invalid FIDO URL")
             return
         }
-        Log.d(TAG, "onCreate: $fidoUrl")
         qrCodeData = QrCodeData.parse(fidoUrl)
         if (qrCodeData == null) {
             Log.w(TAG, "Failed to parse QR code data")
@@ -77,7 +81,9 @@ class HybridAuthenticateActivity : AppCompatActivity() {
             return
         }
         waitingLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            waitingLauncherContinuation?.resume(it)
+            val pending = waitingLauncherContinuation
+            waitingLauncherContinuation = null
+            if (pending?.isActive == true) pending.resume(it)
         }
 
         val isRegistration = qrCodeData?.flowIdentifier == "mc"
@@ -111,6 +117,7 @@ class HybridAuthenticateActivity : AppCompatActivity() {
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     override fun onDestroy() {
         super.onDestroy()
+        waitingLauncherContinuation?.cancel(); waitingLauncherContinuation = null
         hybridAuthenticatorController?.release()
         hybridAuthenticatorController = null
     }
@@ -118,22 +125,23 @@ class HybridAuthenticateActivity : AppCompatActivity() {
     @RequiresPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
     private fun startHybridConnectionFlow() {
         lifecycleScope.launchWhenCreated {
-            hybridAuthenticatorController = hybridAuthenticatorController ?: HybridAuthenticatorController(this@HybridAuthenticateActivity)
+            hybridAuthenticatorController = hybridAuthenticatorController ?: HybridAuthenticatorController(this@HybridAuthenticateActivity,
+                (application as? AccountPasskeyBackendProvider)?.accountPasskeyBackend?.supportsHybridPrf(this@HybridAuthenticateActivity) == true)
             try {
                 hybridAuthenticatorController?.startAuth(qrCodeData!!, handleAuthenticator = {
-                    runCatching {
+                    withContext(Dispatchers.Main.immediate) { runCatching {
                         when (it) {
                             is AuthenticatorMakeCredentialRequest -> handleMakeCredential(it)
                             is AuthenticatorGetAssertionRequest -> handleGetAssertion(it)
                             is AuthenticatorGetInfoRequest -> handleGetInfo(it)
                             else -> null
                         }
-                    }.getOrNull()
-                }, completed = {
-                    if (it) finishWithSuccess() else finishWithError("auth error")
+                    }.getOrNull() }
+                }, completed = { success ->
+                    runOnUiThread { if (success) finishWithSuccess() else finishWithError("auth error") }
                 })
             } catch (e: Exception) {
-                Log.w(TAG, "startHybridConnectionFlow: ", e)
+                Log.w(TAG, "Hybrid connection failed")
                 bottomSheet?.showError()
             } finally {
                 hybridAuthenticatorController?.release()
@@ -155,11 +163,12 @@ class HybridAuthenticateActivity : AppCompatActivity() {
                     .build()
             )
             .setExcludeList(request.excludeList)
+            .setAuthenticationExtensions(HybridPrf.parse(request.extensions, true))
             .build()
 
         val browserOptions = BrowserPublicKeyCredentialCreationOptions.Builder()
             .setPublicKeyCredentialCreationOptions(publicKeyCredentialCreationOptions)
-            .setOrigin("https://${request.rp.id}".toUri())
+            .setOrigin(HybridAccountSessions.CONTEXT.toUri())
             .setClientDataHash(request.clientDataHash).build()
 
         val intent = Intent(this, AuthenticatorActivity::class.java)
@@ -167,10 +176,7 @@ class HybridAuthenticateActivity : AppCompatActivity() {
             .putExtra(AuthenticatorActivity.KEY_TYPE, AuthenticatorActivity.TYPE_REGISTER)
             .putExtra(AuthenticatorActivity.KEY_OPTIONS, browserOptions.serializeToBytes())
 
-        val result = suspendCancellableCoroutine { continuation ->
-            waitingLauncherContinuation = continuation
-            waitingLauncher.launch(intent)
-        }
+        val result = launchBound(intent, browserOptions.serializeToBytes(), request.rp.id, request.clientDataHash, true)
 
         val resultBytes = result.data?.getByteArrayExtra(FIDO2_KEY_CREDENTIAL_EXTRA) ?: throw RuntimeException("No result")
         val publicKeyCredential = PublicKeyCredential.deserializeFromBytes(resultBytes)
@@ -180,7 +186,8 @@ class HybridAuthenticateActivity : AppCompatActivity() {
         return AuthenticatorMakeCredentialResponse(
             authData = attestationObject.authData,
             fmt = attestationObject.fmt,
-            attStmt = attestationObject.attStmt
+            attStmt = attestationObject.attStmt,
+            unsignedExtensionOutputs = HybridPrf.output(publicKeyCredential.clientExtensionResults?.prfOutputs, true)
         )
     }
 
@@ -189,12 +196,13 @@ class HybridAuthenticateActivity : AppCompatActivity() {
             .setRpId(request.rpId)
             .setChallenge(request.clientDataHash)
             .setAllowList(request.allowList)
+            .setAuthenticationExtensions(HybridPrf.parse(request.extensions, false))
             .setRequireUserVerification(request.options?.userVerification?.takeIf { it }?.let { UserVerificationRequirement.REQUIRED })
             .build()
 
         val browserOptions = BrowserPublicKeyCredentialRequestOptions.Builder()
             .setPublicKeyCredentialRequestOptions(publicKeyCredentialRequestOptions)
-            .setOrigin("https://${request.rpId}".toUri())
+            .setOrigin(HybridAccountSessions.CONTEXT.toUri())
             .setClientDataHash(request.clientDataHash).build()
 
         val intent = Intent(this, AuthenticatorActivity::class.java)
@@ -202,10 +210,7 @@ class HybridAuthenticateActivity : AppCompatActivity() {
             .putExtra(AuthenticatorActivity.KEY_TYPE, AuthenticatorActivity.TYPE_SIGN)
             .putExtra(AuthenticatorActivity.KEY_OPTIONS, browserOptions.serializeToBytes())
 
-        val result = suspendCancellableCoroutine { continuation ->
-            waitingLauncherContinuation = continuation
-            waitingLauncher.launch(intent)
-        }
+        val result = launchBound(intent, browserOptions.serializeToBytes(), request.rpId, request.clientDataHash, false)
 
         val resultBytes = result.data?.getByteArrayExtra(FIDO2_KEY_CREDENTIAL_EXTRA) ?: throw RuntimeException("No result")
         val publicKeyCredential = PublicKeyCredential.deserializeFromBytes(resultBytes)
@@ -217,14 +222,34 @@ class HybridAuthenticateActivity : AppCompatActivity() {
             credential = PublicKeyCredentialDescriptor("public-key", response.keyHandle, null),
             authData = response.authenticatorData,
             signature = response.signature,
-            user = userEntity,
-            numberOfCredentials = 1
+            user = if (request.allowList.isEmpty()) userEntity ?: throw SecurityException("Missing user handle") else null,
+            numberOfCredentials = null,
+            unsignedExtensionOutputs = HybridPrf.output(publicKeyCredential.clientExtensionResults?.prfOutputs, false),
+            userSelected = if (request.allowList.isEmpty()) true else null
         )
+    }
+
+    private suspend fun launchBound(intent: Intent, raw: ByteArray, rp: String, hash: ByteArray, create: Boolean): ActivityResult {
+        val controller = hybridAuthenticatorController ?: throw SecurityException("Hybrid session expired")
+        val token = controller.issueAccountRequest(raw, rp, hash, create)
+        intent.putExtra(HybridAccountSessions.KEY_REQUEST, token)
+        try {
+            val result = suspendCancellableCoroutine<ActivityResult> { continuation ->
+                check(waitingLauncherContinuation == null)
+                waitingLauncherContinuation = continuation
+                continuation.invokeOnCancellation { if (waitingLauncherContinuation === continuation) waitingLauncherContinuation = null }
+                waitingLauncher.launch(intent)
+            }
+            HybridAccountSessions.requireLive(token, raw, rp, hash, create)
+            check(result.resultCode == RESULT_OK)
+            return result
+        } finally { controller.completeAccountRequest(token) }
     }
 
     private fun handleGetInfo(request: AuthenticatorGetInfoRequest): AuthenticatorGetInfoResponse {
         return AuthenticatorGetInfoResponse(
             versions = arrayListOf("FIDO_2_0", "FIDO_2_1"),
+            extensions = if ((application as? AccountPasskeyBackendProvider)?.accountPasskeyBackend?.supportsHybridPrf(this) == true) listOf("prf") else emptyList(),
             aaguid = ByteArray(16),
             options = AuthenticatorGetInfoResponse.Companion.Options(
                 residentKey = true,
@@ -278,6 +303,7 @@ class HybridAuthenticateActivity : AppCompatActivity() {
     }
 
     private fun finishWithError(message: String) {
+        hybridAuthenticatorController?.release()
         Log.d(TAG, "Finishing with error: $message")
         bottomSheet?.dismiss()
         bottomSheet = null

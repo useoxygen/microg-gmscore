@@ -321,7 +321,7 @@ public enum GmsService {
     APP_SET_ID(300, "com.google.android.gms.appset.service.START"),
     NNAPI_DRIVER_MANAGER(301),
     CRED_SYNC(302),
-    CHROME_SYNC_FIRST_PARTY(303),
+    CHROME_SYNC_FIRST_PARTY(303, "com.google.android.gms.chromesync.service.firstparty.START"),
     USONIA(304),
     THREADNETWORK(305, "com.google.android.gms.threadnetwork.service.START"),
     CODELAB_SEPARATE(306),

@@ -1,0 +1,622 @@
+# Native password parity acceptance drivers
+
+Part of CYC-689, CYC-690 and CYC-691. This is a runbook and debug-only native
+instrumentation. Implementation, host proof, installation and acceptance are separate.
+
+## Latest integration result: R12, October 24, 2026
+
+Services `4f809aff60` normally merges main `12dc5e21`. The sole conflict was
+version allocation: branch 49 and main 50 became **51 for both packages**
+(Services `252432051`, vending `84022651`). Independent conservation review
+approved all **398 branch-only and five main-only blobs** unchanged; the manifest
+keeps all branch entries and only adds main's `TWO_STEP_DISMISSED`.
+
+One gathered run passed **885 host tests** (434 password-sync, 13 FIDO Core,
+379 Services Core, 42 people, 17 calendar), zero failures/errors/skips, in **7m51s**.
+The primary three-module count is 826. All four Debug/Release Services/vending
+lint tasks passed with zero errors and existing warning counts 2,074/2,068/84/84;
+standalone version allocation and both v51 APK builds passed. Receipt:
+`/tmp/cyc689-parity-r12-20261024/services-gathered-results.json`.
+
+The signed product is independently verified locally: SHA-256
+`2916cfd7ffee3e59d0d3a52ee29695c248fe0e4738096af7f99c3829df8754d8`,
+127,646,581 bytes, package `com.google.android.gms`, version `252432051`.
+`apksigner` verifies one expected microG signer (`771b5899...`) under v1/v2/v3;
+all **3,286 non-META-INF entry names and payloads** match unsigned SHA-256
+`1af508adcdaceba4f68bc69be80bae203c7e8ba17fba952835170a0ce39f9404`.
+The unsigned test is byte-identical to R11 (`e3d9b125...`); the reused signed test
+`154c06a9...` was reverified with the same signer and all **85** payload entries
+identical. Receipt: `/tmp/cyc689-parity-r12-20261024/management-verified-artifacts-r12.json`.
+**v51 has no physical acceptance yet.** The last own installed Services result is
+R11 v49 `dc642be...`, with 26 passing fixture methods; that frozen physical receipt
+does not validate the new product on-device.
+
+The R11 phone snapshot is historical. Separate CYC-704 work reported installing
+Core32 `0.32.0-cyc704` at **12:40 AM PT**, followed by root-controller work until
+approximately 2 AM PT and claims recorded through 2:08 AM PT. Those coordination
+snapshots are not current ownership or paired-component proof. The previous
+Core31-to-Core32 preflight cannot authorize an update on this changed baseline;
+recheck actual version, controller, grants and ownership before further work.
+
+Core PR #1216 remains pushed source `0ba6bb459`, with its clean **3,175 JVM** and
+**196 Core Python** results and green hosted CI. The separate finite acceptance
+composition merges actual CYC-704 `5745c3fa0` with that source. Complete host
+validation at fixture-only `8f9cd762` now passed: **3,207 JVM cases** (20 protocol,
+2,020 runtime, 111 Core, 1,056 Shell), zero failures/errors/skips, **198 Core Python
+in 381.335s**, 85 Shell Python, two ShellUi Python, 21 coverage cases and the
+capability ledger. The Gradle run took 160s and built the Core33 release APK.
+Receipt: `/tmp/cyc689-parity-r12-20261024/core33-complete-host-results.json`.
+
+The complete pinned-Kotlin2.2.21 controller is **1,064,641 bytes**, SHA-256
+`6b2c21d847bc91781785303979d8ea4dccece8f97c71b8e1e489a2629adff573`.
+Signed Core33 is **29,739,664 bytes**, SHA-256
+`4a319c95800eeb1e6be77a1fc21861b842038fb142b5fae71ad5aa2001b75f68`,
+with expected signer `4d82c26c...` and all **136** tested non-META-INF entries
+identical. It is **not installed**. The five image product scopes and controller
+trees stay at `09098dc8a`; this outside-PR composition does not change PR #1216
+or establish paired-component/device acceptance. **All eight PR31 hosted checks
+succeeded at `cfd00cb21d8c7fa4f1ecf2d343d19b07082c3d5f`**, including four
+Debug/Release Gradle jobs and CodeQL/analysis. The recorded snapshot at that exact
+head is **CLEAN/MERGEABLE**; later heads require fresh checks. This is neither a
+merge nor device-acceptance claim.
+
+The isolated image clone `cyc680-image-20261024` has all **57 immutable downloads
+(approximately 524 MB)** generation/size/SHA verified and uploaded. All **1,246
+archived pins are restored** and the staged five-scope patch is parent-verified
+byte-identical to Mac `31e1d5e2f5466018f302e4cd1f2a858e3cefadad`. Adoption of that
+real source **passed**, with clean tracked source and equal index/full tree
+`b7679d57e33220f19fc6b31f37b8c111e8ed36ef`.
+
+The honest baseline launcher rebuild at actual `31e1` passed in **2m58s**, with
+all **11 native libraries**. Its APK is 47,286,381 bytes, SHA-256
+`c20c73e51c5b560d772fc498aecd8a626c960bf64d95303c2323c9588078c026`.
+Receipt: `/tmp/cyc654-parallel/cyc680-baseline-launcher-20261024/launcher-build-receipt.json`.
+Ten exact baseline DEBs (23,954,712 bytes) came from copied owned-cache inputs;
+managed caches were not written. Keep the launcher native `.so` inventories
+separate: **11 archived lynx baseline, 14 installed private launcher, 16 latest
+Akita**. These are not package counts or DEB counts. Preflight found five inherited
+untracked partner-GMS staging APKs, with exact-byte/hash preservation outside the
+new clone. Launcher transfer passed for **13 files**, replacing only the APK and
+source receipt; all 11 native libraries were unchanged and the backup was verified.
+Fifteen inherited 163-byte AppleDouble sidecars (2,445 bytes total) were hash-preserved
+outside the prebuilt tree before transfer. Adoption/transfer logs are
+`image-product-adopt.log`, `image-launcher-apply-r2.log` and
+`preserve-launcher-appledouble.log` in the R12 receipt directory.
+
+The first image attempt **started at 1:23 AM PT**, build **1792830218**, and ran
+**17m32s to 7,789 steps with zero compiler failures**. It was intentionally stopped
+only to remove the explicit `-j2`: the parent freshly verified its own eight-member
+process group, sent one SIGINT and let normal Soong cleanup finish. The worker sent
+no signals.
+
+The **same source and build number resumed at 1:42 AM PT**, using normal
+`heavy-entry` admission: **32 default workers**, CPUWeight 100 fair share, no
+per-build hard CPU/memory quota and the same clone guard. Completed outputs were
+retained and `installclean` was **not repeated**. The build is still running;
+`image-build-launch.json` and `image-build-resume-launch.json` are **requests, not
+build-success evidence**. The initial attempt is in `image-full-build.log`; normal
+budget/source readback is in `image-build-budget-assessment.json`.
+Twenty-one original pinned ignored inputs were restored. Normal environment setup
+regenerates five unused partner-GMS/APK downloads; Cyclon modules override all
+three GMS modules and FDroid is excluded. Final unsigned and signed target-files
+provenance must still verify **three pinned partner APKs**—GmsCore version
+`252432043`, FakeStore and GsfProxy—plus **six GMS native ELF files**. No
+completed/signed/installed/published image or physical policy overlay is claimed.
+
+The official API 37 Google APIs ARM64 revision-8 static follow-up completed at
+**3:37 AM PT**. Its signed GMS APEX contains the exact r6 GMS base APK,
+SHA-256 `f386bff2feb0520656ae2ff5b1a75b95d6ab8d472a2dc50b60d709853cf348e5`,
+version `261136035`; all **nine complete APK member maps, including nested
+archives**, match the retained r6 reference. Source-aware inspection classified
+the remaining APEX manifest, privileged-permission and user-install policy XML,
+empty resource table and generated license notices. No new producer/schema for
+the five internal Passwords RPCs was found. The Google Play revision-8 EROFS
+continuation remains **pending**. This static result neither establishes
+whole-SDK/all-APEX equality nor cohort, account or provider acceptance. See
+[the bounded contract investigation](../passwords-rpc-contract-gaps.md#official-api-37-google-apis-arm64-revision-8-follow-up).
+Keep the earlier missing-base/ext4 refusals and original machine comparison
+unchanged; the separate classification receipt is
+`/tmp/cyc689-parity-r12-20261024/rpc-source-leads/management-scan5-erofs-metadata-assessment.json`.
+
+The R11 and R10 records below remain frozen. Five private RPC contracts, real
+cohorts, provider/official-client, family, cross-device and physical Core-fill
+acceptance remain open; full parity is false.
+
+## Preserved R11 gathered and physical receipt: October 24, 2026
+
+Services `3c9f9eef` / test `c2a1eb33` passed **878 host tests** (434 password-sync,
+13 FIDO Core, 372 Services Core, 42 people, 17 calendar), zero failures/errors/skips,
+all four Services/vending Debug/Release lint tasks with zero errors, and both APK
+builds. Primary count 819 excludes people/calendar. Existing warnings remain;
+minSdk19, permissions/runtime enforcement and the no-baseline policy are unchanged.
+The source fixes preserve strict Base64, genuine R2 availability, full pre-30 Wi-Fi
+copies and explicit forwarding of the two Java default callbacks caught by regression.
+
+Signed product `dc642be89cdf2c04e1accffb95509d5982ef68d439cf544fb2833e1ae7b666c1`
+(132,356,981 bytes) is installed and verified. Matching signed test
+`154c06a97abcb9623b11762f5ddf3253064e98b08208d6a36e84d71a0a927625`
+(2,113,688 bytes) ran and was removed. Expected certificates and all **3,286/85**
+non-META-INF entries match tested unsigned payloads. The first streamed installation
+timed out; old hash/bytes and no active sessions were reconciled before a fresh
+explicit no-streaming attempt succeeded. No unknown-outcome automatic replay occurred.
+
+The physical selection passed **26/26**: 22 ordinary methods plus four flags-authority
+regressions, no failures/skips. Separate cached inventory passed with one stable
+candidate and zero readable/approved/sharing/blocked/unreadable counts; this is not
+peer-absence proof. Flags admission refused before provider calls/enablement; no
+Google assignment was accepted. Keep those outcomes separate rather than reporting
+an all-passing admission batch. The exact R10 physical/test sources below remain
+historical; these R11 results apply to the new signed product/test pair.
+
+A separate chat reported a GMS remove/reinstall at **11:44 PM PT on October 23**, with UID `10143` → `10237` and all GMS local accounts/check-in/push/settings/credential-provider data erased; a same-label account was readded at 11:54 PM PT. This preceded R11. Its account-label reuse does not establish stable cloud identity, and no GMS-data or provider-state continuity from R10 is claimed. R11 inventory zeros describe post-reset local readiness, not cloud-password absence or proof about a second account. The owner/five-setting comparisons below apply only within R11.
+
+Core `0ba6bb459` merges main `d0be4887a`. Clean **3,175 JVM** (20 protocol,
+1,988 runtime, 111 Core, 1,056 Shell), **196 Core Python in 567.827s**, 85 Shell
+Python, two ShellUi Python, 21 coverage and ledger checks passed. Selected hosted
+CI is green; skipped Android lanes rely on that separate manual run. Complete
+Kotlin2.2.21 controller SHA-256 is
+`9f63cd0d2c48e5c0f9df57df352fd02829466a2afaf31f918c50350ea0cc2701`.
+Core32/r5 is signed (`8b7eaa2ddda01fba8e3d52b7e68f5547e6d604fa34b1c445406578a6680f46af`,
+29,706,896 bytes), all 136 payload entries identical; guarded read-only update
+preflight passed. **Core32 and its matching controller were not installed or accepted.**
+
+Donor full-lynx `selinux_policy` compilation passed in **7m32s**, with normal
+neverallows and no ignore/`-N` waiver. The exact a348 TE SHA-256
+`fede8ef656e794df3f9a5440cb8e38ce968610724b33a3f53001fbe6287eba20` is unchanged
+at 0ba. Product CIL `aeae3df449020a6b1170f3070995e8ef19f72ccc2f28f8317cfe52553ba37822`
+contains both direct finds; combined policy is
+`c4dc0a44c13d4d8cde95f49d1c6fbaba7f1f82a450207de844446a052fe30cbd`.
+Earlier mismatch names were samples; exact archived-baseline review found **31**
+donor differences. The 1,246-pin lynx manifest, signed target-files fingerprint and
+controller were verified; 36 generation/SHA-pinned bundles cover all 30 missing
+pins and base objects are available. This advances build preparation only: no
+matching image was assembled/accepted and no physical policy overlay was applied.
+Never flash Akita artifacts on lynx or equate APK/JAR changes with image grants.
+
+Final **12:21:36 AM PT** readback retained new Services and verified unchanged
+Core31/original controller `3b32...`, owner181/SHA`6ff4...`, five raw settings,
+R11 boot, adbd2000, enforcing SELinux/verity and absent test packages. There was
+**no R11 Core/controller/policy change or native-fill attempt**. All three scoped
+claims (`c6d133b`, `c21ca12`, `a50b6b5`) were released; claim status is empty.
+Future paired-component/device work requires fresh ownership and component checks.
+PR1166 merged `335c8a47` on October 23 at 11:57 PM PT; broad CYC-651 is still open.
+Five RPC contracts, real cohorts, provider/official-client, family, cross-device
+and physical Core-fill acceptance remain open.
+
+Receipts under `/tmp/cyc689-parity-r11-20261023`: `services-gathered-results.json`,
+`verified-artifacts.json`, `android-gathered-results.json`, `device-after.json`.
+The donor compilation receipt remains
+`/tmp/cyc654-parallel/cyc680-policy-result-a348f600b.json`.
+
+## Preserved R10 gathered and physical receipt: late October 23, 2026
+
+The following records the R10 handoff snapshot. It is not a current device
+readback or acceptance of the newer R11 artifacts.
+
+Services runtime `97f5` passed 809 host tests (434 password-sync, 13 FIDO Core,
+362 Services Core) and both APK builds. Matching test source `97f5` passed the 22
+physical Android fixtures. Later test-only source `0c376a85` supplies the separately
+recorded flags-selection checks. Cached peer inventory passed with zero enabled/readable
+candidates; this does not establish absence of eligible accounts or peers. Four
+flags-selection regressions passed, but the one cached-only account admission
+failed before any HTTP or vault enablement. Real server assignments remain unaccepted.
+
+Native framework save to **On this device** and exact local cleanup passed: the
+first cleanup deleted one exact synthetic row, and the recreated row's final
+cleanup also deleted one, with unrelated local entries unchanged. The exact row
+is absent now. Physical Core fill commands were dispatched, but native PREPARE
+refused at fixed stage `service_lookup`, `precondition_failed`, effect `none`;
+no picker or credential delivery followed. This does not supersede R9's owned-
+emulator-only positive fill and receiving-process fence/restart scope.
+
+Core code `de4af35bd` (documentation head `a348f600b`) adds staged diagnostics,
+explicit live-controller `native_password_v1` admission, bounded capability
+discovery and source-only `trust_service` /
+`notification_service` lookup grants. Protocol 3 alone does not establish native
+fill support. The installed CIL has direct user/power/window lookup grants and
+no explicit trust/notification grants; broad missing-service logs were not scoped
+to the controller PID and are supporting clues only. No physical policy overlay
+changed, and there is no matching image policy build or acceptance. APK/JAR-only
+updates cannot install the required image policy.
+
+The public dependency proof was read offline from the official API 37 Google APIs
+ARM64 SDK image, logical system path `/system/framework/framework.jar`, extracted
+SHA-256 `cfd8c422620cf584b5f190d8e5a211b83468a5ffd2bdb5cad1e0e410a22f30d8`.
+Recovered `KeyguardManager` fields eagerly call `getServiceOrThrow` for trust and
+notification services (local extracted lines 81/82), before its constructor body
+at line 293; `isDeviceLocked` calls TrustManager at line 333. Whole-class JADX had
+one error; do not describe the full class as cleanly decompiled. No system-image
+hash was measured and none is inferred from the extracted JAR hash.
+
+Clean compatibility composite `77ee09217` preserves installed Core 29 baseline
+`70ab` / #1231. Earlier full Python validation passed 195 cases in 430.108 seconds.
+The gathered JVM run had 3,168 passes and one stale `ui.collect` description-fixture
+failure out of 3,169; regenerated compatibility `61bc` then passed the normal
+focused case, with no floor waiver. This is not a repeated clean full-JVM run.
+The two Python capability cases passed (45 native / five Java-producer scenarios).
+The final focused run passed 12 runtime cases and the normal catalog fixture,
+and the Core 31 release APK built. Probe cases cover hung connections, overlapping
+requests, endpoint replacement, interruption and refusal of late positive results.
+
+Core 31 `0.17.0-cyc689-password-parity-r4` was signed and installed, APK SHA-256
+`6569ae37c5d9cc22e63fda39dcdbb394c5c6bc0c2dba5676711f890a2e82b0a4`.
+All 136 non-META-INF entries match the tested unsigned APK. Against the restored
+original controller, the default catalog omits native fill and the all-tools row
+reports `missing_grant` only for `ui_controller:native_password_v1`. Owner status
+and the previously failed operation receipt are unchanged. This is positive
+legacy-controller refusal acceptance; physical native fill remains unaccepted.
+
+The original image controller SHA-256
+`3b32bfed839417edd052f3248b3d21284e03e65eedb2cbad5f934e60265d0457`, enforcing
+verity, enforcing SELinux and adbd UID 2000 are restored and verified. Five raw
+settings match; the exact synthetic row is absent. The password probe, Services
+test APK, Core-status fixture and our CorePump directory were removed and absence
+verified. Core 31 remains installed. All of this chat's phone claims are released;
+the final scoped claim was released at 11:04 PM PT.
+
+All broader Google-provider/official-client, family, cross-device, five-private-RPC
+and actual server-assignment acceptance remains open.
+
+## Historical receipts through the 8:15 PM PT handoff
+
+The earlier password PR runtime was `e2246006`: 799 host
+tests and six bridge tests passed, and the Services 049 product and
+instrumentation APKs built. The earlier 604-test result at `dece944d` is historical.
+Historical PR source `c22687a5` added only the local-probe cleanup instrumentation;
+it does not change that runtime or its 799-test result.
+The companion Core/Shell full JVM run passed 3,169 tests at compatibility source
+`bc551b8f5`. The 194 Python passes combine discovery and six repaired modules;
+they are not one clean full-suite run. The later focused 16-scenario regression
+passed at composite `3d71613ce`, carrying Core PR source `8ec5d0630`; it does not
+represent a repeat of all 3,169 JVM tests at that source.
+The Google-account selection, family and recovery acceptance drivers compiled
+but have not been executed; no Google-account or family round trip is accepted.
+
+The separate CYC-700 compatibility runtime `5af4d461` merges password source
+`73f8c33f` with exact CYC-700 source `dd935664`. It passed 843 host tests
+(434 password-sync, 13 FIDO Core, 396 Services Core) and both APK builds. Its
+signed Services 049 product SHA-256 is
+`bb89205f4bf531ff1a9774da05b55d33918d16dbeb1e077a9f15422c61af8e93`.
+The cleanup fixture at test source `068c7924`, signed SHA-256
+`8b1dff4319bf8a842c24247fcec04e9099f936e4a12b6b31e258bdb90a9f7e96`,
+passed the 22 ordinary Android cases and the local-probe absence method with
+that product on the owned API36 image. Core native fill was not rerun against
+this combined runtime. The earlier R9 fill receipt below applies to `e2246006`.
+
+Before the CYC-700 merge, all 22 ordinary Android fixture cases passed on the
+owned API36 AOSP image at the earlier baseline and again with the factory/updated
+`e2246006` Services 049 setup.
+The second result consists of 21 cases plus the remaining case selected with its
+corrected class selector. The native callback probe passed four boolean checks;
+the protected picker launched and owner cancellation passed. An earlier
+operation-cancel case returned UNKNOWN with the native field empty. A previous
+selected-row attempt returned REFUSED with an empty field and no journal entry;
+the controller-readiness handoff was repaired before R9.
+
+The Core 28 APK uses compatibility source `bc551b8f5`, carrying the CYC-677
+`5042e184` base plus the password-fill fixes, preserving the #1207 baseline.
+The R9 controller composite was `3d71613ce`, carrying Core PR source `8ec5d0630`.
+The earlier `271d62003` was a
+source revision, not a PR number.
+
+R9's local native fill succeeded: the Core operation reported succeeded,
+effect applied and `filled=true`; the receiving fixture reported
+`matchesSyntheticSeed=true` and `empty=false`. All four framework-only receiver
+probe booleans were true. Subsequent Core observation and screenshot requests
+were refused with `native_password_private`. Input using the old pre-fill
+observation was refused with `stale_observation`; this is stale-observation
+proof, not direct proof of the native input fence.
+
+The exact manual root controller restarted from PID 7370 to 7863 with the same
+JAR SHA-256 prefix `3314967007`. The receiving fixture stayed at PID 6323, retained its
+matching/nonempty booleans, and a fresh Core UI-open request was still refused
+with `native_password_private`. This proves the recorded local receiving-process
+fence survived that controller restart. The exact local synthetic row was deleted
+through the native manager; the temporary probe and instrumentation were uninstalled,
+owned sessions/controller were stopped, and the owned emulator was shut down. Account
+count remained zero and the shared SDK system-image checksum stayed unchanged.
+These R9 local-image results alone do not establish physical-device, Cyclon init-domain
+SELinux or Google-provider parity.
+
+The parent owns device discovery, reservation, artifact signing, installation,
+provider calls and results. The earlier physical batch finished and reservations
+`c48761a` / `ac092ee` were released on October 23 at 8:15 PM PT. This chat holds
+no continuing phone claim from that handoff; the other chat then had the next 30-minute priority window.
+Refresh ownership and installed-component evidence before any further action.
+
+The physical Pixel retained Core 28 and Services 049 at handoff; neither app was
+downgraded. Core passed its strict installation preflight and package postflight;
+its APK SHA-256 is
+`a93a3aebc0bd096e8ef4ad96c5b69b3979c9534f30a4d9c25d461921c75c4ad7`.
+Installed Services uses runtime `e2246006`, signed APK SHA-256
+`2b3c079dd635f20fa53950ff2a23bbe181e285145ed6f73df76ae88d676245a0`.
+The Core owner-status file remained exactly 181 bytes, SHA-256
+`6ff41c6b9ec43e2a7cac181a1a76d67635241e11a3b2667101b0570f431b5e81`,
+through installation and reboots.
+
+All 22 ordinary Android fixtures and both unique
+`PasswordLocalProbeCleanupAndroidTest` methods (absence and cleanup) passed on
+the physical phone. The signed cleanup test APK at source `c22687a5` has SHA-256
+`b718ac5a3bd427cacae31a2399aaf5fd25ce3891a1a717753bdfb4358e42563b`.
+The first absence attempt was interrupted by an overlapping 22-case launch and
+its instrumentation process crashed; a separate standalone rerun passed. That
+interrupted attempt is not an additional passing case.
+
+The framework save UI opened, but the native helper could not find the
+“On this device” label. It selected nothing and cancelled. No synthetic local
+credential was created, no physical Core fill was dispatched, and no physical
+fill success is claimed. Cleanup reported `exactLocalProbeDeletedCount=0`,
+confirmed absence and unchanged unrelated local credential bytes; this is not
+positive-deletion proof. No Google-provider/account or family drivers ran.
+
+For the controller procedure, verity was temporarily disabled and the candidate
+SHA-256 `3314967007706066830610a74780a979bb1af9e977e5db411f3663387903a87b`
+was installed at `/system_ext/framework/cyclon-ui-controller.jar` with root
+ownership, mode 0644 and `u:object_r:system_file:s0`. It persisted across reboot
+and ran through the actual init service in `u:r:cyclon_ui_controller:s0`.
+Global SELinux was Enforcing; VM analysis of the kernel policy also verified
+that this domain was not permissive. This is controller-domain evidence without
+a physical fill or privacy-fence acceptance claim.
+
+Handoff restored the original image controller SHA-256
+`3b32bfed839417edd052f3248b3d21284e03e65eedb2cbad5f934e60265d0457`,
+its mode/context, enforcing verity and a reboot; adbd returned to UID 2000.
+The password probe, test APK, Core status probe and this chat's temporary remote
+JAR directory were removed. Preferred service was returned to None;
+`credential_service` was restored empty and `credential_service_primary` to
+`null`, matching their original observations. `autofill_service` ended at
+`null`; its original raw value was not captured, so only the original preferred
+None UI observation is available for that setting. The authoritative local
+handoff receipt is `/tmp/cyc654-device-batch/physical-transition.json`.
+
+Historical physical evidence remains separate: the earlier October 23 baseline
+was Services `cf93b15`, Core 26 `cyc677-ident` / CYC-677 source `5042e184` and the
+image controller. An earlier acceptance build combined that source with
+password-fill head `5d5551a90`. The 7:22 PM PT wireless read found CYC-700
+Services 048 labeled `dd93566`; the other chat subsequently restored Services
+044 before this physical batch. The combined CYC-700 049 build was therefore
+not installed on that restored phone. `c07be00` was the other chat's earlier
+CYC-700 claim ID, not a Core source revision. The earlier manual-controller
+baseline is historical. The connected Pixel 8a is a release/user Cyclon Services
+phone with four accounts that do not match the approved primary test account,
+and has no installed Chrome. It is not an approved second test account/device
+or an official GPM peer merely because it is connected.
+
+## Native selection, with labels only on the host
+
+The debug APK contains a private `PasswordAcceptanceAccountActivity`. Release
+products do not contain it. A host chooses a random run UUID and role label;
+actual account names and stable Google IDs stay in an encrypted no-backup store
+on the phone. The receipt requires the same installed account, stable Gaia ID,
+boot, run/role and a 30-minute monotonic lifetime. It cannot adopt a removed and
+re-added same-name account. Debug journals use a separate encrypted root so
+normal passkey cleanup cannot erase interrupted synthetic cleanup evidence.
+
+Primary selection automatically recognizes exactly one already-enabled local
+vault containing the existing approved synthetic realm
+`https://cyc651.example.invalid/` and username `cyc651-synthetic-user` with a
+nonempty password. It does not make a network request, enable sync, initialize a
+vault or choose a different account. Ambiguous selection uses the secure native
+picker. A family role automatically recognizes only another approved fixture;
+otherwise the owner explicitly selects a synthetic test account in that picker.
+An eligible family member is not automatically assumed to be a synthetic account.
+
+Use the target and instrumentation component verified for the matching signed
+artifacts. These commands are templates to run only in the reserved window:
+
+```sh
+ACCEPTANCE_RUN="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+ACCEPTANCE_TEST_COMPONENT=com.google.android.gms.test/androidx.test.runner.AndroidJUnitRunner
+ACCEPTANCE_TEST_CLASS=org.microg.gms.passwords.PasswordParityAcceptanceAndroidTest
+
+adb -s "$ACCEPTANCE_SERIAL" shell am instrument -w -r \
+  -e targetProcess com.google.android.gms:ui \
+  -e class "$ACCEPTANCE_TEST_CLASS#selectApprovedSyntheticAccountEntirelyOnPhone" \
+  -e passwordAcceptance cyc689-native-selection \
+  -e passwordAcceptanceRun "$ACCEPTANCE_RUN" \
+  -e passwordAcceptanceRole primary "$ACCEPTANCE_TEST_COMPONENT"
+```
+
+Keep the same run UUID for subsequent commands. Re-run selection if its receipt
+expires. A fallback picker accepts only a private, one-use in-process request;
+blocking vault/file reads and saves run off the UI thread, with fresh owner and
+generation checks before publication/result. There are no mutable account extras or exported selection component. All status
+fields below are booleans or counts. The tests catch native failures without
+printing account names, tokens, credential bytes or remote response bodies.
+
+## Discover actual prerequisites before mutation
+
+Run each named readiness method with the same target process and run UUID:
+
+| Method | `passwordAcceptance` | What it actually reads |
+| --- | --- | --- |
+| `readActualFamilyEligibilityAndNativeRecipientMatchingWithoutSending` | `cyc690-readiness` | Real family recipients/current sharing keys; eligible, installed and approved-fixture recipient counts; pending invitation count. Sends nothing. |
+| `readActualSyncedPasskeyAndRecoveryReadinessWithoutEnrollmentOrSigning` | `cyc691-readiness` | Fresh real passkey snapshot, current `hw_protected` availability, secure-lock state, dedicated Vault API configuration presence, RECOVER_KEYSTORE grant and reflection API visibility. Enrolls/signs nothing. |
+
+For example, substitute the desired method and acceptance flag in:
+
+```sh
+adb -s "$ACCEPTANCE_SERIAL" shell am instrument -w -r \
+  -e targetProcess com.google.android.gms:ui \
+  -e class "$ACCEPTANCE_TEST_CLASS#readActualFamilyEligibilityAndNativeRecipientMatchingWithoutSending" \
+  -e passwordAcceptance cyc690-readiness \
+  -e passwordAcceptanceRun "$ACCEPTANCE_RUN" "$ACCEPTANCE_TEST_COMPONENT"
+```
+
+Configuration presence, reflection visibility, account counts and a successful
+GET are readiness evidence. They do not prove backend admission for a mutation,
+OS recovery execution, passkey signing or restoration. Do not copy another
+service's API key. Affiliation and Vault require their dedicated configuration;
+only its presence boolean may be reported. The candidate/image must retain the
+actual required grants, including the privileged READ_WIFI_CREDENTIAL image grant
+for Wi-Fi and RECOVER_KEYSTORE plus package-specific hidden-API access for OS
+recovery. The current target-29 Wi-Fi caller also needs owner-granted precise
+location, enabled Location, and allowed precise-location/Wi-Fi-scan app-ops.
+NETWORK_SETTINGS is signature-only and cannot be supplied by a privapp allowlist;
+it is not a required substitute for this location path. An APK update cannot
+provide the privileged image grants or the controller JAR.
+
+## Real two-account family round trip
+
+This requires two actual synthetic Google accounts in the same family, both
+already opted into password sync, with authenticated metadata and sharing keys.
+They may be on the same reserved phone. The native family list must identify the
+second selected account's exact Gaia ID and current eligible recipient key.
+No account or family is created by the harness. If no suitable account exists,
+Google's genuine account/family setup is a remaining resource prerequisite.
+Never select one of the Pixel 8a's unknown accounts as a substitute.
+
+Select role `family` using the selection command above. The picker stays native
+when the second account has no existing approved fixture. Then invoke:
+
+```sh
+adb -s "$ACCEPTANCE_SERIAL" shell am instrument -w -r \
+  -e targetProcess com.google.android.gms:ui \
+  -e class "$ACCEPTANCE_TEST_CLASS#realFamilySendAutomaticReceiveAndExactSyntheticCleanup" \
+  -e passwordAcceptance cyc690-family-roundtrip \
+  -e passwordAcceptanceRun "$ACCEPTANCE_RUN" "$ACCEPTANCE_TEST_COMPONENT"
+```
+
+The driver refuses preexisting pending mutation/sharing journals or initial
+receiver invitations. Use dedicated synthetic accounts and an exclusive window
+with no concurrent invitations or credential edits: the real automatic receiver
+processes its account batch. The test:
+
+1. Binds both current vault birthdays and checkpoints unrelated record digests
+   natively before effects. It clones only the approved synthetic credential into
+   a unique per-run synthetic identity, leaving the approved original untouched.
+2. Commits that source copy through the real repository, refreshes family
+   eligibility/key and invokes the actual native sharing send. The production
+   launch journal must acknowledge it.
+3. Uses the actual automatic receiver; requires its COMPLETE receipt for that
+   invitation GUID, exact five-field identity/password readback and invitation
+   acknowledgement. A server ACK alone does not satisfy native import.
+4. Compare-and-deletes only those exact two introduced rows, requires complete
+   absence/no pending changes, and verifies every preexisting credential unchanged.
+
+A failure retains the encrypted cleanup checkpoint. Re-running the start method
+refuses it; it never repeats an uncertain send. Invoke `finishApprovedIncomingAndCleanupAfterInterruptionWithoutResending` with
+`passwordAcceptance=cyc690-finish-receive-cleanup` for bounded recovery. Before
+send, it can cancel only a durably QUEUED clone creation or delete a positively
+identified committed clone; launched/uncertain creates remain fenced. If a process
+died after send acknowledgement but before saving the caller receipt, recovery
+requires exactly one COMPLETE sender journal matching the saved parent, tag,
+recipient and full source digest. Unknown/ambiguous sends remain pending and are
+never replayed. Known incoming/cleanup can then finish. Absence requires both no
+pending mutation and no authenticated committed record, even when an optimistic
+DELETE already hides a row. Do not clear journals, force a retry, or delete
+possible future delivery evidence.
+
+This is a real new-import/ack/cleanup case. It does not by itself accept duplicate,
+conflict, invalid-sibling, notification or same-sender-update matrices. Those
+retain their separate source/host proof until genuine native cases are run.
+
+## Existing executable native checks
+
+`PasswordNativeSyncAndroidTest` and `PasswordOfficialClientAndroidTest` now accept
+`passwordAcceptanceRun` instead of an account-name argument. Keep their existing
+explicit case/mutation opt-ins and select individual methods. Their legacy
+account-name arguments remain compatible; new runs should use the native handle.
+The ordinary suite does not perform these live calls without its opt-ins.
+The official-client phone-local comparison remains documented in
+[official-password-reader.md](official-password-reader.md). A local self-read is
+not the independent official-client comparison.
+
+Core's `android/Core/dev/passwordprobe/README.md` at historical companion source
+`75613fc4a` supplies the executable API34+ local-credential native fill fixture,
+boolean-only status provider and privacy/Stop/controller-restart matrix. Its
+`android/Core/dev/updates.md` protects the selected target, signer, version,
+privileged image origin and update authority. Preserve its full controller/image
+component requirements; do not replace a live controller or treat an APK-only
+update as acceptance. The latest explicit capability and matching-image policy
+requirements above also apply; the old source reference is not current acceptance.
+
+## Cross-device passkeys and restoration
+
+CYC-691 needs an explicitly approved second device and the same actual synthetic
+account, plus a genuine RP transaction. This source adds a native readiness GET;
+it does not create an unverified RP or call raw `vault.create`/`withSecret` and
+label that Credential Manager interoperability. Required connected paths are:
+
+- First device: actual Credential Manager or permitted Chrome/legacy/hybrid
+  registration at a real HTTPS RP, selecting the native synthetic account.
+- Second device: genuine same-account key restoration with private OS/PIN/Google
+  owner verification, followed by actual RP authentication using the recovered
+  synced credential. Compare actual server-verified login and public registration
+  identity natively; never copy keys, cookies, passwords, RAPT or app data.
+- Exercise wrong-account/domain/epoch, cancellation, rotation and replay refusal
+  separately. Do not reset an account-wide domain or mutate personal credentials.
+
+A stock official-client peer could provide stronger independent interoperability,
+but no such peer is currently designated. A second Cyclon device must have a
+safe signer/image setup and the actual approved test account; connected hardware
+alone does not meet those requirements. An owned native RP also requires actual
+caller certificate/Digital Asset Links proof. A caller-supplied website string
+or a fabricated Chrome identity never supplies that authority.
+
+## Gathered host validation
+
+The parent should gather the changed sources and run the full suites and both
+APKs once:
+
+```sh
+./gradlew :password-sync:test :play-services-fido-core:testDebugUnitTest \
+  :play-services-core:testMapboxDefaultDebugUnitTest \
+  :play-services-core:assembleMapboxDefaultDebug \
+  :play-services-core:assembleMapboxDefaultDebugAndroidTest --continue
+```
+
+Record source/fixture hashes, actual target labels, signing/image gates, which
+native methods ran and their boolean/count receipts. Keep implemented,
+host-tested, built, installed and device/provider accepted as separate states.
+
+## Current R13 prerequisites and capacity blocker: October 24, 2026
+
+This appended record updates the current status without changing the frozen
+R10/R11 or R12 receipts above. The initial 31e1/build1792830218 image completed
+normally at **4:11 AM PT**, unsigned and uninstalled. Its factory Services43
+requests neither `RECOVER_KEYSTORE` nor `READ_WIFI_CREDENTIAL`; an APK update
+and image allowlist cannot establish that missing factory permission authority.
+The initial image is therefore superseded for this acceptance plan.
+
+The genuine replacement is product **d8ccadcf4e70acf953c41d4d70439592001b796b**,
+intended build **1792841434** (chosen **4:30:34 AM PT**), with only the Services
+source pin and partner APK lock changed. Normal clean release-pair production
+passed with 42 people tests; the full host suites were not repeated. Normal
+activation verified RELEASE Services51 SHA `9849515311ae...` and FakeStore51 SHA
+`1fe89fc2ae48...`, preserving the dedicated 771b signer, signed GsfProxy 568c,
+framework overlay and all six arm64 ELF bytes. The actual new launcher build
+passed in 13s with clean d8cc identity, APK42421616/source receipt ac4a0833 and
+all 11 original native libraries unchanged. Core/component 8f9cd762 is unchanged.
+
+Parent source staging passed at **4:41:21 AM PT**: the actual product and launcher
+receipt, owned three-file release cache and normal preparation all verified. The
+complete superseded target-files archive was backed up and verified at
+4,311,614,269 bytes/SHA `fc69e4e8c88f1502be084197c413b8101c13b9fdc517cab16fee64f9026d5c40`.
+R13 build/sign/offline helpers are independently APPROVED, with plan manifest
+SHA `313950dc58f051e3f699cf0f7bfaf3e52b31a94c6a6f31b4217dab9ecc1f542b`.
+Their remote transfer and image rebuild have not run: the VM terminated after
+staging, normal shared32 and supported parallel64 restart both returned
+`STOCKOUT`, and the original shared32 was restored stopped. No R13 phone action
+or claim occurred. The R13 image is **not built, signed, installed or accepted**.
+
+After normal capacity returns, parent must first complete the guarded cached
+source-policy/target-files build, normal signing and offline OTA/controller-domain
+verification. A prepared helper or completed source staging is not loaded-policy
+or paired-component evidence. A later device batch still needs a fresh owner
+claim, actual boot/component/signer/hash/grant readback, nonpermissive controller
+domain proof and real UID2000 before functional acceptance. Preserve existing
+owner policy, screen lock, account opt-out and receipt expiry; no PIN setup or
+unknown-account adoption is authorized by this record. The known factory RELEASE51
+and known same-source DEBUG51 acceptance APKs remain distinct. Any finite exact
+equal-version transition requires its separately reviewed artifact-bound installer;
+this section grants no generic same-version retry or unknown-outcome replay.
+
+Keep the 26 local fixture methods separate from cached inventory, flags-only
+admission, real provider calls and physical native-fill/privacy/cancel/restart
+proof. Cached readiness cannot supply a missing approved fixture, family account,
+peer device or actual server cohort. Those resource/provider prerequisites and
+the five private RPC contracts remain open. The completed APIs r8 and Play r8
+static inspections do not establish runtime acceptance; the additional Kids
+producer-inspection plan is approved but unexecuted. R13 receipts are under
+`/tmp/cyc689-parity-r13-20261024/`; no earlier receipt has been relabeled.

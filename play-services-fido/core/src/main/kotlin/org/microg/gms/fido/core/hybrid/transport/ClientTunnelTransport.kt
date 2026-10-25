@@ -30,7 +30,6 @@ class ClientTunnelTransport(val eid: ByteArray, val randomSeed: ByteArray, val c
         val tunnelId = CryptoHelper.endif(ikm = randomSeed, salt = ByteArray(0), info = byteArrayOf(2, 0, 0, 0), length = 16)
 
         val webSocketConnectUrl = buildWebSocketConnectUrl(domainId, routingId, tunnelId)
-        Log.d(TAG, "startConnecting: webSocketConnectUrl=$webSocketConnectUrl")
         if (websocket == null) {
             websocket = TunnelWebsocket(webSocketConnectUrl, this)
         }
@@ -56,14 +55,13 @@ class ClientTunnelTransport(val eid: ByteArray, val randomSeed: ByteArray, val c
     }
 
     override fun error(error: TunnelException) {
-        Log.d(TAG, "error: ", error)
+        Log.d(TAG, "error: ")
         callback.onSocketError(error)
     }
 
     override fun connected(response: Response) {
         val pt = decryptEid ?: decryptEid()
 
-        Log.d(TAG, "connected: $pt response: $response")
 
         val socketHashKey = CryptoHelper.endif(ikm = randomSeed, salt = pt, info = byteArrayOf(3, 0, 0, 0), length = 32)
         callback.onSocketConnect(websocket, socketHashKey)

@@ -22,6 +22,8 @@ import org.microg.gms.auth.folsom.ui.GenericActivity.Companion.EXTRA_OFFER_RESET
 import org.microg.gms.auth.folsom.ui.GenericActivity.Companion.EXTRA_OPERATION
 import org.microg.gms.auth.folsom.ui.GenericActivity.Companion.EXTRA_SECURITY_DOMAIN
 import org.microg.gms.auth.folsom.ui.GenericActivity.Companion.EXTRA_SESSION_ID
+import org.microg.gms.auth.folsom.utils.FolsomDomainPolicy
+import org.microg.gms.auth.folsom.utils.FolsomMemberPages
 import org.microg.gms.gcm.createGrpcClient
 
 const val ERROR_CODE_NO_KEYS = 38500
@@ -85,8 +87,14 @@ fun Context.buildKeyRetrievalStatus(
     offerReset: Boolean,
     block: (PendingIntent?) -> Status
 ): Status {
+    require(FolsomDomainPolicy.valid(domainId))
+    val accountId = folsomAccountId(accountName)
     val intent = Intent(this, GenericActivity::class.java).apply {
+        // Immutable tickets for different account/domain sessions must not overwrite one another.
+        data = android.net.Uri.Builder().scheme("microg-folsom").authority("recovery")
+            .appendPath(accountId).appendPath(domainId).appendPath(sessionId).appendPath(operationType.toString()).build()
         putExtra(EXTRA_ACCOUNT_NAME, accountName)
+        putExtra(GenericActivity.EXTRA_ACCOUNT_ID, accountId)
         putExtra(EXTRA_SECURITY_DOMAIN, domainId)
         putExtra(EXTRA_OPERATION, operationType)
         putExtra(EXTRA_SESSION_ID, sessionId)
@@ -100,31 +108,45 @@ fun computeMemberName(publicKeyBytes: ByteArray): String {
     return "$USERS$MEMBERS$encoded"
 }
 
+internal fun Context.folsomAccountId(accountName: String): String {
+    val manager = AccountManager.get(this)
+    val account = manager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).singleOrNull { it.name == accountName }
+        ?: throw SecurityException("Recovery account unavailable")
+    return manager.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() }
+        ?: throw SecurityException("Recovery identity unavailable")
+}
+
 fun Context.requestOauthToken(accountName: String, scope: String = SERVICE_SECURITY_DOMAIN_SCOPE): String {
+    val expectedId = folsomAccountId(accountName)
     val accountManager = AccountManager.get(this)
     val account = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).find {
         it.name == accountName
     }
     if (account == null) throw RuntimeException("account is null")
-    return accountManager.blockingGetAuthToken(account, scope, true)
+    val token = accountManager.blockingGetAuthToken(account, scope, true)
         ?: throw RuntimeException("oauthToken is null")
+    if (folsomAccountId(accountName) != expectedId) throw SecurityException("Recovery account changed")
+    return token
 }
 
 suspend fun loadSecurityDomainMembers(context: Context, accountName: String, sessionId: String, domainId: String) =
     withContext(Dispatchers.IO) {
-        createGrpcClient<SecurityDomainServiceClient>(SECURITY_DOMAIN_BASE_URL, context.requestOauthToken(accountName))
-            .ListSecurityDomainMembers()
-            .executeBlocking(
+        require(FolsomDomainPolicy.valid(domainId))
+        val expectedId = context.folsomAccountId(accountName)
+        val client = createGrpcClient<SecurityDomainServiceClient>(SECURITY_DOMAIN_BASE_URL, context.requestOauthToken(accountName))
+        FolsomMemberPages(expectedId, { context.folsomAccountId(accountName) }) { pageToken ->
+            client.ListSecurityDomainMembers().executeBlocking(
                 ListSecurityDomainMembersRequest(
                     parent = USERS,
                     view = emptyList(),
                     filter = listOf(USERS + SECURITY_DOMAINS + domainId),
-                    pageSize = 3,
-                    pageToken = "",
+                    memberSelection = 3,
+                    pageToken = pageToken,
                     filterOptions = FilterOptions(includeDeleted = true),
                     requestId = sessionId
                 )
             )
+        }.load()
     }
 
 suspend fun getSecurityDomain(context: Context, accountName: String, sessionId: String, domainId: String) =

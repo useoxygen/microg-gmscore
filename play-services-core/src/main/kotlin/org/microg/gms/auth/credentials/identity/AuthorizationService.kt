@@ -264,7 +264,7 @@ class AuthorizationServiceImpl(val context: Context, val packageName: String, ov
         lifecycleScope.launchWhenStarted {
             runCatching {
                 request?.token?.takeIf { it.isNotEmpty() }?.let {
-                    AccountManager.get(context).invalidateAuthToken(AuthConstants.DEFAULT_ACCOUNT_TYPE, it)
+                    org.microg.gms.auth.invalidateAccountAuthToken(context, AuthConstants.DEFAULT_ACCOUNT_TYPE, it)
                 }
             }.onFailure { Log.w(TAG, "clearToken failed", it) }
             runCatching { callback?.onResult(Status.SUCCESS) }

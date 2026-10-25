@@ -21,10 +21,14 @@ dependencies {
     // Stubs resolve hidden APIs only at compile time; never package them.
     testCompileOnly project(":migration-framework-stubs")
     implementation 'com.google.zxing:core:3.5.2'
+    androidTestImplementation 'androidx.test:runner:1.7.0'
+    androidTestImplementation 'androidx.test.ext:junit:1.3.0'
+    androidTestImplementation 'androidx.test:core:1.7.0'
+    // The Compose BOM's older Espresso reflects InputManager.getInstance, removed on API 37.
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.7.0'
     testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
-    androidTestImplementation 'androidx.test:runner:1.6.2'
-    androidTestImplementation 'androidx.test:core:1.6.1'
+    testImplementation 'com.upokecenter:cbor:4.5.2'
+    testImplementation 'org.bouncycastle:bcprov-jdk15to18:1.83'
     // Real org.json for host tests of CryptAuth request bodies; android.jar only has stubs.
     testImplementation 'org.json:json:20240303'
     // Android framework classes (SQLite, Log, the platform's org.json) for host tests of GCM permissions and web bridges.
@@ -33,6 +37,7 @@ dependencies {
     implementation project(':people-sync-android')
     implementation project(':calendar-sync')
     implementation project(':calendar-sync-android')
+    implementation project(':password-sync')
     implementation "com.squareup.okhttp3:okhttp:$okHttpVersion"
     implementation "com.squareup.wire:wire-runtime:$wireVersion"
     implementation "de.hdodenhof:circleimageview:1.3.0"
@@ -110,6 +115,8 @@ dependencies {
     // Compose
     def composeBom = platform('androidx.compose:compose-bom:2024.04.00')
     implementation composeBom
+    androidTestImplementation composeBom
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
     implementation 'androidx.compose.material3:material3'
     implementation 'androidx.compose.ui:ui-tooling-preview'
     debugImplementation 'androidx.compose.ui:ui-tooling'
@@ -126,6 +133,7 @@ dependencies {
 
     implementation "androidx.credentials:credentials:$credentialsVersion"
     implementation "androidx.work:work-runtime-ktx:$workVersion"
+    implementation "androidx.work:work-multiprocess:$workVersion"
 
     implementation "com.google.guava:guava:$guavaVersion"
     implementation "com.google.crypto.tink:tink-android:$tinkVersion"
@@ -145,7 +153,7 @@ android {
     }
 
     defaultConfig {
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         versionName version
         versionCode appVersionCode
 
@@ -159,6 +167,11 @@ android {
 
         manifestPlaceholders = [appLabel:"@string/cyclon_services_name"]
         resValue "string", "package_id", "com.google.android.gms"
+
+        // Dedicated affiliation service admission, never borrowed from another Google API.
+        buildConfigField "String", "PASSWORD_AFFILIATION_API_KEY", groovy.json.JsonOutput.toJson(localProperties.get("password.affiliationApiKey", "").toString())
+        // Separate CryptAuth Vault admission for owner-consented lock-screen recovery.
+        buildConfigField "String", "RECOVERABLE_VAULT_API_KEY", groovy.json.JsonOutput.toJson(localProperties.get("recovery.vaultApiKey", "").toString())
 
         buildConfigField "String", "SAFETYNET_KEY", "\"${localProperties.get("safetynet.key", "")}\""
         buildConfigField "String", "RECAPTCHA_SITE_KEY", "\"${localProperties.get("recaptcha.siteKey", "")}\""

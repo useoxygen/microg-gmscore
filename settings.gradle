@@ -129,6 +129,7 @@ include ':people-sync'
 include ':people-sync-android'
 include ':calendar-sync'
 include ':calendar-sync-android'
+include ':password-sync'
 // Optional, development-only OAuth/People API acceptance app; never shipped in GmsCore.
 if (hasModule("contactsLab", false)) include ':people-sync-lab'
 

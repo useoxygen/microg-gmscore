@@ -53,7 +53,7 @@ class ContactSyncService : Service() {
                     if (report.conflicts == 0 && report.uncertain == 0) prefs.lastSuccess = System.currentTimeMillis()
                 } catch (e: ApiException) {
                     if (e.status == 401) {
-                        AccountManager.get(this@ContactSyncService).invalidateAuthToken(account.type,
+                        org.microg.gms.auth.invalidateAccountAuthToken(this@ContactSyncService, account.type,
                             usedToken)
                     }
                     prefs.status = if (e.status == 401 || e.status == 403) "authorization" else "network"

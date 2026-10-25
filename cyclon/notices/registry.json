@@ -1647,6 +1647,17 @@
         "http://www.apache.org/licenses/LICENSE-2.0.txt"
       ]
     },
+    "androidx.work:work-multiprocess:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://dl.google.com/dl/android/maven2/androidx/work/work-multiprocess/2.7.0/work-multiprocess-2.7.0.pom"
+      ]
+    },
     "androidx.work:work-runtime-ktx:2.7.0": {
       "licenses": [
         "Apache-2.0"
@@ -2546,6 +2557,18 @@
       ],
       "metadataSources": [
         "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.bouncycastle:bcprov-jdk15to18:1.83": {
+      "licenses": [
+        "Bouncy Castle Licence"
+      ],
+      "texts": [
+        "bouncycastle-1.83.txt"
+      ],
+      "metadataSources": [
+        "https://www.bouncycastle.org/licence.html",
+        "https://github.com/bcgit/bc-java/tree/r1rv83"
       ]
     }
   }

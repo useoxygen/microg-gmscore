@@ -255,7 +255,7 @@ class ContactsSyncActivity : ComponentActivity() {
                     } catch (e: ApiException) {
                         if (e.status != 401) throw e
                         // Retry one expired cached token. A 403 is a separate API-access failure.
-                        AccountManager.get(this@ContactsSyncActivity).invalidateAuthToken(account.type, token)
+                        org.microg.gms.auth.invalidateAccountAuthToken(this@ContactsSyncActivity, account.type, token)
                         stage = ActivationStage.AUTHORIZATION
                         token = authToken(account, mode)
                         stage = ActivationStage.API

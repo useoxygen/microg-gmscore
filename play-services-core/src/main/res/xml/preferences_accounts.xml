@@ -36,6 +36,10 @@
             android:summary="@string/cyclon_calendar_description" app:iconSpaceReserved="false">
             <intent android:targetClass="org.microg.gms.calendar.CalendarSyncActivity" android:targetPackage="@string/package_id" />
         </Preference>
+        <Preference android:title="@string/passwords_title" app:iconSpaceReserved="false">
+            <intent android:targetClass="com.google.android.gms.credential.manager.PasswordManagerActivity"
+                android:targetPackage="@string/package_id" />
+        </Preference>
         <SwitchPreferenceCompat
             android:persistent="false"
             android:key="auth_manager_trust_google"

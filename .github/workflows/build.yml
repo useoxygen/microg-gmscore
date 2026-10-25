@@ -65,6 +65,8 @@ jobs:
         run: "./gradlew :vending-app:testDefaultDebugUnitTest"
       - name: "Test contacts synchronization"
         run: "./gradlew :people-sync:test"
+      - name: "Test password protocol, encryption and durable sync"
+        run: "./gradlew :password-sync:test"
       - name: "Test legacy DroidGuard callback lifecycle"
         if: matrix.target == 'Debug'
         run: "./gradlew :play-services-droidguard-core:testDebugUnitTest"

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="fido_account_passkey_title">Choose where to use a passkey</string>
+    <string name="fido_account_passkey_use">Synced Google account</string>
+    <string name="fido_account_passkey_other">This device or security key</string>
+</resources>

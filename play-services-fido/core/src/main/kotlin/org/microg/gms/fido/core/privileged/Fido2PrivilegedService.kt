@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Context.KEYGUARD_SERVICE
 import android.content.Intent
 import android.os.Build.VERSION.SDK_INT
+import android.os.Binder
 import android.os.Parcel
 import android.util.Log
 import androidx.core.app.PendingIntentCompat
@@ -30,8 +31,10 @@ import com.google.android.gms.fido.fido2.internal.privileged.IFido2PrivilegedCal
 import com.google.android.gms.fido.fido2.internal.privileged.IFido2PrivilegedService
 import org.microg.gms.BaseService
 import org.microg.gms.common.GmsService
+import org.microg.gms.common.PackageUtils
 import org.microg.gms.common.GmsService.FIDO2_PRIVILEGED_API
 import org.microg.gms.fido.core.FEATURES
+import org.microg.gms.fido.core.AccountPasskeyBackendProvider
 import org.microg.gms.fido.core.ui.AuthenticatorActivity
 import org.microg.gms.fido.core.ui.AuthenticatorActivity.Companion.SOURCE_BROWSER
 import org.microg.gms.fido.core.ui.AuthenticatorActivity.Companion.KEY_SOURCE
@@ -46,17 +49,23 @@ const val TAG = "Fido2Privileged"
 
 class Fido2PrivilegedService : BaseService(TAG, FIDO2_PRIVILEGED_API) {
     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest, service: GmsService) {
+        val packageName = PackageUtils.getAndCheckCallingPackage(this, request.packageName) ?: throw SecurityException()
         callback.onPostInitCompleteWithConnectionInfo(
             CommonStatusCodes.SUCCESS,
-            Fido2PrivilegedServiceImpl(this, lifecycle).asBinder(),
+            Fido2PrivilegedServiceImpl(this, lifecycle, packageName, Binder.getCallingUid()).asBinder(),
             ConnectionInfo().apply { features = FEATURES }
         );
     }
 }
 
-class Fido2PrivilegedServiceImpl(private val context: Context, override val lifecycle: Lifecycle) :
+class Fido2PrivilegedServiceImpl(private val context: Context, override val lifecycle: Lifecycle,
+    private val packageName: String, private val uid: Int) :
     IFido2PrivilegedService.Stub(), LifecycleOwner {
+    private fun checkCaller() {
+        if (Binder.getCallingUid() != uid || PackageUtils.getAndCheckCallingPackage(context, packageName) != packageName) throw SecurityException()
+    }
     override fun getRegisterPendingIntent(callbacks: IFido2PrivilegedCallbacks, options: BrowserPublicKeyCredentialCreationOptions) {
+        checkCaller()
         lifecycleScope.launchWhenStarted {
             val intent = Intent(context, AuthenticatorActivity::class.java)
                 .putExtra(KEY_SERVICE, FIDO2_PRIVILEGED_API.SERVICE_ID)
@@ -71,6 +80,7 @@ class Fido2PrivilegedServiceImpl(private val context: Context, override val life
     }
 
     override fun getSignPendingIntent(callbacks: IFido2PrivilegedCallbacks, options: BrowserPublicKeyCredentialRequestOptions) {
+        checkCaller()
         lifecycleScope.launchWhenStarted {
             val intent = Intent(context, AuthenticatorActivity::class.java)
                 .putExtra(KEY_SERVICE, FIDO2_PRIVILEGED_API.SERVICE_ID)
@@ -85,6 +95,7 @@ class Fido2PrivilegedServiceImpl(private val context: Context, override val life
     }
 
     override fun isUserVerifyingPlatformAuthenticatorAvailable(callbacks: IBooleanCallback) {
+        checkCaller()
         lifecycleScope.launchWhenStarted {
             if (SDK_INT < 24) {
                 callbacks.onBoolean(false)
@@ -96,9 +107,14 @@ class Fido2PrivilegedServiceImpl(private val context: Context, override val life
     }
 
     override fun getCredentialList(callbacks: ICredentialListCallback, rpId: String) {
-        Log.w(TAG, "Not yet implemented: getCredentialList")
+        checkCaller()
         lifecycleScope.launchWhenStarted {
-            runCatching { callbacks.onCredentialList(emptyList()) }
+            try {
+                val backend = (context.applicationContext as? AccountPasskeyBackendProvider)?.accountPasskeyBackend
+                val result = backend?.credentialList(context, rpId, packageName).orEmpty()
+                if (context.packageManager.getApplicationInfo(packageName, 0).uid != uid) throw SecurityException()
+                callbacks.onCredentialList(result)
+            } catch (_: Exception) { runCatching { callbacks.onError(Status.INTERNAL_ERROR) } }
         }
     }
 

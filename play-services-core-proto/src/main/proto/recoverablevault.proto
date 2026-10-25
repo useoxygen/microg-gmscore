@@ -1,0 +1,71 @@
+syntax = "proto2";
+package google.cryptauth.vault.v1;
+option java_package = "org.microg.gms.auth.folsom.vault";
+
+// Independently described from pinned hgtm/q/s/v/w/k/l; opaque cryptographic blobs stay byte-exact.
+message VaultClientContext {
+  optional string session = 2;
+  optional int32 version = 3;
+}
+message VaultListRequest {
+  optional int32 pageSize = 1;
+  optional string pageToken = 2;
+  optional VaultClientContext context = 7;
+  optional int32 source = 8;
+}
+message VaultListResponse {
+  repeated RecoveryVault vaults = 1;
+  optional string nextPageToken = 2;
+}
+message RecoveryVault {
+  optional string name = 1;
+  optional VaultParameters parameters = 2;
+  optional bytes protection = 3;
+  optional bytes recoveryKey = 4;
+  repeated VaultEntry entries = 5;
+  optional bytes metadata = 6;
+  optional int32 version = 7;
+}
+message VaultParameters {
+  optional bytes publicKey = 1;
+  optional bytes counter = 2;
+  optional int32 maxAttempts = 3;
+  optional bytes serverParams = 4;
+}
+message VaultEntry {
+  optional string name = 1;
+  optional bytes metadata = 2;
+  oneof key {
+    bytes applicationKey = 3;
+    RecoverableMember member = 4;
+  }
+}
+message RecoverableMember {
+  optional bytes publicKey = 1;
+  optional bytes encryptedPrivateKey = 2;
+  optional bytes encryptedWrappingKey = 3;
+}
+message VaultUpdateRequest {
+  optional RecoveryVault vault = 3;
+  optional string registrationId = 5;
+  optional int32 version = 6;
+  optional VaultClientContext context = 7;
+}
+message VaultOpenRequest {
+  optional bytes handle = 2;
+  optional bytes claim = 3;
+  optional bytes challenge = 4;
+  optional int32 secretType = 5;
+  optional int32 source = 8;
+  optional VaultClientContext context = 9;
+}
+message VaultOpenResponse {
+  optional int32 result = 1;
+  optional RecoveryVault vault = 2;
+  optional bytes error = 3;
+}
+service VaultService {
+  rpc ListVaults(VaultListRequest) returns (VaultListResponse);
+  rpc UpdateVault(VaultUpdateRequest) returns (RecoveryVault);
+  rpc OpenVault(VaultOpenRequest) returns (VaultOpenResponse);
+}

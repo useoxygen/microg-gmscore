@@ -55,7 +55,7 @@ class CalendarSyncService : Service() {
                 // A calendar that failed: the others' counts above stand, and its error sets the status.
                 report.failure?.let { throw it }
             } catch (e: CalendarRequestException) {
-                if (e.status == 401) AccountManager.get(this@CalendarSyncService).invalidateAuthToken(account.type, token)
+                if (e.status == 401) org.microg.gms.auth.invalidateAccountAuthToken(this@CalendarSyncService, account.type, token)
                 val authorization = e.status == 401 || e.status == 403 && !e.rateLimited
                 prefs.status = if (authorization) "authorization" else "network"
                 if (authorization) result.stats.numAuthExceptions++ else result.stats.numIoExceptions++
