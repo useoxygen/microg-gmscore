@@ -12,7 +12,11 @@ with zipfile.ZipFile(apk) as z, tempfile.TemporaryDirectory() as td:
     for name in z.namelist():
         if not re.fullmatch(r'classes\d*\.dex', name): continue
         p = os.path.join(td, name); open(p, 'wb').write(z.read(name))
-        out = subprocess.run([dexdump, '-d', p], capture_output=True, text=True, errors='ignore').stdout
+        run = subprocess.run([dexdump, '-d', p], capture_output=True, text=True, errors='ignore')
+        if run.returncode != 0:
+            # A failed disassembly must not read as "no API above the reported version".
+            sys.exit(f'dexdump failed on {name} ({run.returncode}): {run.stderr.strip()[-500:]}')
+        out = run.stdout
         for cls in out.split('Class #')[1:]:
             acts = set(re.findall(r'"(com\.google\.android\.(?:gms|location|mobstore)[\w.]*\.(?:START|BIND))"', cls))
             if not acts: continue
