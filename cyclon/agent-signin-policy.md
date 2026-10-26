@@ -1,10 +1,11 @@
 # Per-login device authentication
 
 The owner controls two local properties of a saved login: Ask / Allow sign-in /
-Never, and **Require device authentication**. Requiring authentication forces
-Ask, disables Allow sign-in, and needs a configured Android screen lock. Removing
-the requirement leaves Ask in place. Both transitions rotate the incarnation so
-a waiting request cannot inherit a different policy.
+Never, and **Require device authentication**. Requiring authentication disables
+Allow sign-in (an existing Allow becomes Ask), preserves Never, and needs a
+configured Android screen lock. Removing the requirement does not restore an old
+Allow grant; the owner can explicitly choose a new access level. Both transitions
+rotate the incarnation so a waiting request cannot inherit a different policy.
 
 Core receives only account metadata, including `require_authentication`. For a
 strict login it asks the native broker to redeem and opens the returned Services
