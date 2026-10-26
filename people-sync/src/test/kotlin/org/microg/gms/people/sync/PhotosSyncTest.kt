@@ -154,17 +154,22 @@ class PhotosSyncTest {
         assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
         assertNull(store.value.contact.pending); assertArrayEquals(byteArrayOf(7, 9, 9), store.bytes); assertEquals(1, api.writes)
     }
-    @Test fun aPhotoEditedAgainAfterALostReplyIsKeptAndUploaded() {
-        val (store, api) = setup()
-        store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
-        api.reencode = { byteArrayOf(7, 9, 9) }
-        api.afterWrite = { store.edit(byteArrayOf(5, 5)) } // the owner changes the photo again meanwhile
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.loseReply = false; api.afterWrite = null; api.reencode = null
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+    @Test fun aPhotoEditedAgainAfterALostReplyWaitsOutTheGraceThenUploads() {
+        val (store, api) = setup(); var clock = 1_000_000L
+        fun sync() = PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.failBeforeWrite = true // upload A still processing at Google
+        assertThrows(IOException::class.java) { sync() }
+        api.failBeforeWrite = false
+        store.edit(byteArrayOf(5, 5))                                        // owner picks B meanwhile
+        api.cloud("https://lh3.googleusercontent.com/other", byteArrayOf(42)) // another device sets C
+        clock += 60_000
+        assertEquals(1, sync().uncertain); assertNotNull(store.value.contact.pending) // A could still land over B
+        assertEquals(1, api.dispatches)
+        clock += PhotosSync.RETRY_AFTER_MILLIS
+        sync() // grace over: C becomes the baseline, B stays local and dirty
         assertArrayEquals(byteArrayOf(5, 5), store.bytes); assertNull(store.value.contact.pending); assertTrue(store.value.contact.dirty)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded) // the newer edit goes up
-        assertEquals(2, api.writes); assertArrayEquals(byteArrayOf(5, 5), api.images.getValue(ContactPhotos.reference(api.remote!!)!!))
+        assertEquals(1, sync().uploaded) // B goes up
+        assertArrayEquals(byteArrayOf(5, 5), api.images.getValue(ContactPhotos.reference(api.remote!!)!!))
     }
     @Test fun lostPhotoReplyHoldsMetadataCheckpointUntilCloudNameIsApplied() {
         val (store, api) = setup()
