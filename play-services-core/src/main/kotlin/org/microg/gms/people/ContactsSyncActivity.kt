@@ -87,9 +87,6 @@ class ContactsSyncActivity : ComponentActivity() {
         retryPendingRemovals()
         setContent {
             CyclonMaterialTheme {
-                var resumeUploads by remember { mutableStateOf(false) }
-                var confirmation by remember { mutableStateOf<Account?>(null) }
-                var newContactsConfirmation by remember { mutableStateOf<Account?>(null) }
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
