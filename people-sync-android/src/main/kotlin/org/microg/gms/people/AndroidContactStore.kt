@@ -332,6 +332,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
             .withValue(Data.SYNC1, marker).withValue(Data.IS_PRIMARY, 1).withValue(Photo.PHOTO, prepared).build())
         val values = ContentValues().apply {
             put(RawContacts.SYNC2, photoState(state(existing.contact.id), token, remote, bytes?.let(ContactPhotos::hash)).toString())
+            putNull(RawContacts.SYNC3) // Closes a lost-reply photo journal in the same batch.
             put(RawContacts.DIRTY, if (textDirty(existing.contact)) 1 else 0)
             if (existing.contact.baseline == project(remote)) put(RawContacts.SYNC1, remote.etag)
         }

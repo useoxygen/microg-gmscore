@@ -31,7 +31,7 @@ class PhotosSyncTest {
         override fun rejected(existing: LocalContact) = error("Unexpected metadata rejection")
         override fun acknowledge(existing: LocalContact, remote: Person?) = error("Unexpected metadata acknowledgment")
         var value = PhotoContact(LocalContact(1, 1, "people/a", "e1", emptyMap(), emptyMap(), false, false), ContactPhotos.NONE, null, null)
-        var bytes: ByteArray? = null; var installs = 0; var afterBegin: (() -> Unit)? = null
+        var bytes: ByteArray? = null; var installs = 0; var afterBegin: (() -> Unit)? = null; var failInstall = false
         override fun photoContacts() = listOf(value)
         override fun photoBytes(existing: PhotoContact) = bytes
         override fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact {
@@ -46,10 +46,11 @@ class PhotosSyncTest {
         }
         override fun installPhoto(existing: PhotoContact, remote: Person, bytes: ByteArray?) {
             check(value.contact.version == existing.contact.version)
+            if (failInstall) { failInstall = false; throw IllegalStateException("Provider rejected the batch") }
             installs++; this.bytes = bytes
             val token = if (bytes == null) ContactPhotos.NONE else "installed-$installs"
             value = value.copy(token = token, baseline = PhotoBaseline(token, ContactPhotos.reference(remote), ContactPhotos.revision(remote), bytes?.let(ContactPhotos::hash)), remoteHint = ContactPhotos.reference(remote), remoteRevision = ContactPhotos.revision(remote),
-                contact = value.contact.copy(version = value.contact.version + 1, dirty = value.contact.fields != value.contact.baseline))
+                contact = value.contact.copy(version = value.contact.version + 1, pending = null, dirty = value.contact.fields != value.contact.baseline))
         }
         fun edit(bytes: ByteArray?) {
             this.bytes = bytes
@@ -60,7 +61,7 @@ class PhotosSyncTest {
     private inner class Api : ContactsApi, PhotosApi {
         var remote: Person? = person(); val images = mutableMapOf<String, ByteArray>(); var writes = 0; var reads = 0
         var afterWrite: (() -> Unit)? = null; var loseReply = false; var reject: ApiException? = null
-        var reencode: ((ByteArray) -> ByteArray)? = null; var failBeforeWrite = false
+        var reencode: ((ByteArray) -> ByteArray)? = null; var failBeforeWrite = false; var dispatches = 0
         var page: ((String?, String?) -> Page)? = null
         override fun get(resource: String): Person? { reads++; return remote }
         override fun list(syncToken: String?, pageToken: String?) = page?.invoke(syncToken, pageToken) ?: Page(listOfNotNull(remote), null, "checkpoint")
@@ -69,7 +70,7 @@ class PhotosSyncTest {
         override fun delete(resource: String) = error("Unexpected contact delete")
         override fun readPhoto(url: String) = images.getValue(url)
         override fun writePhoto(resource: String, bytes: ByteArray?): Person {
-            reject?.let { throw it }
+            dispatches++; reject?.let { throw it }
             if (failBeforeWrite) throw IOException("Connection dropped before Google got it")
             writes++
             val url = bytes?.let { "https://lh3.googleusercontent.com/new$writes".also { url -> images[url] = reencode?.invoke(it) ?: it } }
@@ -118,25 +119,52 @@ class PhotosSyncTest {
         assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
         assertArrayEquals(byteArrayOf(42), store.bytes); assertEquals(1, api.writes); assertNull(store.value.contact.pending)
     }
-    @Test fun anUploadThatNeverReachedGoogleIsSentAgain() {
-        val (store, api) = setup()
+    @Test fun anUploadThatNeverReachedGoogleIsSentAgainOnlyAfterTheGracePeriod() {
+        val (store, api) = setup(); var clock = 1_000_000L
+        fun sync() = PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.failBeforeWrite = true
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.failBeforeWrite = false
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain) // cloud unchanged: journal closed
-        assertNull(store.value.contact.pending); assertEquals(0, api.writes)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
-        assertEquals(1, api.writes); assertArrayEquals(byteArrayOf(7, 1, 2, 3), store.bytes)
+        assertThrows(IOException::class.java) { sync() }
+        api.failBeforeWrite = false; clock += 60_000
+        assertEquals(1, sync().uncertain) // still possibly in flight: journal kept, nothing sent
+        assertNotNull(store.value.contact.pending); assertEquals(1, api.dispatches)
+        clock += PhotosSync.RETRY_AFTER_MILLIS
+        assertEquals(1, sync().uncertain); assertNull(store.value.contact.pending) // given up on: closed for retry
+        assertEquals(1, sync().uploaded)
+        assertEquals(2, api.dispatches); assertEquals(1, api.writes); assertArrayEquals(byteArrayOf(7, 1, 2, 3), store.bytes)
     }
-    @Test fun aPhotoEditedAgainAfterALostReplyIsKept() {
+    @Test fun aWriteThatCommitsAfterTheReadbackIsAdoptedNotResent() {
+        val (store, api) = setup(); var clock = 1_000_000L
+        fun sync() = PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.failBeforeWrite = true // Google is still processing it
+        assertThrows(IOException::class.java) { sync() }
+        clock += 30_000
+        assertEquals(1, sync().uncertain); assertNotNull(store.value.contact.pending)
+        api.cloud("https://lh3.googleusercontent.com/late", byteArrayOf(7, 9, 9)) // the original commits, re-encoded
+        clock += 30_000
+        assertEquals(1, sync().downloaded); assertNull(store.value.contact.pending)
+        assertEquals(1, api.dispatches); assertArrayEquals(byteArrayOf(7, 9, 9), store.bytes)
+    }
+    @Test fun aFailedInstallKeepsTheJournalAndRecoversNextPass() {
+        val (store, api) = setup()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true; api.reencode = { byteArrayOf(7, 9, 9) }
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        api.loseReply = false; store.failInstall = true
+        assertThrows(IllegalStateException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertNotNull(store.value.contact.pending)
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
+        assertNull(store.value.contact.pending); assertArrayEquals(byteArrayOf(7, 9, 9), store.bytes); assertEquals(1, api.writes)
+    }
+    @Test fun aPhotoEditedAgainAfterALostReplyIsKeptAndUploaded() {
         val (store, api) = setup()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
         api.reencode = { byteArrayOf(7, 9, 9) }
         api.afterWrite = { store.edit(byteArrayOf(5, 5)) } // the owner changes the photo again meanwhile
         assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.loseReply = false; api.afterWrite = null
+        api.loseReply = false; api.afterWrite = null; api.reencode = null
         PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
         assertArrayEquals(byteArrayOf(5, 5), store.bytes); assertNull(store.value.contact.pending); assertTrue(store.value.contact.dirty)
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded) // the newer edit goes up
+        assertEquals(2, api.writes); assertArrayEquals(byteArrayOf(5, 5), api.images.getValue(ContactPhotos.reference(api.remote!!)!!))
     }
     @Test fun lostPhotoReplyHoldsMetadataCheckpointUntilCloudNameIsApplied() {
         val (store, api) = setup()
