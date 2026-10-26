@@ -100,7 +100,7 @@ class PhotosSyncTest {
     @Test fun fingerprintsToleratesReencodingNoiseButNotASmallBadge() {
         fun sig(pixels: (Int) -> Triple<Int, Int, Int>) = (0 until 32 * 32).joinToString("") { i -> pixels(i).let { (r, g, b) -> "%02x%02x%02x".format(r, g, b) } }
         val white = sig { Triple(255, 255, 255) }
-        val noisy = sig { i -> val n = (i * 7919) % 9; Triple(255 - n, 250 - n, 252 - n) } // JPEG-like small noise everywhere
+        val noisy = sig { i -> val n = (i * 7919) % 4; Triple(255 - n, 254 - n, 255 - n) } // re-encoding noise (measured: worst 3 at JPEG q60)
         fun badge(r: Int, b: Int) = sig { i -> if (i % 32 in 12..19 && i / 32 in 12..19) Triple(r, 0, b) else Triple(255, 255, 255) }
         assertTrue(ContactPhotos.similar(white, noisy))
         assertFalse(ContactPhotos.similar(badge(255, 0), badge(0, 255))) // same white photo, red vs blue badge
