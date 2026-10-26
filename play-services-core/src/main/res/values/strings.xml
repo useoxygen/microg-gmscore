@@ -482,4 +482,21 @@ Please set up a password, PIN, or pattern lock screen."</string>
     <string name="pref_passkey_manager_transport_bluetooth">Bluetooth</string>
     <string name="pref_passkey_manager_transport_hybrid">Hybrid</string>
     <string name="pref_passkey_manager_credential_id_format_internal">ID: %1$s</string>
+    <string name="passwords_assistant_access">Sign in with Cyclon</string>
+    <string name="passwords_tab_passwords">Passwords</string>
+    <string name="passwords_tab_checkup">Checkup</string>
+    <string name="passwords_tab_settings">Settings</string>
+    <string name="passwords_back_to_passwords">Back to passwords</string>
+    <string name="passwords_open_settings">Open password settings</string>
+    <string name="passwords_assistant_saved_login">Saved login</string>
+    <string name="passwords_assistant_access_description">Choose whether Cyclon can use this saved login to sign in to its matching app or site. This does not let the assistant read your password.</string>
+    <string name="passwords_assistant_access_status">Cyclon sign-in: %1$s</string>
+    <string name="passwords_assistant_last_used">Last used by Cyclon: %1$s</string>
+    <string name="passwords_assistant_ask">Ask each time</string>
+    <string name="passwords_assistant_always">Allow sign-in</string>
+    <string name="passwords_assistant_never">Never</string>
+    <string name="passwords_assistant_ask_description">Ask you before each sign-in.</string>
+    <string name="passwords_assistant_always_description">Sign in with this login without asking again.</string>
+    <string name="passwords_assistant_never_description">Block Cyclon from using this login to sign in.</string>
+    <string name="passwords_assistant_revoke_description">To revoke permission, choose Ask each time or Never and save. Your saved login is kept.</string>
 </resources>

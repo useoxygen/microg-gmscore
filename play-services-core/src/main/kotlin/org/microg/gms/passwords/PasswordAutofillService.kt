@@ -19,6 +19,9 @@ class PasswordAutofillService : AutofillService() {
             try {
                 val structure = request.fillContexts.lastOrNull()?.structure ?: throw ProtocolException()
                 val target = PasswordAutofillTarget.parse(this@PasswordAutofillService, structure)
+                // Compatibility mode reconstructs the URL from accessibility text. Only
+                // Chrome's native virtual structure may select a website credential.
+                if (target.isBrowser && (request.flags and FillRequest.FLAG_COMPATIBILITY_MODE_REQUEST) != 0) throw SecurityException()
                 val response = FillResponse.Builder()
                 val tickets = PasswordRequestTickets(this@PasswordAutofillService)
                 var canSave = false

@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Parcel
-import android.text.InputType
 import android.view.View
 import android.view.autofill.AutofillId
 import androidx.annotation.RequiresApi
@@ -17,7 +16,7 @@ import java.util.Base64
 
 @RequiresApi(28)
 class PasswordAutofillTarget private constructor(val realm: String, val caller: ByteArray, private val packageName: String, private val certificate: ByteArray,
-    val usernameId: AutofillId?, val passwordId: AutofillId, val username: String, val password: String) {
+    val usernameId: AutofillId?, val passwordId: AutofillId, val username: String, val password: String, val isBrowser: Boolean) {
     fun payload(save: Boolean): ByteArray {
         val parcel = Parcel.obtain()
         return try {
@@ -49,28 +48,24 @@ class PasswordAutofillTarget private constructor(val realm: String, val caller: 
             }
             if (structure.windowNodeCount > 16) throw ProtocolException()
             for (i in 0 until structure.windowNodeCount) walk(structure.getWindowNodeAt(i).rootViewNode, null, null, 0)
-            val passwords = fields.filter { field ->
-                val hints = field.node.autofillHints.orEmpty()
-                val variant = field.node.inputType and InputType.TYPE_MASK_VARIATION
-                val type = field.node.inputType and InputType.TYPE_MASK_CLASS
-                View.AUTOFILL_HINT_PASSWORD in hints ||
-                    type == InputType.TYPE_CLASS_TEXT && variant in setOf(InputType.TYPE_TEXT_VARIATION_PASSWORD, InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD) ||
-                    type == InputType.TYPE_CLASS_NUMBER && variant == InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            }
+            val passwords = fields.filter { PasswordAutofillField.kind(it.node, browser) == PasswordAutofillField.Kind.PASSWORD }
             val secret = passwords.singleOrNull() ?: throw ProtocolException()
-            val users = fields.filter { field -> field !== secret && field.node.autofillHints.orEmpty().any {
-                it == View.AUTOFILL_HINT_USERNAME || it == View.AUTOFILL_HINT_EMAIL_ADDRESS
-            } }
+            val users = fields.filter { it !== secret && PasswordAutofillField.kind(it.node, browser) == PasswordAutofillField.Kind.USERNAME }
             val user = users.singleOrNull()
             val realm = if (browser) {
                 if (secret.domain.isNullOrEmpty() || secret.scheme != "https" ||
                     user != null && (user.domain != secret.domain || user.scheme != secret.scheme)) throw SecurityException()
-                PasswordData.webRealm("https://${secret.domain}/")
+                // Android exposes only scheme + host here, not the port. This remains an
+                // owner-authenticated autofill path; it is not an exact-origin agent grant.
+                val uri = java.net.URI("https://${secret.domain}/")
+                if (uri.host.isNullOrEmpty() || uri.rawAuthority != secret.domain || uri.port != -1 ||
+                    uri.rawPath != "/" || uri.rawQuery != null || uri.rawFragment != null) throw SecurityException()
+                PasswordData.webRealm(uri.toString())
             } else "android://${Base64.getUrlEncoder().withoutPadding().encodeToString(certificate)}@$pkg/"
             val caller = MessageDigest.getInstance("SHA-256").digest(Proto.field(1, pkg) + Proto.field(2, certificate) + Proto.field(3, realm))
             fun text(field: Field?) = field?.node?.autofillValue?.takeIf { it.isText }?.textValue?.toString().orEmpty()
             return PasswordAutofillTarget(realm, caller, pkg, certificate, user?.node?.autofillId,
-                secret.node.autofillId ?: throw ProtocolException(), text(user), text(secret))
+                secret.node.autofillId ?: throw ProtocolException(), text(user), text(secret), browser)
         }
         fun unpack(payload: ByteArray): Bundle {
             if (payload.size > 512 * 1024) throw ProtocolException()

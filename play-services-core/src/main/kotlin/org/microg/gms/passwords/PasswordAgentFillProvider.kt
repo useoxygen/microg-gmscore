@@ -33,6 +33,14 @@ class PasswordAgentFillProvider : ContentProvider() {
         if (uid != core.uid || core.flags and ApplicationInfo.FLAG_SYSTEM == 0 ||
             app.packageManager.getPackagesForUid(uid)?.toSet() != setOf(CORE)) throw SecurityException()
         when (method) {
+            "candidates", "set_access", "redeem" -> {
+                // Core has already verified the focused field. Drop the remote identity before
+                // AccountManager/vault work, and expose only fixed errors across this boundary.
+                val identity = Binder.clearCallingIdentity()
+                try { return AgentSignInBroker(app).call(method, arg, extras) }
+                catch (_: Exception) { throw SecurityException("Sign-in unavailable") }
+                finally { Binder.restoreCallingIdentity(identity) }
+            }
             "cancel" -> { PasswordAgentFillRequests.cancel(arg ?: throw SecurityException()); return Bundle.EMPTY }
             "prepare" -> {
                 if (arg != null || extras == null) throw SecurityException()
@@ -68,20 +76,42 @@ class PasswordAgentFillProvider : ContentProvider() {
 }
 
 /** In-memory, one-use selection and callback; process death, timeout and cancellation revoke it. */
-internal class PasswordAgentFillRequest private constructor(val handle: String, val packageName: String, val uid: Int,
-    private val certificate: ByteArray, val deadline: Long, private val receiver: ResultReceiver) {
+internal class PasswordAgentFillTarget private constructor(val packageName: String, val uid: Int,
+    private val certificate: ByteArray, val realm: String, private val web: Boolean) {
+    fun valid(context: Context): Boolean = Build.VERSION.SDK_INT >= 28 && runCatching {
+        val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        val signers = info.signingInfo?.apkContentsSigners?.takeIf { it.size == 1 } ?: return@runCatching false
+        info.applicationInfo?.uid == uid && (!web || info.applicationInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) != 0) &&
+            MessageDigest.isEqual(certificate, MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray()))
+    }.getOrDefault(false)
+    companion object {
+        fun from(context: Context, bundle: Bundle): PasswordAgentFillTarget {
+            val pkg = bundle.getString("package")?.takeIf { it.isNotBlank() && it.length <= 255 } ?: throw SecurityException()
+            val cert = bundle.getByteArray("certificate")?.takeIf { it.size == 32 }?.copyOf() ?: throw SecurityException()
+            // web_origin is exclusively Core's attestation of Jelly's authenticated focused_login.
+            // General apps cannot select web realms, and model URL arguments never reach here.
+            val origin = bundle.getString("web_origin")
+            val realm = if (origin == null) "android://${cert.toByteString().base64Url().trimEnd('=')}@$pkg/" else {
+                if (pkg != "org.lineageos.jelly" || origin.length > 4096) throw SecurityException()
+                val uri = java.net.URI(origin)
+                if (uri.scheme != "https" || uri.host.isNullOrEmpty() || uri.userInfo != null ||
+                    uri.rawQuery != null || uri.rawFragment != null || uri.rawPath !in listOf("", "/")) throw SecurityException()
+                PasswordData.webRealm(origin)
+            }
+            return PasswordAgentFillTarget(pkg, bundle.getInt("uid", -1), cert, realm, origin != null)
+                .also { if (!it.valid(context)) throw SecurityException() }
+        }
+    }
+}
+
+/** In-memory, one-use selection and callback; process death, timeout and cancellation revoke it. */
+internal class PasswordAgentFillRequest private constructor(val handle: String, private val target: PasswordAgentFillTarget,
+    val deadline: Long, private val receiver: ResultReceiver) {
     private val active = AtomicBoolean(true)
     @Volatile var close: (() -> Unit)? = null
-    val realm = "android://${certificate.toByteString().base64Url().trimEnd('=')}@$packageName/"
-    fun valid(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < 28) return false
-        return active.get() && SystemClock.elapsedRealtime() < deadline && runCatching {
-            val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
-            val signers = info.signingInfo?.apkContentsSigners?.takeIf { it.size == 1 } ?: return@runCatching false
-            info.applicationInfo?.uid == uid && MessageDigest.isEqual(certificate,
-                MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray()))
-        }.getOrDefault(false)
-    }
+    val packageName get() = target.packageName
+    val realm get() = target.realm
+    fun valid(context: Context): Boolean = active.get() && SystemClock.elapsedRealtime() < deadline && target.valid(context)
     fun deliver(context: Context, password: CharArray) {
         try {
             if (!valid(context) || !active.compareAndSet(true, false)) throw SecurityException()
@@ -96,14 +126,12 @@ internal class PasswordAgentFillRequest private constructor(val handle: String, 
     companion object {
         fun from(context: Context, bundle: Bundle): PasswordAgentFillRequest {
             val handle = bundle.getString("handle")?.takeIf { it.matches(Regex("[a-f0-9]{64}")) } ?: throw SecurityException()
-            val pkg = bundle.getString("package")?.takeIf { it.isNotBlank() && it.length <= 255 } ?: throw SecurityException()
-            val certificate = bundle.getByteArray("certificate")?.takeIf { it.size == 32 } ?: throw SecurityException()
             @Suppress("DEPRECATION")
             val receiver = bundle.getParcelable<ResultReceiver>("result") ?: throw SecurityException()
             val now = SystemClock.elapsedRealtime()
             val deadline = bundle.getLong("deadline")
             if (deadline <= now || deadline - now > 120_000) throw SecurityException()
-            return PasswordAgentFillRequest(handle, pkg, bundle.getInt("uid", -1), certificate.copyOf(), deadline, receiver)
+            return PasswordAgentFillRequest(handle, PasswordAgentFillTarget.from(context, bundle), deadline, receiver)
                 .also { if (!it.valid(context)) throw SecurityException() }
         }
     }
@@ -111,14 +139,23 @@ internal class PasswordAgentFillRequest private constructor(val handle: String, 
 
 internal object PasswordAgentFillRequests {
     private val requests = ConcurrentHashMap<String, PasswordAgentFillRequest>()
+    private val cancelled = LinkedHashMap<String, Long>()
     @Synchronized fun put(request: PasswordAgentFillRequest) {
-        requests.values.filter { SystemClock.elapsedRealtime() >= it.deadline }.forEach { cancel(it.handle) }
-        if (requests.isNotEmpty() || requests.putIfAbsent(request.handle, request) != null) throw SecurityException()
+        val now = SystemClock.elapsedRealtime()
+        cancelled.entries.removeAll { it.value <= now }
+        requests.values.filter { now >= it.deadline }.forEach { cancel(it.handle) }
+        if (cancelled.containsKey(request.handle) || requests.isNotEmpty() || requests.putIfAbsent(request.handle, request) != null) throw SecurityException()
     }
     fun find(uri: Uri?): PasswordAgentFillRequest {
         if (uri?.scheme != "microg-password-agent" || uri.pathSegments?.size != 2 || uri.pathSegments[0] != "fill") throw SecurityException()
         return requests[uri.pathSegments[1]] ?: throw SecurityException()
     }
     fun remove(handle: String, request: PasswordAgentFillRequest) { requests.remove(handle, request) }
-    fun cancel(handle: String) { requests.remove(handle)?.cancel() }
+    @Synchronized fun cancel(handle: String) {
+        // Core can cancel while vault lookup is still in progress, before the request is registered.
+        // Remember that revocation so a late registration cannot deliver after cancellation.
+        cancelled[handle] = SystemClock.elapsedRealtime() + 120_000
+        while (cancelled.size > 1024) cancelled.remove(cancelled.keys.first())
+        requests.remove(handle)?.cancel()
+    }
 }

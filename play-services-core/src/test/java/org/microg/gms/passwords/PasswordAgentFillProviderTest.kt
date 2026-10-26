@@ -78,7 +78,7 @@ class PasswordAgentFillProviderTest {
     private val target = "ai.cyclon.dev.passwordprobe"
     private val coreUid = 12345
     private val targetUid = 12346
-    private val handle = "a".repeat(64)
+    private val handle = java.util.UUID.randomUUID().toString().replace("-", "").repeat(2)
     private val signature = Signature("01234567")
     private lateinit var context: Context
     private lateinit var provider: PasswordAgentFillProvider
@@ -173,4 +173,44 @@ class PasswordAgentFillProviderTest {
         assertEquals(2, PasswordFillBinderIdentityShadow.clears)
         assertEquals(2, PasswordFillBinderIdentityShadow.restores)
     }
+    @Test fun cancellationBeforeRegistrationRevokesLatePrepare() {
+        provider.call("cancel", handle, null)
+        assertThrows(SecurityException::class.java) { prepare() }
+    }
+
+    @Test fun arbitraryAppsCannotAssertWebOrigins() {
+        val bundle = input().apply { putString("web_origin", "https://example.com") }
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, bundle) }
+    }
+
+    @Test fun jellyOriginRequiresInstalledSystemIdentityAndRejectsPathsAndUserInfo() {
+        val jelly = "org.lineageos.jelly"
+        fun install(system: Boolean) {
+            shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+                packageName = jelly
+                applicationInfo = ApplicationInfo().apply {
+                    packageName = jelly; uid = targetUid; flags = if (system) ApplicationInfo.FLAG_SYSTEM else 0
+                }
+                signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(signature)) }
+            })
+        }
+        val bundle = input().apply { putString("package", jelly); putString("web_origin", "https://example.com") }
+        install(false)
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, bundle) }
+        install(true)
+        assertEquals("https://example.com/", PasswordAgentFillTarget.from(context, bundle).realm)
+        for (origin in listOf("http://example.com", "https://example.com/login", "https://owner@example.com", "https://example.com?x=1")) {
+            bundle.putString("web_origin", origin)
+            assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, bundle) }
+        }
+        bundle.putString("web_origin", "https://example.com")
+        val target = PasswordAgentFillTarget.from(context, bundle)
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+            packageName = jelly
+            applicationInfo = ApplicationInfo().apply { packageName = jelly; uid = targetUid; flags = ApplicationInfo.FLAG_SYSTEM }
+            signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(Signature("abcdef01"))) }
+        })
+        assertFalse(target.valid(context))
+    }
+
 }

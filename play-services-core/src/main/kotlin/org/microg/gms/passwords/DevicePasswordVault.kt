@@ -28,6 +28,16 @@ class DevicePasswordVault private constructor(internal val store: AndroidVaultSt
                 (state.chromeLocalData[tag]?.let { Proto.field(3, it) } ?: byteArrayOf()))
         } } finally { keys.destroy() }
     }
+    internal fun <T> withAgentEntry(id: String, action: (PasswordData) -> T): T = store.locked { session ->
+        val state = session.load()
+        val metadata = state.metadata ?: throw VaultLockedException()
+        val keys = VaultKeys.unlock(metadata, customKey = state.customKey ?: throw VaultLockedException())
+        try {
+            val raw = state.records.singleOrNull { Proto.decode(it).string(2) == id } ?: throw VaultLockedException()
+            action(PasswordResourceCodec.read(raw, keys))
+        } finally { keys.destroy() }
+    }
+
     override fun upsert(chromePassword: ByteArray) = upsert(chromePassword, false)
     override fun upsertAutomatic(chromePassword: ByteArray) = upsert(chromePassword, true)
     private fun upsert(chromePassword: ByteArray, automatic: Boolean) = store.locked { session ->

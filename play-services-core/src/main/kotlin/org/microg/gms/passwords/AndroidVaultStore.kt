@@ -29,6 +29,12 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
     private val context = context.applicationContext
     private val id = if (alreadyHashed) identity else MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it.toInt() and 255) }
+    private val agentVault = when {
+        identity == "local-passwords-v1" -> "local"
+        !alreadyHashed && identity.startsWith("google:") -> identity
+        alreadyHashed -> null
+        else -> null
+    }
     private val alias = "microg.passwords.v1.$id"
     private val aad = ("microg.passwords.state.v1:" + id).toByteArray(Charsets.UTF_8)
     private val database = database(this.context)
@@ -69,8 +75,13 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
                     override fun save(state: VaultState) {
                         verifyAccess()
                         // A stale object cannot strip the durable launch fence.
-                        load()
+                        val previous = load()
                         verifyState(state)
+                        // Revoke deleted/replaced login lifetimes before committing, including a
+                        // same-tag replacement in a single snapshot. Failed saves can only revoke.
+                        agentVault?.let { vault ->
+                            AgentSignInAccess(this@AndroidVaultStore.context).onVaultSave(vault, previous, state)
+                        }
                         val plain = state.encode()
                         val encrypted = try { encrypt(plain) } finally { plain.fill(0) }
                         val db = database.writableDatabase
@@ -94,6 +105,8 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
     }
     private fun eraseRemovedAccount() = locked { eraseUnlocked() }
     private fun eraseUnlocked() {
+        // Account cleanup constructs this store from its hash, so revoke that namespace too.
+        AgentSignInAccess(context).retainHashedVault(id)
         database.writableDatabase.delete("vaults", "account_id=?", arrayOf(id))
         database.writableDatabase.delete("accounts", "account_id=?", arrayOf(id))
         val keys = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
