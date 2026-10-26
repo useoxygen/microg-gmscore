@@ -134,7 +134,8 @@ class ContactsSyncActivity : ComponentActivity() {
                                 startActivity(Intent(Settings.ACTION_ADD_ACCOUNT).putExtra(Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google")))
                             }) { Text(stringResource(R.string.contacts_sync_add_account)) }
                         }
-                        for (account in accounts) AccountCard(account)
+                        // Keyed: each card keeps its own state (e.g. the photo) when accounts are added or removed.
+                        for (account in accounts) key(account.name) { AccountCard(account) }
                         MoreOptions()
                     }
                 }
