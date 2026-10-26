@@ -231,16 +231,16 @@ class AgentSignInAndroidTest {
                 step = "tap-local-settings-tab"
                 tap(compose.onNode(settingsTab).performScrollTo())
                 step = "wait-local-settings-tab-selected"
-                compose.waitUntil(10_000) { compose.onAllNodes(settingsTab and isSelected()).fetchSemanticsNodes().size == 1 }
+                waitForOneNavigationNode(settingsTab and isSelected())
                 step = "assert-settings-hides-search"
                 compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
                 step = "tap-return-to-passwords-tab"
                 // The page heading is also "Passwords". Only the tab has a click action.
                 tap(compose.onNode(passwordsTab).performScrollTo())
                 step = "wait-passwords-tab-selected"
-                compose.waitUntil(10_000) { compose.onAllNodes(passwordsTab and isSelected()).fetchSemanticsNodes().size == 1 }
+                waitForOneNavigationNode(passwordsTab and isSelected())
                 step = "wait-returned-passwords-search"
-                compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().size == 1 }
+                waitForOneNavigationNode(hasSetTextAction())
                 step = "assert-returned-search-preserves-query"
                 compose.onNode(hasSetTextAction() and hasText(USERNAME)).assertExists()
                 step = "verify-tab-navigation-preserves-data"
@@ -325,6 +325,14 @@ class AgentSignInAndroidTest {
                 beforeDigest?.fill(0); afterDigest?.fill(0)
                 before.forEach { it.chromeBytes.fill(0) }; after.forEach { it.chromeBytes.fill(0) }
             }
+        }
+    }
+
+    private fun waitForOneNavigationNode(matcher: SemanticsMatcher) {
+        compose.waitUntil(10_000) {
+            // A tab transition can briefly detach the semantics root. Missing roots are
+            // not readiness; keep polling. Other failures and the timeout still propagate.
+            compose.onAllNodes(matcher).fetchSemanticsNodes(atLeastOneRootRequired = false).size == 1
         }
     }
 
