@@ -1,0 +1,25 @@
+{
+  "people": [
+    {
+      "personId": "c23",
+      "metadata": {
+        "contactId": [
+          "23"
+        ],
+        "identityInfo": {
+          "sourceIds": [
+            {
+              "container": "CONTACT",
+              "containerType": "CONTACT",
+              "id": "17",
+              "sourceEtag": "synthetic-delete-etag",
+              "deleted": true
+            }
+          ]
+        },
+        "model": "CONTACT_CENTRIC"
+      }
+    }
+  ],
+  "nextSyncToken": "synthetic-sync-2"
+}

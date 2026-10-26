@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.provider.ContactsContract
 import android.provider.ContactsContract.RawContacts
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -37,6 +39,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.microg.gms.people.sync.PrivatePeopleProbe
+import org.microg.gms.people.sync.PrivatePeopleVariant
+import org.microg.gms.people.sync.ProbeGrant
+import org.microg.gms.people.sync.ProbeIdentity
+import org.microg.gms.people.sync.HttpReply
+import org.microg.gms.people.sync.ContactsDiagnostics
 import org.microg.gms.people.sync.ActivationFailure
 import org.microg.gms.people.sync.ActivationStage
 import org.microg.gms.people.sync.ActivationAccountRemoved
@@ -55,6 +63,9 @@ class ContactsSyncActivity : ComponentActivity() {
     private var busy by mutableStateOf(false)
     private var failure: ActivationFailure? by mutableStateOf(null)
     private var revision by mutableStateOf(0)
+    private var accessCheckResult by mutableStateOf<String?>(null)
+    internal var privateProbeAuthorization: (suspend (Account, PrivatePeopleVariant) -> ProbeGrant)? = null
+    internal var privateProbeGet: (suspend (String, String) -> HttpReply)? = null
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         waitingForPermission = false
         val choice = pending
@@ -85,6 +96,7 @@ class ContactsSyncActivity : ComponentActivity() {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineSmall)
                         Text(stringResource(R.string.contacts_sync_description))
+                        accessCheckResult?.let { Text(it) }
                         if (com.google.android.gms.BuildConfig.DEBUG) Row {
                             val privacy = ContactMigrationPrivacy(this@ContactsSyncActivity)
                             Checkbox(checked = privacy.developerControlsEnabled, onCheckedChange = {
@@ -104,6 +116,8 @@ class ContactsSyncActivity : ComponentActivity() {
                                 ActivationFailure.NETWORK -> R.string.contacts_sync_enable_network
                                 ActivationFailure.API_DENIED -> R.string.contacts_sync_enable_api_denied
                                 ActivationFailure.API_UNAVAILABLE -> R.string.contacts_sync_enable_api_unavailable
+                                ActivationFailure.NEEDS_UPDATE -> R.string.contacts_sync_needs_update
+                                ActivationFailure.TWO_WAY_UNAVAILABLE -> R.string.contacts_sync_two_way_unavailable
                                 ActivationFailure.RETRY_LATER -> R.string.contacts_sync_enable_retry_later
                                 ActivationFailure.ACCOUNT_REMOVED -> R.string.contacts_sync_enable_account_removed
                                 ActivationFailure.LOCAL -> R.string.contacts_sync_enable_local
@@ -128,10 +142,11 @@ class ContactsSyncActivity : ComponentActivity() {
                         for (account in accounts) {
                             val prefs = ContactSyncPreferences(this@ContactsSyncActivity, account)
                             Text(account.name, style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.contacts_sync_two_way_consent))
                             for (mode in SyncMode.values()) {
                                 Row {
                                     RadioButton(selected = prefs.mode == mode, enabled = !busy, onClick = {
-                                        if (mode == SyncMode.TWO_WAY) confirmation = account else choose(account, mode)
+                                        choose(account, mode)
                                     })
                                     Text(stringResource(when (mode) {
                                         SyncMode.OFF -> R.string.contacts_sync_off
@@ -139,6 +154,18 @@ class ContactsSyncActivity : ComponentActivity() {
                                         SyncMode.TWO_WAY -> R.string.contacts_sync_two_way
                                     }), modifier = Modifier.padding(top = 12.dp))
                                 }
+                            }
+                            Text(stringResource(R.string.contacts_sync_check_description))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CyclonOutlinedButton(onClick = { checkAccess(account, SyncMode.DOWNLOAD) }, enabled = !busy) {
+                                    Text(stringResource(R.string.contacts_sync_check_download))
+                                }
+                                CyclonOutlinedButton(onClick = { checkAccess(account, SyncMode.TWO_WAY) }, enabled = !busy) {
+                                    Text(stringResource(R.string.contacts_sync_check_two_way))
+                                }
+                            }
+                            CyclonOutlinedButton(onClick = { checkPrivateAccess(account) }, enabled = !busy) {
+                                Text(stringResource(R.string.contacts_sync_check_private))
                             }
                             if (prefs.mode == SyncMode.TWO_WAY && ContactMigrationPrivacy(this@ContactsSyncActivity).developerControlsEnabled) {
                                 Row {
@@ -151,12 +178,16 @@ class ContactsSyncActivity : ComponentActivity() {
                             }
                             if (prefs.mode != SyncMode.OFF) {
                                 Text(stringResource(when (prefs.status) {
+                                    "partial" -> R.string.contacts_sync_partial
                                     "success" -> R.string.contacts_sync_success
                                     "conflict" -> R.string.contacts_sync_conflict
                                     "uncertain" -> R.string.contacts_sync_uncertain
                                     "authorization" -> R.string.contacts_sync_authorization
                                     "network" -> R.string.contacts_sync_network
                                     "local" -> R.string.contacts_sync_local
+                                    "needs_review" -> R.string.contacts_sync_needs_review
+                                    "needs_update" -> R.string.contacts_sync_needs_update
+                                    "two_way_unavailable" -> R.string.contacts_sync_two_way_unavailable
                                     else -> R.string.contacts_sync_ready
                                 }))
                                 if (prefs.lastSuccess > 0) Text(stringResource(R.string.contacts_sync_last_success,
@@ -170,6 +201,7 @@ class ContactsSyncActivity : ComponentActivity() {
                         }
                     }
                 }
+
                 if (resumeUploads) AlertDialog(onDismissRequest = { resumeUploads = false },
                     title = { Text(stringResource(R.string.contacts_sync_resume_uploads)) },
                     text = { Text(stringResource(R.string.contacts_sync_resume_uploads_consent)) },
@@ -217,6 +249,7 @@ class ContactsSyncActivity : ComponentActivity() {
     }
     private fun choose(account: Account, mode: SyncMode) {
         failure = null
+        accessCheckResult = null
         if (mode == SyncMode.OFF) {
             ContactSyncPreferences(this, account).configure(mode, Long.MAX_VALUE)
             revision++
@@ -232,17 +265,54 @@ class ContactsSyncActivity : ComponentActivity() {
         }
         else authorize(account, mode)
     }
-    private suspend fun authToken(account: Account, mode: SyncMode): String = suspendCancellableCoroutine { continuation ->
-        val future = AccountManager.get(this).getAuthToken(account, "oauth2:" + ContactSyncService.scope(mode), null, this, { result ->
-            if (continuation.isActive) try {
-                val token = result.result.getString(AccountManager.KEY_AUTHTOKEN)
-                if (token.isNullOrBlank()) throw android.accounts.AuthenticatorException("Contacts authorization required")
-                continuation.resume(token)
-            } catch (e: Exception) { continuation.resumeWithException(e) }
+    private suspend fun authResult(account: Account, service: String, options: Bundle? = null): Bundle = suspendCancellableCoroutine { continuation ->
+        val future = AccountManager.get(this).getAuthToken(account, service, options, this, { result ->
+            if (continuation.isActive) try { continuation.resume(result.result) }
+            catch (e: Exception) { continuation.resumeWithException(e) }
         }, null)
         continuation.invokeOnCancellation { future.cancel(false) }
     }
-    private fun authorize(account: Account, mode: SyncMode) {
+    private suspend fun authToken(account: Account, mode: SyncMode): String {
+        Log.i("GmsContactSync", "stage=authorization oauth2:" + ContactSyncService.scope(mode))
+        return authResult(account, "oauth2:" + ContactSyncService.scope(mode)).getString(AccountManager.KEY_AUTHTOKEN)
+            ?.takeIf { it.isNotBlank() } ?: throw android.accounts.AuthenticatorException("Contacts authorization required")
+    }
+    // A separate entry point: no activation, provider, preferences or scheduling
+    // capability is passed into this diagnostic-only runner.
+    internal fun checkPrivateAccess(account: Account) {
+        failure = null; accessCheckResult = null; retryChoice = null; busy = true
+        lifecycleScope.launch {
+            try {
+                PrivatePeopleProbe.run(ContactSyncService.privatePeopleContext, authorize = { variant ->
+                    try {
+                        withTimeout(60000) {
+                            privateProbeAuthorization?.invoke(account, variant) ?: run {
+                                val result = authResult(account, "oauth2:" + variant.scope.scope, Bundle().apply {
+                                    putBoolean(PrivatePeopleProbe.OPTION_PROBE, true)
+                                    putBoolean(PrivatePeopleProbe.OPTION_GMS_APP, variant.identity == ProbeIdentity.GMS_APP)
+                                })
+                                ProbeGrant(result.getString(AccountManager.KEY_AUTHTOKEN), result.getString(PrivatePeopleProbe.RESULT_AUTH))
+                            }
+                        }
+                    } catch (error: TimeoutCancellationException) { ProbeGrant(null, null) }
+                    catch (error: OperationCanceledException) { throw CancellationException("Private access check cancelled") }
+                }, get = { token, url ->
+                    privateProbeGet?.invoke(token, url) ?: withContext(Dispatchers.IO) { ContactSyncService.privatePeopleProbeGet(token, url) }
+                }, emit = { safe ->
+                    Log.i("GmsContactSync", safe)
+                    accessCheckResult = listOfNotNull(accessCheckResult, safe).joinToString("\n")
+                })
+            } finally { busy = false }
+        }
+    }
+    private fun checkAccess(account: Account, mode: SyncMode) {
+        failure = null
+        accessCheckResult = null
+        retryChoice = null
+        busy = true
+        authorize(account, mode, checkOnly = true)
+    }
+    private fun authorize(account: Account, mode: SyncMode, checkOnly: Boolean = false) {
         lifecycleScope.launch {
             var stage = ActivationStage.AUTHORIZATION
             try {
@@ -251,7 +321,7 @@ class ContactsSyncActivity : ComponentActivity() {
                     stage = ActivationStage.API
                     try {
                         // Verify API access before enabling scheduling or contact writes.
-                        withContext(Dispatchers.IO) { ContactSyncService.contactsApi(token) { false }.list(null, null) }
+                        withContext(Dispatchers.IO) { ContactSyncService.privateContactsApi(token).checkAccess() }
                     } catch (e: ApiException) {
                         if (e.status != 401) throw e
                         // Retry one expired cached token. A 403 is a separate API-access failure.
@@ -259,7 +329,12 @@ class ContactsSyncActivity : ComponentActivity() {
                         stage = ActivationStage.AUTHORIZATION
                         token = authToken(account, mode)
                         stage = ActivationStage.API
-                        withContext(Dispatchers.IO) { ContactSyncService.contactsApi(token) { false }.list(null, null) }
+                        withContext(Dispatchers.IO) { ContactSyncService.privateContactsApi(token).checkAccess() }
+                    }
+                    if (checkOnly) {
+                        Log.i("GmsContactSync", "stage=api mode=${mode.name} result=ACCESS_CHECK_SUCCESS")
+                        accessCheckResult = getString(R.string.contacts_sync_check_success)
+                        return@withTimeout
                     }
                     stage = ActivationStage.LOCAL
                     val floor = withContext(Dispatchers.IO) {
@@ -271,14 +346,27 @@ class ContactsSyncActivity : ComponentActivity() {
                     // A cancelled/recreated screen must not enable scheduling from an old IO task.
                     if (!AccountManager.get(this@ContactsSyncActivity).getAccountsByType(account.type).contains(account))
                         throw ActivationAccountRemoved()
-                    ContactSyncPreferences(this@ContactsSyncActivity, account).configure(mode, floor)
+                    val groupFloor = withContext(Dispatchers.IO) {
+                        contentResolver.query(android.provider.ContactsContract.Groups.CONTENT_URI,
+                            arrayOf(android.provider.ContactsContract.Groups._ID), null, null, "_id DESC")
+                            ?.use { if (it.moveToFirst()) it.getLong(0) else 0L }
+                            ?: throw IllegalStateException("Contacts provider unavailable")
+                    }
+                    ContactSyncPreferences(this@ContactsSyncActivity, account).apply {
+                        initializePrivateFloors(floor, groupFloor)
+                        configure(mode, floor)
+                    }
                 }
                 retryChoice = null
                 revision++
             } catch (e: TimeoutCancellationException) { failure = ActivationFailure.TIMEOUT }
             catch (e: OperationCanceledException) { failure = ActivationFailure.CANCELLED }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { failure = activationFailure(stage, e) }
+            catch (e: Exception) {
+                failure = activationFailure(stage, e)
+                Log.w("GmsContactSync", "activation " + ContactsDiagnostics.activation(stage, e))
+                if (!checkOnly) ContactSyncPreferences(this@ContactsSyncActivity, account).diagnostic = ContactsDiagnostics.activation(stage, e)
+            }
             finally { busy = false; pending = null }
         }
     }

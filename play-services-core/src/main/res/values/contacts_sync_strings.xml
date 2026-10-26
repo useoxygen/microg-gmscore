@@ -6,7 +6,7 @@
     <string name="contacts_sync_off">Off</string>
     <string name="contacts_sync_download">Download only</string>
     <string name="contacts_sync_two_way">Two-way sync</string>
-    <string name="contacts_sync_two_way_consent">Allow changes to contacts in this Google account to be uploaded, including deletions. Uploading new or imported contacts requires the separate “Upload new and imported contacts” choice. Existing Device contacts will not be uploaded. Names, numbers, email addresses, postal addresses, organizations, notes, birthdays, nicknames and websites are supported. Conflicting edits are kept for review.</string>
+    <string name="contacts_sync_two_way_consent">Allow changes to contacts in this Google account to be uploaded, including new contacts and deletions. Existing Device contacts will not be uploaded. Names, numbers, email addresses, postal addresses, organizations, notes, birthdays, events, relations, IM, SIP, custom fields, nicknames and websites are supported. Photos, labels, My Contacts membership and starred contacts are also synchronized. Conflicting edits are kept for review.</string>
     <string name="contacts_sync_enable">Enable</string>
     <string name="contacts_sync_no_accounts">Add a Google account in microG first.</string>
     <string name="contacts_sync_enable_failed">Contacts access could not be enabled. Check the permission request, Google authorization and connection, then try again.</string>
@@ -22,7 +22,13 @@
     <string name="contacts_sync_enable_timeout">The Contacts access check timed out. Check your connection and try again.</string>
     <string name="contacts_sync_open_permissions">Open app permissions</string>
     <string name="contacts_sync_retry">Try again</string>
+    <string name="contacts_sync_new_contact">New contact in this account</string>
+    <string name="contacts_sync_check_description">Check Google access without enabling sync or changing contacts. The private-service diagnostic also tests write-access grants, but every API request is a read.</string>
+    <string name="contacts_sync_check_download">Check read access</string>
+    <string name="contacts_sync_check_two_way">Check two-way access</string>
+    <string name="contacts_sync_check_success">Google access check passed. Sync settings and contacts were not changed.</string>
     <string name="contacts_sync_ready">Waiting to sync</string>
+    <string name="contacts_sync_partial">Some Google contacts could not be read. Readable contacts were synced; existing contacts and the retry checkpoint were preserved.</string>
     <string name="contacts_sync_success">Contacts are up to date</string>
     <string name="contacts_sync_conflict">Some changes need review. Conflicting or unsupported edits have been preserved.</string>
     <string name="contacts_sync_uncertain">An upload could not be confirmed. Sync will look for the result without creating another copy.</string>
@@ -32,6 +38,10 @@
     <string name="contacts_sync_last_success">Last successful sync: %1$s</string>
     <string name="contacts_sync_refresh">Sync now</string>
     <string name="contacts_sync_reconnect">Reconnect</string>
+    <string name="contacts_sync_check_private">Check private service access</string>
+    <string name="contacts_sync_needs_review">Existing Google contacts on this phone have changes that need review. Import is paused to preserve those edits.</string>
+    <string name="contacts_sync_needs_update">Contacts sync needs a Cyclon Services update. Google rejected the Contacts client request. Automatic requests are paused; update Cyclon Services or use Refresh to try again.</string>
+    <string name="contacts_sync_two_way_unavailable">Two-way contacts sync is coming soon. Choose Download only to import Google contacts without uploading changes.</string>
     <string name="contacts_sync_upload_new">Test: upload new and imported contacts</string>
     <string name="contacts_sync_upload_new_consent">Allow contacts added to this Google account on this phone, including contacts imported from an iPhone or Android phone, to be uploaded to Google. Device-only contacts remain on this phone. This choice also applies to future imports. Leave this off to keep new and imported contacts local. Contacts already uploaded are not removed from Google when you turn this off.</string>
     <string name="contacts_sync_migration_held">Contact uploads are paused after a phone transfer. This includes changes merged into contacts already synced with Google. Downloads can continue. Review your contacts and account choices before resuming uploads.</string>

@@ -42,11 +42,11 @@ class ImportedContactConsentTest {
         val provider = org.robolectric.Robolectric.buildContentProvider(ContactMigrationPrivacyProvider::class.java).create().get()
         assertNull(provider.call("resume", null, null))
         assertTrue(ContactMigrationPrivacy(context).held)
-        val api = ContactSyncService.contactsApi("synthetic-never-sent") { !ContactMigrationPrivacy(context).held }
-        assertThrows(UploadDisabled::class.java) { api.create(JSONObject()) }
-        assertThrows(UploadDisabled::class.java) { api.delete("people/synthetic") }
+        val api = ContactSyncService.privateContactsApi("synthetic-never-sent") { !ContactMigrationPrivacy(context).held }
+        assertThrows(UploadDisabled::class.java) { api.create(newContact(api)) }
+        assertThrows(UploadDisabled::class.java) { api.delete("people/fsa_17") }
         assertThrows(UploadDisabled::class.java) {
-            api.update(org.microg.gms.people.sync.Person("people/synthetic", JSONObject()), setOf("names"), JSONObject())
+            api.update(org.microg.gms.people.sync.Person("people/fsa_17", JSONObject()), setOf("names"), JSONObject())
         }
         privacy.ownerResume(); assertFalse(ContactMigrationPrivacy(context).held)
         val prefs = ContactSyncPreferences(context, Account("synthetic@example.invalid", "com.google"))
@@ -60,7 +60,10 @@ class ImportedContactConsentTest {
         finally { org.robolectric.shadows.ShadowBinder.setCallingUid(android.os.Process.myUid()) }
     }
     @Test fun disabledImportUploadStopsAtTheActualHttpBoundary() {
-        val api = ContactSyncService.contactsApi("synthetic-never-sent", canCreate = { false }) { true }
-        assertThrows(UploadDisabled::class.java) { api.create(JSONObject()) }
+        val api = ContactSyncService.privateContactsApi("synthetic-never-sent", canCreate = { false }) { true }
+        assertThrows(UploadDisabled::class.java) { api.create(newContact(api)) }
     }
+    private fun newContact(api: org.microg.gms.people.sync.PrivatePeopleApi) = JSONObject()
+        .put("names", org.json.JSONArray().put(JSONObject().put("givenName", "Synthetic")))
+        .put("clientData", org.json.JSONArray().put(JSONObject().put("key", org.microg.gms.people.sync.Person.CREATE_KEY).put("value", api.newCreationId())))
 }
