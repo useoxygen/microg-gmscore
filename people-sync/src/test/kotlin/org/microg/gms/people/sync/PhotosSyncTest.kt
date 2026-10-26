@@ -32,8 +32,6 @@ class PhotosSyncTest {
         override fun acknowledge(existing: LocalContact, remote: Person?) = error("Unexpected metadata acknowledgment")
         var value = PhotoContact(LocalContact(1, 1, "people/a", "e1", emptyMap(), emptyMap(), false, false), ContactPhotos.NONE, null, null)
         var bytes: ByteArray? = null; var installs = 0; var afterBegin: (() -> Unit)? = null
-        // Synthetic "picture" = first byte; re-encoding keeps it, a different picture changes it.
-        override fun photoSignature(bytes: ByteArray) = if (bytes.isEmpty()) null else "%02x".format((bytes[0] * 37) and 255).repeat(4)
         override fun photoContacts() = listOf(value)
         override fun photoBytes(existing: PhotoContact) = bytes
         override fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact {
@@ -62,7 +60,7 @@ class PhotosSyncTest {
     private inner class Api : ContactsApi, PhotosApi {
         var remote: Person? = person(); val images = mutableMapOf<String, ByteArray>(); var writes = 0; var reads = 0
         var afterWrite: (() -> Unit)? = null; var loseReply = false; var reject: ApiException? = null
-        var reencode: ((ByteArray) -> ByteArray)? = null
+        var reencode: ((ByteArray) -> ByteArray)? = null; var failBeforeWrite = false
         var page: ((String?, String?) -> Page)? = null
         override fun get(resource: String): Person? { reads++; return remote }
         override fun list(syncToken: String?, pageToken: String?) = page?.invoke(syncToken, pageToken) ?: Page(listOfNotNull(remote), null, "checkpoint")
@@ -71,7 +69,9 @@ class PhotosSyncTest {
         override fun delete(resource: String) = error("Unexpected contact delete")
         override fun readPhoto(url: String) = images.getValue(url)
         override fun writePhoto(resource: String, bytes: ByteArray?): Person {
-            reject?.let { throw it }; writes++
+            reject?.let { throw it }
+            if (failBeforeWrite) throw IOException("Connection dropped before Google got it")
+            writes++
             val url = bytes?.let { "https://lh3.googleusercontent.com/new$writes".also { url -> images[url] = reencode?.invoke(it) ?: it } }
             val result = person(url, "updated-$writes"); remote = result; afterWrite?.invoke()
             if (loseReply) throw IOException("Lost reply")
@@ -97,34 +97,46 @@ class PhotosSyncTest {
         PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
         assertEquals(2, api.reads)
     }
-    @Test fun fingerprintsToleratesReencodingNoiseButNotASmallBadge() {
-        fun sig(pixels: (Int) -> Triple<Int, Int, Int>) = (0 until 32 * 32).joinToString("") { i -> pixels(i).let { (r, g, b) -> "%02x%02x%02x".format(r, g, b) } }
-        val white = sig { Triple(255, 255, 255) }
-        val noisy = sig { i -> val n = (i * 7919) % 4; Triple(255 - n, 254 - n, 255 - n) } // re-encoding noise (measured: worst 3 at JPEG q60)
-        fun badge(r: Int, b: Int) = sig { i -> if (i % 32 in 12..19 && i / 32 in 12..19) Triple(r, 0, b) else Triple(255, 255, 255) }
-        assertTrue(ContactPhotos.similar(white, noisy))
-        assertFalse(ContactPhotos.similar(badge(255, 0), badge(0, 255))) // same white photo, red vs blue badge
-        assertFalse(ContactPhotos.similar(white, badge(255, 0)))
-        assertFalse(ContactPhotos.similar(white, null)); assertFalse(ContactPhotos.similar(white, white.take(12)))
-    }
-    @Test fun lostReplyForAReencodedPhotoIsConfirmedByLookNotBytes() {
+    @Test fun lostReplyWithAReencodedCloudPhotoAdoptsGooglesVersionWithoutReplay() {
         val (store, api) = setup()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
-        api.reencode = { byteArrayOf(it[0], 9, 9, 9, 9) } // Google stores the same picture, different bytes (seen live: PNG -> JPEG)
+        api.reencode = { byteArrayOf(7, 9, 9, 9, 9) } // Google stores it re-encoded (seen live: PNG -> JPEG)
         assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
         api.loseReply = false
         val report = PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
-        assertEquals(1, report.uploaded); assertEquals(0, report.uncertain)
+        assertEquals(1, report.downloaded); assertEquals(0, report.uncertain)
         assertNull(store.value.contact.pending); assertEquals(1, api.writes) // never replayed
+        assertArrayEquals(byteArrayOf(7, 9, 9, 9, 9), store.bytes) // the phone now shows exactly what Google has
+        assertEquals(0, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain)
     }
-    @Test fun lostReplyWithADifferentCloudPictureStaysUncertain() {
+    @Test fun lostReplyWithSomeoneElsesNewerCloudPhotoNeverOverwritesIt() {
         val (store, api) = setup()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
-        api.reencode = { byteArrayOf(42, 9, 9) } // someone else's picture won
+        api.afterWrite = { api.cloud("https://lh3.googleusercontent.com/other", byteArrayOf(42)) } // a later edit elsewhere wins
         assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.loseReply = false
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain)
-        assertNotNull(store.value.contact.pending); assertEquals(1, api.writes)
+        api.loseReply = false; api.afterWrite = null
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
+        assertArrayEquals(byteArrayOf(42), store.bytes); assertEquals(1, api.writes); assertNull(store.value.contact.pending)
+    }
+    @Test fun anUploadThatNeverReachedGoogleIsSentAgain() {
+        val (store, api) = setup()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.failBeforeWrite = true
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        api.failBeforeWrite = false
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain) // cloud unchanged: journal closed
+        assertNull(store.value.contact.pending); assertEquals(0, api.writes)
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, api.writes); assertArrayEquals(byteArrayOf(7, 1, 2, 3), store.bytes)
+    }
+    @Test fun aPhotoEditedAgainAfterALostReplyIsKept() {
+        val (store, api) = setup()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
+        api.reencode = { byteArrayOf(7, 9, 9) }
+        api.afterWrite = { store.edit(byteArrayOf(5, 5)) } // the owner changes the photo again meanwhile
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        api.loseReply = false; api.afterWrite = null
+        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        assertArrayEquals(byteArrayOf(5, 5), store.bytes); assertNull(store.value.contact.pending); assertTrue(store.value.contact.dirty)
     }
     @Test fun lostPhotoReplyHoldsMetadataCheckpointUntilCloudNameIsApplied() {
         val (store, api) = setup()
@@ -275,12 +287,13 @@ class PhotosSyncTest {
         assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
         assertEquals(1, api.writes); assertNull(store.value.contact.pending); assertFalse(store.value.contact.dirty)
     }
-    @Test fun transformedOrDifferentReadbackRemainsUncertainAndIsNeverReplayed() {
+    @Test fun transformedOrDifferentReadbackAdoptsGooglesPhotoAndIsNeverReplayed() {
         val (store, api) = setup(); store.edit(byteArrayOf(7)); api.loseReply = true
         assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
         api.images[ContactPhotos.reference(api.remote!!)!!] = byteArrayOf(9)
-        repeat(2) { assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain) }
-        assertEquals(1, api.writes); assertNotNull(store.value.contact.pending); assertArrayEquals(byteArrayOf(7), store.bytes)
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded) // Google's version wins
+        assertEquals(0, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain)
+        assertEquals(1, api.writes); assertNull(store.value.contact.pending); assertArrayEquals(byteArrayOf(9), store.bytes)
     }
     @Test fun laterLocalPhotoEditSurvivesUploadAndRecovery() {
         val (store, api) = setup(); store.edit(byteArrayOf(1)); api.loseReply = true

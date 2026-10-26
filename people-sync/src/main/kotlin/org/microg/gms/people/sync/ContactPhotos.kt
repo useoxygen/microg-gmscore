@@ -33,18 +33,6 @@ object ContactPhotos {
     fun reference(person: Person): String? = selected(person)?.getString("url")?.also { if (!safeUrl(it) && !PrivatePeopleApi.isPhotoReference(it)) throw UnreadableContact() }
     fun revision(person: Person): String = hash(canonical(JSONObject().put("personEtag", person.json.optString("etag"))
         .put("contactEtag", person.etag).put("photo", selected(person) ?: JSONObject.NULL)).toByteArray(Charsets.UTF_8))
-    /** Signatures (see PhotoStore.photoSignature) describe the same picture despite re-encoding. */
-    // Re-encoding noise is small everywhere; a real edit (even a small badge) is large somewhere.
-    // So bound both the average and the worst channel difference.
-    fun similar(a: String?, b: String?): Boolean {
-        if (a == null || b == null || a.length != b.length || a.length % 2 != 0 || a.isEmpty()) return false
-        var diff = 0L; var worst = 0
-        for (i in a.indices step 2) {
-            val d = kotlin.math.abs(a.substring(i, i + 2).toInt(16) - b.substring(i, i + 2).toInt(16))
-            diff += d; if (d > worst) worst = d
-        }
-        return diff / (a.length / 2) <= 4 && worst <= 20
-    }
     fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
     fun base64(bytes: ByteArray): String {
         val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -67,8 +55,6 @@ data class PhotoContact(val contact: LocalContact, val token: String, val baseli
     /** The last metadata read recorded that Google has no photo for this contact. */
     val remoteKnownNone: Boolean = false)
 interface PhotoStore {
-    /** A tiny downscaled image fingerprint (hex), or null if the bytes don't decode. */
-    fun photoSignature(bytes: ByteArray): String? = null
     fun photoContacts(): List<PhotoContact>
     fun photoBytes(existing: PhotoContact): ByteArray?
     fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact
@@ -105,15 +91,23 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
                 if (pending.optBoolean("conflict")) { conflicts++; continue }
                 val remoteBytes = remote?.let(photos::readPhoto)
                 val hash = remoteBytes?.let(ContactPhotos::hash)
-                // Google re-encodes uploads (e.g. PNG to JPEG), so an exact hash can't confirm a lost reply.
-                // While the local photo is still the one that was sent, compare what the pictures look like
-                // (32x32, every pixel close): re-encoding passes, a different picture or a small edit does not.
-                val sameImage = remoteBytes != null && local.token == pending.optString("sentToken") &&
-                    store.photoBytes(local)?.let { sent -> ContactPhotos.similar(store.photoSignature(sent), store.photoSignature(remoteBytes)) } == true
-                val matches = if (pending.getString("action") == "delete") remote == null else hash == pending.getString("hash") || sameImage
+                val matches = if (pending.getString("action") == "delete") remote == null else hash == pending.getString("hash")
                 if (matches) {
                     store.completePhoto(local, current, pending.getString("sentToken"), hash); uploaded++
-                } else uncertain++ // Never replay a photo over a possible concurrent cloud edit.
+                    continue
+                }
+                // A lost reply can't be confirmed by content: Google re-encodes uploads, and no image comparison
+                // tells a re-encode from a small edit. Decide by whether the cloud photo changed at all.
+                val before = pending.opt("beforeRemote").takeUnless { it == JSONObject.NULL } as String?
+                // The photo reference changes only when the photo does (not on other contact edits).
+                val cloudUnchanged = remote == before
+                store.rejectPhoto(local) // Close the journal; nothing below replays over a changed cloud photo.
+                if (cloudUnchanged) { uncertain++; continue } // The write never landed: the next pass sends it again.
+                // The cloud photo changed (our upload, re-encoded, or someone else's newer photo): Google's version
+                // wins, unless the photo here was edited again since it was sent - that edit is kept for upload.
+                val reopened = store.photoContacts().singleOrNull { it.contact.id == local.contact.id } ?: continue
+                if (reopened.token == pending.optString("sentToken")) { store.installPhoto(reopened, current, remoteBytes); downloaded++ }
+                else conflicts++
                 continue
             }
             val changed = local.token != (local.baseline?.token ?: ContactPhotos.NONE)

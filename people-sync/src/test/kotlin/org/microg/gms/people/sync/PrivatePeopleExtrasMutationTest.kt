@@ -149,7 +149,7 @@ class PrivatePeopleExtrasMutationTest {
         api.update(person, fields, payload)
     }
     private class PhotoMemory(var row: PhotoContact, private val bytes: ByteArray?) : PhotoStore {
-        var completed = 0
+        var completed = 0; var installed: ByteArray? = null
         override fun photoContacts() = listOf(row)
         override fun photoBytes(existing: PhotoContact) = bytes
         override fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact {
@@ -160,9 +160,11 @@ class PrivatePeopleExtrasMutationTest {
             completed++; row = row.copy(contact = row.contact.copy(pending = null),
                 baseline = PhotoBaseline(sentToken, ContactPhotos.reference(remote), ContactPhotos.revision(remote), remoteHash))
         }
-        override fun installPhoto(existing: PhotoContact, remote: Person, bytes: ByteArray?) { error("Local photo edit must not be overwritten") }
+        override fun installPhoto(existing: PhotoContact, remote: Person, bytes: ByteArray?) {
+            assertNull(row.contact.pending); installed = bytes; row = row.copy(contact = row.contact.copy(dirty = false))
+        }
     }
-    @Test fun lostPrivatePhotoRepliesReconcileByReadbackAndTransformedImagesStayUncertain() {
+    @Test fun lostPrivatePhotoRepliesReconcileByReadbackAndTransformedImagesAdoptGooglesVersion() {
         for (action in listOf("upload", "delete", "transformed")) {
             var raw = personRaw(); var image = byteArrayOf(7); var writes = 0; var drop = true
             val initial = PrivatePeopleApi.normalize(raw).single()
@@ -193,7 +195,9 @@ class PrivatePeopleExtrasMutationTest {
             assertNotNull(store.row.contact.pending); drop = false
             val report = sync()
             assertEquals(1, writes)
-            if (action == "transformed") { assertEquals(1, report.uncertain); assertNotNull(store.row.contact.pending); assertEquals(0, store.completed) }
+            if (action == "transformed") { // Google re-encoded it: take Google's version, never replay
+                assertEquals(1, report.downloaded); assertNull(store.row.contact.pending); assertArrayEquals(png + byteArrayOf(1), store.installed)
+            }
             else { assertEquals(1, report.uploaded); assertNull(store.row.contact.pending); assertEquals(1, store.completed) }
         }
     }
