@@ -46,6 +46,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -119,9 +120,12 @@ class ContactsSyncActivity : ComponentActivity() {
                         @Suppress("UNUSED_EXPRESSION")
                         revision
                         val accounts = AccountManager.get(this@ContactsSyncActivity).getAccountsByType("com.google")
-                        DeveloperControls()
-                        if (accounts.any { ContactSyncPreferences(this@ContactsSyncActivity, it).mode != SyncMode.OFF }) AutoSyncOff()
-                        MigrationHold()
+                        // Platform settings aren't observable: read them here, on every revision tick, and pass them down.
+                        val privacy = ContactMigrationPrivacy(this@ContactsSyncActivity)
+                        if (com.google.android.gms.BuildConfig.DEBUG) DeveloperControls(privacy.developerControlsEnabled)
+                        if (!ContentResolver.getMasterSyncAutomatically() &&
+                            accounts.any { ContactSyncPreferences(this@ContactsSyncActivity, it).mode != SyncMode.OFF }) AutoSyncOff()
+                        if (privacy.held) MigrationHold()
                         failure?.let { ActivationProblem(it) }
                         if (accounts.isEmpty()) Notice(stringResource(R.string.contacts_sync_no_accounts)) {
                             CyclonOutlinedButton(onClick = {
@@ -163,7 +167,9 @@ class ContactsSyncActivity : ComponentActivity() {
                     }
                 }
             }
-            ClickableText(text, style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)) { offset ->
+            // Taps hit the link span; TalkBack and keyboard users get the same link as the text's click action.
+            ClickableText(text, style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                modifier = Modifier.semantics { onClick(label = link) { openUrl(GOOGLE_CONTACTS); true } }) { offset ->
                 text.getStringAnnotations("url", offset, offset).firstOrNull()?.let { openUrl(it.item) }
             }
             Text(stringResource(R.string.contacts_sync_header_note), style = MaterialTheme.typography.bodyMedium,
@@ -188,17 +194,14 @@ class ContactsSyncActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun DeveloperControls() {
-        if (!com.google.android.gms.BuildConfig.DEBUG) return
-        val privacy = ContactMigrationPrivacy(this)
-        SwitchRow(stringResource(R.string.contacts_sync_developer_controls), null, privacy.developerControlsEnabled) {
-            privacy.developerControlsEnabled = it; revision++
+    private fun DeveloperControls(enabled: Boolean) {
+        SwitchRow(stringResource(R.string.contacts_sync_developer_controls), null, enabled) {
+            ContactMigrationPrivacy(this).developerControlsEnabled = it; revision++
         }
     }
 
     @Composable
     private fun MigrationHold() {
-        if (!ContactMigrationPrivacy(this).held) return
         Notice(stringResource(R.string.contacts_sync_migration_held), title = stringResource(R.string.contacts_sync_migration_held_title)) {
             CyclonOutlinedButton(onClick = { resumeUploads = true }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) }
         }
@@ -207,7 +210,6 @@ class ContactsSyncActivity : ComponentActivity() {
     // Like Google's screen: account sync data is only refreshed automatically while Android's auto-sync is on.
     @Composable
     private fun AutoSyncOff() {
-        if (ContentResolver.getMasterSyncAutomatically()) return
         Notice(stringResource(R.string.contacts_sync_auto_sync_off)) {
             CyclonOutlinedButton(onClick = { autoSyncConfirmation = true }) { Text(stringResource(R.string.contacts_sync_turn_on_auto_sync)) }
         }
