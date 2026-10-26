@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -46,7 +45,6 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -163,15 +161,12 @@ class ContactsSyncActivity : ComponentActivity() {
                     append(full)
                     if (start >= 0) {
                         addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), start, start + link.length)
-                        addStringAnnotation("url", GOOGLE_CONTACTS, start, start + link.length)
                     }
                 }
             }
-            // Taps hit the link span; TalkBack and keyboard users get the same link as the text's click action.
-            ClickableText(text, style = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                modifier = Modifier.semantics { onClick(label = link) { openUrl(GOOGLE_CONTACTS); true } }) { offset ->
-                text.getStringAnnotations("url", offset, offset).firstOrNull()?.let { openUrl(it.item) }
-            }
+            // The whole sentence opens the link: focusable, Enter/Space and TalkBack come with clickable.
+            Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.clickable(onClickLabel = link) { openUrl(GOOGLE_CONTACTS) })
             Text(stringResource(R.string.contacts_sync_header_note), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
