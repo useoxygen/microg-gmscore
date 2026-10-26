@@ -81,7 +81,7 @@ class MultiArchLoader(private val mapContext: Context, private val appContext: C
         removeOtherCopies(abiDir, target.parentFile!!)
         for (attempt in 1..2) {
             if (target.length() != size || attempt == 2) {
-                if (!extract(apkFile, path, size, crc, target)) return false
+                if (!extract(apkFile, path, size, crc, target)) continue
             }
             if (tryLoad(target)) return true
         }
@@ -134,9 +134,16 @@ class MultiArchLoader(private val mapContext: Context, private val appContext: C
         }
     }
 
-    /** Removes copies of other library versions and the old single-file layout. Unlinking a loaded file is safe. */
+    /**
+     * Removes the old single-file layout and copies of other library versions. A version folder is kept while it was
+     * touched in the last [STALE_COPY_MS], because another process of the app may still be extracting into it (for
+     * example right after a GmsCore update). Unlinking a loaded library is safe.
+     */
     private fun removeOtherCopies(abiDir: File, keep: File) {
-        abiDir.listFiles()?.forEach { if (it != keep) it.deleteRecursively() }
+        val staleBefore = System.currentTimeMillis() - STALE_COPY_MS
+        abiDir.listFiles()?.forEach {
+            if (it != keep && (it.isFile || it.lastModified() < staleBefore)) it.deleteRecursively()
+        }
     }
 
     @SuppressLint("UnsafeDynamicallyLoadedCode")
@@ -165,6 +172,7 @@ class MultiArchLoader(private val mapContext: Context, private val appContext: C
 
     companion object {
         private val TAG = "GmsMultiArchLoader"
+        private const val STALE_COPY_MS = 10 * 60 * 1000L
     }
 
 }
