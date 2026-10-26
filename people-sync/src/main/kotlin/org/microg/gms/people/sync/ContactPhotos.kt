@@ -34,11 +34,16 @@ object ContactPhotos {
     fun revision(person: Person): String = hash(canonical(JSONObject().put("personEtag", person.json.optString("etag"))
         .put("contactEtag", person.etag).put("photo", selected(person) ?: JSONObject.NULL)).toByteArray(Charsets.UTF_8))
     /** Signatures (see PhotoStore.photoSignature) describe the same picture despite re-encoding. */
+    // Re-encoding noise is small everywhere; a real edit (even a small badge) is large somewhere.
+    // So bound both the average and the worst channel difference.
     fun similar(a: String?, b: String?): Boolean {
         if (a == null || b == null || a.length != b.length || a.length % 2 != 0 || a.isEmpty()) return false
-        var diff = 0L
-        for (i in a.indices step 2) diff += kotlin.math.abs(a.substring(i, i + 2).toInt(16) - b.substring(i, i + 2).toInt(16))
-        return diff / (a.length / 2) <= 12
+        var diff = 0L; var worst = 0
+        for (i in a.indices step 2) {
+            val d = kotlin.math.abs(a.substring(i, i + 2).toInt(16) - b.substring(i, i + 2).toInt(16))
+            diff += d; if (d > worst) worst = d
+        }
+        return diff / (a.length / 2) <= 4 && worst <= 20
     }
     fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
     fun base64(bytes: ByteArray): String {
@@ -101,7 +106,8 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
                 val remoteBytes = remote?.let(photos::readPhoto)
                 val hash = remoteBytes?.let(ContactPhotos::hash)
                 // Google re-encodes uploads (e.g. PNG to JPEG), so an exact hash can't confirm a lost reply.
-                // While the local photo is still the one that was sent, compare what the pictures look like.
+                // While the local photo is still the one that was sent, compare what the pictures look like
+                // (32x32, every pixel close): re-encoding passes, a different picture or a small edit does not.
                 val sameImage = remoteBytes != null && local.token == pending.optString("sentToken") &&
                     store.photoBytes(local)?.let { sent -> ContactPhotos.similar(store.photoSignature(sent), store.photoSignature(remoteBytes)) } == true
                 val matches = if (pending.getString("action") == "delete") remote == null else hash == pending.getString("hash") || sameImage
