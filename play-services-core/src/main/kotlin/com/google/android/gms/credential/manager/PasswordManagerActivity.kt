@@ -16,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -326,9 +327,16 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 TextButton(onClick = { if (detailId != null) detailId = null else finish() }) { Text(stringResource(R.string.cyclon_back)) }
             }
             accessEditing?.takeIf { unlocked }?.let { entry -> assistantAccess[entry.id]?.let { state ->
-                SignInAccessDialog(entry, state.level, busy, onDismiss = { accessEditing = null },
-                    onSave = { level ->
+                SignInAccessDialog(entry, state.level, state.requireDeviceAuthentication, hasSecureScreenLock, busy,
+                    onDismiss = { accessEditing = null },
+                    onSetScreenLock = {
                         requireOwner()
+                        runCatching { startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)) }
+                            .onFailure { message = R.string.passwords_access_failed }
+                    }, onSave = { level, requireAuthentication ->
+                        requireOwner()
+                        if (requireAuthentication && !state.requireDeviceAuthentication && !hasSecureScreenLock)
+                            throw VaultLockedException()
                         val account = selected
                         val identity = ownerOperations.identity(account)
                         accessEditing = null
@@ -338,8 +346,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                                 fun set(current: PasswordData) {
                                     if (current.realm != entry.data.realm || current.username != entry.data.username || current.blocked) throw VaultLockedException()
                                     if (!ownerOperations.identity(account).same(identity)) throw VaultLockedException()
-                                    AgentSignInAccess(this@PasswordManagerActivity).setCurrent(
-                                        AgentSignInAccess.vaultKey(identity.userId), entry.id, state.incarnation, level)
+                                    AgentSignInAccess(this@PasswordManagerActivity).setOwnerPolicy(
+                                        AgentSignInAccess.vaultKey(identity.userId), entry.id, state.incarnation, level, requireAuthentication)
                                 }
                                 when (repo) {
                                     is PasswordRepository -> repo.withAgentEntry(entry.id, ::set)
@@ -641,6 +649,8 @@ private fun PasswordDetails(entry: PasswordView, access: AgentSignInAccess.State
         OutlinedButton(onClick = onAccess, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.passwords_assistant_access_status, stringResource(accessLabel(access.level))))
         }
+        if (access.requireDeviceAuthentication) Text(stringResource(R.string.passwords_assistant_authentication_summary),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         access.lastUsed?.let { used -> Text(stringResource(R.string.passwords_assistant_last_used,
             java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
                 .format(java.util.Date(used))), style = MaterialTheme.typography.bodySmall,
@@ -649,9 +659,11 @@ private fun PasswordDetails(entry: PasswordView, access: AgentSignInAccess.State
 }
 
 @Composable
-private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.Level, busy: Boolean,
-                               onDismiss: () -> Unit, onSave: (AgentSignInAccess.Level) -> Unit) {
+private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.Level, currentRequireAuthentication: Boolean,
+                               hasSecureScreenLock: Boolean, busy: Boolean, onDismiss: () -> Unit,
+                               onSetScreenLock: () -> Unit, onSave: (AgentSignInAccess.Level, Boolean) -> Unit) {
     var selected by remember(entry.id, current) { mutableStateOf(current) }
+    var requireAuthentication by remember(entry.id, currentRequireAuthentication) { mutableStateOf(currentRequireAuthentication) }
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.passwords_assistant_access)) },
         text = {
@@ -664,10 +676,11 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
                 Text(stringResource(R.string.passwords_assistant_access_description), style = MaterialTheme.typography.bodySmall)
                 Column(Modifier.selectableGroup()) {
                     AgentSignInAccess.Level.values().forEach { level ->
-                        Row(Modifier.fillMaxWidth().selectable(selected == level, enabled = !busy, role = Role.RadioButton,
+                        val choiceEnabled = !busy && !(requireAuthentication && level == AgentSignInAccess.Level.ALWAYS)
+                        Row(Modifier.fillMaxWidth().selectable(selected == level, enabled = choiceEnabled, role = Role.RadioButton,
                             onClick = { selected = level }).padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            RadioButton(selected = selected == level, onClick = null, enabled = !busy)
+                            RadioButton(selected = selected == level, onClick = null, enabled = choiceEnabled)
                             Column(Modifier.weight(1f)) {
                                 Text(stringResource(accessLabel(level)), style = MaterialTheme.typography.bodyLarge)
                                 Text(stringResource(when (level) {
@@ -679,10 +692,33 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
                         }
                     }
                 }
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth().toggleable(value = requireAuthentication,
+                    enabled = !busy && (hasSecureScreenLock || requireAuthentication), role = Role.Switch,
+                    onValueChange = { enabled ->
+                        requireAuthentication = enabled
+                        if (enabled && selected == AgentSignInAccess.Level.ALWAYS) selected = AgentSignInAccess.Level.ASK
+                    }).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.passwords_assistant_require_authentication), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.passwords_assistant_require_authentication_description),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = requireAuthentication, onCheckedChange = null,
+                        enabled = !busy && (hasSecureScreenLock || requireAuthentication))
+                }
+                if (!hasSecureScreenLock) {
+                    Text(stringResource(R.string.passwords_assistant_screen_lock_required), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onSetScreenLock, enabled = !busy) {
+                        Text(stringResource(R.string.passwords_assistant_set_screen_lock))
+                    }
+                }
                 Text(stringResource(R.string.passwords_assistant_revoke_description), style = MaterialTheme.typography.bodySmall)
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(selected) }, enabled = !busy && selected != current) {
+        confirmButton = { TextButton(onClick = { onSave(selected, requireAuthentication) },
+            enabled = !busy && (selected != current || requireAuthentication != currentRequireAuthentication)) {
             Text(stringResource(R.string.passwords_save))
         } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } })

@@ -29,7 +29,6 @@ class PasswordAutofillTarget private constructor(val realm: String, val caller: 
         } finally { parcel.recycle() }
     }
     companion object {
-        private class Field(val node: AssistStructure.ViewNode, val domain: String?, val scheme: String?)
         fun parse(context: Context, structure: AssistStructure): PasswordAutofillTarget {
             val pkg = structure.activityComponent?.packageName ?: throw SecurityException()
             val info = context.packageManager.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
@@ -37,35 +36,39 @@ class PasswordAutofillTarget private constructor(val realm: String, val caller: 
             val certificate = MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray())
             val browser = pkg in setOf("com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary") &&
                 ExtendedPackageInfo(context, pkg).hasGooglePackagePermission(GooglePackagePermission.CREDENTIALS)
-            val fields = ArrayList<Field>()
+            val fields = ArrayList<AssistStructure.ViewNode>()
             var visited = 0
-            fun walk(node: AssistStructure.ViewNode, domain: String?, scheme: String?, depth: Int) {
+            fun walk(node: AssistStructure.ViewNode, depth: Int) {
                 if (++visited > 5000 || depth > 64) throw ProtocolException()
-                val host = node.webDomain ?: domain
-                val protocol = node.webScheme ?: scheme
-                if (node.autofillId != null && node.autofillType == View.AUTOFILL_TYPE_TEXT) fields.add(Field(node, host, protocol))
-                for (i in 0 until node.childCount) walk(node.getChildAt(i), host, protocol, depth + 1)
+                if (node.autofillId != null && node.autofillType == View.AUTOFILL_TYPE_TEXT) fields.add(node)
+                for (i in 0 until node.childCount) walk(node.getChildAt(i), depth + 1)
             }
             if (structure.windowNodeCount > 16) throw ProtocolException()
-            for (i in 0 until structure.windowNodeCount) walk(structure.getWindowNodeAt(i).rootViewNode, null, null, 0)
-            val passwords = fields.filter { PasswordAutofillField.kind(it.node, browser) == PasswordAutofillField.Kind.PASSWORD }
+            for (i in 0 until structure.windowNodeCount) walk(structure.getWindowNodeAt(i).rootViewNode, 0)
+            val passwords = fields.filter { PasswordAutofillField.kind(it, browser) == PasswordAutofillField.Kind.PASSWORD }
             val secret = passwords.singleOrNull() ?: throw ProtocolException()
-            val users = fields.filter { it !== secret && PasswordAutofillField.kind(it.node, browser) == PasswordAutofillField.Kind.USERNAME }
+            val users = fields.filter { it !== secret && PasswordAutofillField.kind(it, browser) == PasswordAutofillField.Kind.USERNAME }
             val user = users.singleOrNull()
-            val realm = if (browser) {
-                if (secret.domain.isNullOrEmpty() || secret.scheme != "https" ||
-                    user != null && (user.domain != secret.domain || user.scheme != secret.scheme)) throw SecurityException()
-                // Android exposes only scheme + host here, not the port. This remains an
-                // owner-authenticated autofill path; it is not an exact-origin agent grant.
-                val uri = java.net.URI("https://${secret.domain}/")
-                if (uri.host.isNullOrEmpty() || uri.rawAuthority != secret.domain || uri.port != -1 ||
-                    uri.rawPath != "/" || uri.rawQuery != null || uri.rawFragment != null) throw SecurityException()
-                PasswordData.webRealm(uri.toString())
-            } else "android://${Base64.getUrlEncoder().withoutPadding().encodeToString(certificate)}@$pkg/"
+            val realm = if (browser) browserRealm(secret, user)
+                else "android://${Base64.getUrlEncoder().withoutPadding().encodeToString(certificate)}@$pkg/"
             val caller = MessageDigest.getInstance("SHA-256").digest(Proto.field(1, pkg) + Proto.field(2, certificate) + Proto.field(3, realm))
-            fun text(field: Field?) = field?.node?.autofillValue?.takeIf { it.isText }?.textValue?.toString().orEmpty()
-            return PasswordAutofillTarget(realm, caller, pkg, certificate, user?.node?.autofillId,
-                secret.node.autofillId ?: throw ProtocolException(), text(user), text(secret), browser)
+            fun text(field: AssistStructure.ViewNode?) = field?.autofillValue?.takeIf { it.isText }?.textValue?.toString().orEmpty()
+            return PasswordAutofillTarget(realm, caller, pkg, certificate, user?.autofillId,
+                secret.autofillId ?: throw ProtocolException(), text(user), text(secret), browser)
+        }
+        internal fun browserRealm(secret: AssistStructure.ViewNode, user: AssistStructure.ViewNode?): String {
+            // Chrome can flatten fields from several frames under a single form. The form's
+            // domain is not authority for its child inputs. Older Chrome/disabled forwarding
+            // may omit field origins; refuse instead of assigning the parent site's password.
+            val domain = secret.webDomain
+            if (domain.isNullOrEmpty() || secret.webScheme != "https" ||
+                user != null && (user.webDomain != domain || user.webScheme != "https")) throw SecurityException()
+            // Android exposes only scheme + host here, not the port. This remains an
+            // owner-authenticated autofill path; it is not an exact-origin agent grant.
+            val uri = java.net.URI("https://$domain/")
+            if (uri.host.isNullOrEmpty() || uri.userInfo != null || uri.rawAuthority != domain || uri.port != -1 ||
+                uri.rawPath != "/" || uri.rawQuery != null || uri.rawFragment != null) throw SecurityException()
+            return PasswordData.webRealm(uri.toString())
         }
         fun unpack(payload: ByteArray): Bundle {
             if (payload.size > 512 * 1024) throw ProtocolException()

@@ -1,0 +1,27 @@
+# Per-login device authentication
+
+The owner controls two local properties of a saved login: Ask / Allow sign-in /
+Never, and **Require device authentication**. Requiring authentication forces
+Ask, disables Allow sign-in, and needs a configured Android screen lock. Removing
+the requirement leaves Ask in place. Both transitions rotate the incarnation so
+a waiting request cannot inherit a different policy.
+
+Core receives only account metadata, including `require_authentication`. For a
+strict login it asks the native broker to redeem and opens the returned Services
+PendingIntent. The broker keeps the selected entry and one-use request in memory;
+the Intent contains only a handle. `PasswordAgentAuthenticationActivity` displays
+the actual package or HTTPS origin and username in a fresh system biometric or device-credential
+challenge. Its native foreground/focus proof is checked again under the vault and
+grant locks immediately before the private ResultReceiver handover. An unlocked
+phone, a caller-provided boolean, restored activity state, or a stale reference is
+not authentication. Cancellation, expiry and process death invalidate the request.
+
+The legacy agent picker enforces the same Never and authentication rules. This
+does not change owner-initiated Android Autofill, which has its own authentication
+and origin checks. Grants and authentication requirements are not uploaded to
+Google. Test or device evidence is reported separately from this protocol.
+
+This policy authorizes password use only. It does not implement the additional
+confirmation gates for payments, bookings, sending messages or security changes.
+Chrome automatic agent fill still needs its browser-owned exact-frame contract;
+the existing native whole-UID privacy fence remains in place after delivery.

@@ -115,4 +115,58 @@ class AgentSignInAccessTest {
         access.redeem(vault, "login", original.incarnation, false) { }
     }
 
+    @Test fun enablingDeviceAuthenticationRevokesAlwaysAndRequiresNativeAuthentication() {
+        val access = AgentSignInAccess(context)
+        val original = access.get(vault, "login")
+        access.setCurrent(vault, "login", original.incarnation, AgentSignInAccess.Level.ALWAYS)
+        access.setOwnerPolicy(vault, "login", original.incarnation, AgentSignInAccess.Level.ALWAYS, true)
+        val strict = AgentSignInAccess(context).get(vault, "login")
+        assertTrue(strict.requireDeviceAuthentication)
+        assertEquals(AgentSignInAccess.Level.ASK, strict.level)
+        assertNotEquals(original.incarnation, strict.incarnation)
+        assertThrows(SecurityException::class.java) { access.redeem(vault, "login", original.incarnation, false) { fail() } }
+        assertThrows(SecurityException::class.java) { access.setCurrent(vault, "login", strict.incarnation, AgentSignInAccess.Level.ALWAYS) }
+        assertThrows(SecurityException::class.java) { access.redeem(vault, "login", strict.incarnation, true) { fail() } }
+        access.redeem(vault, "login", strict.incarnation, true, deviceAuthenticated = true) { }
+        assertEquals(AgentSignInAccess.Level.ASK, access.get(vault, "login").level)
+    }
+
+    @Test fun disablingDeviceAuthenticationInvalidatesPendingNativeAuthAndDoesNotRestoreAlways() {
+        val access = AgentSignInAccess(context)
+        val original = access.get(vault, "login")
+        access.setCurrent(vault, "login", original.incarnation, AgentSignInAccess.Level.ALWAYS)
+        access.setOwnerPolicy(vault, "login", original.incarnation, AgentSignInAccess.Level.ALWAYS, true)
+        val strict = access.get(vault, "login")
+        access.setOwnerPolicy(vault, "login", strict.incarnation, strict.level, false)
+        val normal = access.get(vault, "login")
+        assertFalse(normal.requireDeviceAuthentication)
+        assertEquals(AgentSignInAccess.Level.ASK, normal.level)
+        assertNotEquals(strict.incarnation, normal.incarnation)
+        assertThrows(SecurityException::class.java) { access.redeem(vault, "login", strict.incarnation, true, deviceAuthenticated = true) { fail() } }
+        assertThrows(SecurityException::class.java) { access.redeem(vault, "login", normal.incarnation, false) { fail() } }
+    }
+
+    @Test fun neverRemainsBlockedAfterNativeAuthenticationAndPolicyEdits() {
+        val access = AgentSignInAccess(context)
+        val original = access.get(vault, "login")
+        access.setOwnerPolicy(vault, "login", original.incarnation, AgentSignInAccess.Level.NEVER, true)
+        val strict = access.get(vault, "login")
+        assertTrue(strict.requireDeviceAuthentication)
+        assertEquals(AgentSignInAccess.Level.NEVER, strict.level)
+        assertThrows(SecurityException::class.java) { access.redeem(vault, "login", strict.incarnation, true, deviceAuthenticated = true) { fail() } }
+    }
+
+    @Test fun replacingStrictLoginInvalidatesAuthenticatedUseAndResetsPolicyForNewLogin() {
+        val access = AgentSignInAccess(context)
+        val original = access.get(vault, "login")
+        access.setOwnerPolicy(vault, "login", original.incarnation, AgentSignInAccess.Level.ASK, true)
+        val strict = access.get(vault, "login")
+        access.onVaultSave(vault, snapshot("parent", "parent/passwords/old"), snapshot("parent", "parent/passwords/new"))
+        assertThrows(SecurityException::class.java) { access.redeem(vault, "login", strict.incarnation, true, deviceAuthenticated = true) { fail() } }
+        val replacement = access.get(vault, "login")
+        assertFalse(replacement.requireDeviceAuthentication)
+        assertEquals(AgentSignInAccess.Level.ASK, replacement.level)
+        assertNotEquals(strict.incarnation, replacement.incarnation)
+    }
+
 }

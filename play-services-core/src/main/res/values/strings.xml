@@ -499,4 +499,11 @@ Please set up a password, PIN, or pattern lock screen."</string>
     <string name="passwords_assistant_always_description">Sign in with this login without asking again.</string>
     <string name="passwords_assistant_never_description">Block Cyclon from using this login to sign in.</string>
     <string name="passwords_assistant_revoke_description">To revoke permission, choose Ask each time or Never and save. Your saved login is kept.</string>
+    <string name="passwords_assistant_require_authentication">Require device authentication</string>
+    <string name="passwords_assistant_require_authentication_description">Confirm it’s you every time Cyclon uses this login. Allow sign-in is unavailable while this is on.</string>
+    <string name="passwords_assistant_authentication_summary">Device authentication is required for every Cyclon sign-in.</string>
+    <string name="passwords_assistant_screen_lock_required">Set a screen lock to require device authentication. Without a screen lock, protected sign-ins cannot continue.</string>
+    <string name="passwords_assistant_set_screen_lock">Set up a screen lock</string>
+    <string name="passwords_assistant_verify_signin">Sign in to %1$s?</string>
+    <string name="passwords_assistant_verify_account">Verify it’s you to sign in as %1$s.\n%2$s</string>
 </resources>

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.ContextWrapper
@@ -211,6 +212,69 @@ class PasswordAgentFillProviderTest {
             signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(Signature("abcdef01"))) }
         })
         assertFalse(target.valid(context))
+    }
+
+    private fun authentication(fill: PasswordAgentFillRequest, use: (() -> Boolean) -> Unit = { fail("Must await native authentication") }): PendingIntent {
+        val identity = Binder.clearCallingIdentity()
+        return try { PasswordAgentAuthenticationRequests.prepare(context, fill, use = use) }
+        finally { Binder.restoreCallingIdentity(identity) }
+    }
+
+    @Test fun strictAuthenticationHasNoUnlockedOrNoScreenLockFallback() {
+        val lock = shadowOf(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+        lock.setIsDeviceSecure(false)
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(false)
+        val request = PasswordAgentFillRequest.from(context, input())
+        assertThrows(SecurityException::class.java) { authentication(request) }
+        lock.setIsDeviceSecure(true)
+        lock.setIsDeviceLocked(true)
+        assertThrows(SecurityException::class.java) { authentication(request) }
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(true)
+        assertThrows(SecurityException::class.java) { authentication(request) }
+    }
+
+    @Test fun strictAuthenticationIsImmutableOneShotRequestBoundAndCancelledWithFill() {
+        val lock = shadowOf(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+        lock.setIsDeviceSecure(true)
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(false)
+        val request = PasswordAgentFillRequest.from(context, input())
+        PasswordAgentFillRequests.put(request)
+        val pendingIntent = authentication(request)
+        val pending = shadowOf(pendingIntent)
+        assertTrue(pending.isImmutable)
+        assertEquals(PendingIntent.FLAG_ONE_SHOT, pending.flags and PendingIntent.FLAG_ONE_SHOT)
+        assertEquals(services, pending.savedIntent.component!!.packageName)
+        assertEquals(PasswordAgentAuthenticationActivity::class.java.name, pending.savedIntent.component!!.className)
+        assertNull(pending.savedIntent.extras)
+        assertEquals("microg-password-agent:/authenticate/$handle", pending.savedIntent.data.toString())
+        val nativeRequest = PasswordAgentAuthenticationRequests.find(pending.savedIntent.data)
+        assertSame(request, nativeRequest.fill)
+        assertEquals(target, nativeRequest.target)
+        assertSame(request, PasswordAgentFillRequests.find(Uri.parse("microg-password-agent:/fill/$handle")))
+        assertTrue(PasswordAgentAuthenticationRequests.claim(nativeRequest))
+        assertFalse(PasswordAgentAuthenticationRequests.claim(nativeRequest))
+        provider.call("cancel", handle, null)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertFalse(request.valid(context))
+        assertFalse(PasswordAgentAuthenticationRequests.claim(nativeRequest))
+        assertThrows(SecurityException::class.java) { PasswordAgentAuthenticationRequests.find(pending.savedIntent.data) }
+    }
+
+    @Test fun strictAuthenticationExpiresWithoutEverReturningPassword() {
+        val lock = shadowOf(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+        lock.setIsDeviceSecure(true)
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(false)
+        val request = PasswordAgentFillRequest.from(context, input())
+        PasswordAgentFillRequests.put(request)
+        val pendingIntent = authentication(request)
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(61))
+        assertFalse(request.valid(context))
+        assertThrows(SecurityException::class.java) { PasswordAgentAuthenticationRequests.find(shadowOf(pendingIntent).savedIntent.data) }
+        assertEquals(1, cancelled)
     }
 
 }

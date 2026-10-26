@@ -125,6 +125,59 @@ class AgentSignInAndroidTest {
         }
     }
 
+    @Test fun nativeStrictPolicyPersistsAndRevokesEarlierApprovals() = localOnly {
+        isolatedVault { identity, vault ->
+            val chrome = synthetic("strict")
+            val other = synthetic("other")
+            try {
+                vault.insertIfAbsent(chrome); vault.insertIfAbsent(other)
+                val tag = PasswordData.decode(Proto.decode(chrome).one(1)).tag()
+                val otherTag = PasswordData.decode(Proto.decode(other).one(1)).tag()
+                val access = AgentSignInAccess(context) { 1234L }
+                val ordinary = access.get(identity, tag)
+                check(!ordinary.requireDeviceAuthentication)
+                val untouched = access.get(identity, otherTag)
+                access.setCurrent(identity, tag, ordinary.incarnation, AgentSignInAccess.Level.ALWAYS)
+                var deliveries = 0
+                access.redeem(identity, tag, ordinary.incarnation, false) { deliveries++ }
+
+                step = "enable-isolated-strict-policy"
+                access.setOwnerPolicy(identity, tag, ordinary.incarnation, AgentSignInAccess.Level.ALWAYS, true)
+                val reopened = AgentSignInAccess(context)
+                val strict = reopened.get(identity, tag)
+                check(strict.requireDeviceAuthentication && strict.level == AgentSignInAccess.Level.ASK)
+                check(strict.incarnation != ordinary.incarnation && strict.lastUsed == 1234L)
+                denied { access.redeem(identity, tag, ordinary.incarnation, true) { deliveries++ } }
+                denied { access.setCurrent(identity, tag, ordinary.incarnation, AgentSignInAccess.Level.ALWAYS) }
+                denied { access.setOwnerPolicy(identity, tag, ordinary.incarnation, AgentSignInAccess.Level.ASK, false) }
+                // This is storage/policy acceptance, not fabricated system authentication.
+                // Never pass deviceAuthenticated=true: an unauthenticated once approval must fail.
+                denied { reopened.redeem(identity, tag, strict.incarnation, true) { deliveries++ } }
+                denied { reopened.setCurrent(identity, tag, strict.incarnation, AgentSignInAccess.Level.ALWAYS) }
+                check(deliveries == 1)
+                checkSameState(strict, reopened.get(identity, tag))
+                checkSameState(untouched, reopened.get(identity, otherTag))
+
+                step = "disable-isolated-strict-policy"
+                reopened.setOwnerPolicy(identity, tag, strict.incarnation, AgentSignInAccess.Level.ASK, false)
+                val ordinaryAgain = AgentSignInAccess(context).get(identity, tag)
+                check(!ordinaryAgain.requireDeviceAuthentication && ordinaryAgain.level == AgentSignInAccess.Level.ASK)
+                check(ordinaryAgain.incarnation != strict.incarnation && ordinaryAgain.lastUsed == strict.lastUsed)
+                denied { access.redeem(identity, tag, strict.incarnation, true) { deliveries++ } }
+                denied { access.setOwnerPolicy(identity, tag, strict.incarnation, AgentSignInAccess.Level.ALWAYS, false) }
+                reopened.redeem(identity, tag, ordinaryAgain.incarnation, true) { deliveries++ }
+                check(deliveries == 2)
+                checkSameState(untouched, reopened.get(identity, otherTag))
+                val entries = DevicePasswordVault(context, identity).list()
+                try {
+                    check(entries.size == 2)
+                    check(MessageDigest.isEqual(entries.single { it.id == tag }.chromeBytes, chrome))
+                    check(MessageDigest.isEqual(entries.single { it.id == otherTag }.chromeBytes, other))
+                } finally { entries.forEach { it.chromeBytes.fill(0) } }
+            } finally { chrome.fill(0); other.fill(0) }
+        }
+    }
+
     @Test fun localProbeAllowSignInSavedThroughOwnerUi() = probeUi(AgentSignInAccess.Level.ALWAYS)
     @Test fun localProbeAskEachTimeSavedThroughOwnerUi() = probeUi(AgentSignInAccess.Level.ASK)
     @Test fun localProbeNeverSavedThroughOwnerUi() = probeUi(AgentSignInAccess.Level.NEVER)
@@ -198,6 +251,8 @@ class AgentSignInAndroidTest {
             beforeDigest = recordDigest(before)
             val starting = access.get("local", target.id)
             original = starting
+            // Ordinary no-lock owner UI runs must never silently turn off a prior strict policy.
+            check(!starting.requireDeviceAuthentication)
             others = before.filter { it.id != target.id }.associate { it.id to access.get("local", it.id) }
             // A nonexistent explicit request prevents the manager's sole-account default from
             // opening an ambient Google vault. Only the following On this device tap selects storage.
@@ -248,7 +303,7 @@ class AgentSignInAndroidTest {
                     check(MessageDigest.isEqual(beforeDigest, navigatedDigest))
                     (others + (target.id to starting)).forEach { (tag, state) ->
                         val current = access.get("local", tag)
-                        check(current.level == state.level && current.incarnation == state.incarnation && current.lastUsed == state.lastUsed)
+                        checkSameState(state, current)
                     }
                 } finally {
                     navigatedDigest?.fill(0)
@@ -266,6 +321,11 @@ class AgentSignInAndroidTest {
                 compose.onNode(hasText(context.getString(R.string.passwords_assistant_access)) and
                     hasAnyAncestor(isComposeDialog())).assertExists()
                 verifySecureDialog(scenario)
+                step = "verify-no-lock-authentication-control-disabled"
+                compose.onNode(hasText(context.getString(R.string.passwords_assistant_require_authentication)) and isToggleable())
+                    .performScrollTo().assertIsDisplayed().assertIsOff().assertIsNotEnabled()
+                compose.onNodeWithText(context.getString(R.string.passwords_assistant_screen_lock_required)).assertExists()
+                checkSameState(starting, access.get("local", target.id))
                 val selected = requested ?: if (starting.level == AgentSignInAccess.Level.ALWAYS)
                     AgentSignInAccess.Level.NEVER else AgentSignInAccess.Level.ALWAYS
                 step = "choose-sign-in-access"
@@ -289,7 +349,8 @@ class AgentSignInAndroidTest {
                 compose.onNodeWithText(context.getString(R.string.passwords_assistant_access_status,
                     context.getString(label(expected)))).assertExists()
                 val persisted = AgentSignInAccess(context).get("local", target.id)
-                check(persisted.level == expected && persisted.incarnation == starting.incarnation && persisted.lastUsed == starting.lastUsed)
+                check(persisted.level == expected && persisted.incarnation == starting.incarnation && persisted.lastUsed == starting.lastUsed &&
+                    persisted.requireDeviceAuthentication == starting.requireDeviceAuthentication)
                 check(probeRealm() == realm)
             }
             completed = true
@@ -304,7 +365,9 @@ class AgentSignInAndroidTest {
                 // On failure, restore only this verified fixture's still-current incarnation.
                 val starting = original
                 if (!completed && starting != null && targetId == currentTarget.id) {
-                    check(access.get("local", currentTarget.id).incarnation == starting.incarnation)
+                    val current = access.get("local", currentTarget.id)
+                    check(current.incarnation == starting.incarnation &&
+                        current.requireDeviceAuthentication == starting.requireDeviceAuthentication)
                     access.setCurrent("local", currentTarget.id, starting.incarnation, starting.level)
                 }
                 beforeDigest?.let {
@@ -313,7 +376,7 @@ class AgentSignInAndroidTest {
                 }
                 others.forEach { (tag, state) ->
                     val current = access.get("local", tag)
-                    check(current.level == state.level && current.incarnation == state.incarnation && current.lastUsed == state.lastUsed)
+                    checkSameState(state, current)
                 }
                 verified = true
             } finally {
@@ -322,6 +385,11 @@ class AgentSignInAndroidTest {
                 before.forEach { it.chromeBytes.fill(0) }; after.forEach { it.chromeBytes.fill(0) }
             }
         }
+    }
+
+    private fun checkSameState(expected: AgentSignInAccess.State, actual: AgentSignInAccess.State) {
+        check(actual.level == expected.level && actual.incarnation == expected.incarnation && actual.lastUsed == expected.lastUsed &&
+            actual.requireDeviceAuthentication == expected.requireDeviceAuthentication)
     }
 
     private fun waitForOneNode(matcher: SemanticsMatcher) {

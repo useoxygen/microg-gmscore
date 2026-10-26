@@ -10,4 +10,11 @@
     <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner"
         android:targetPackage="com.google.android.gms"
         android:targetProcesses="com.google.android.gms:ui" />
+<!-- Append this instrumentation beside the existing AndroidJUnitRunner entry.
+     Keep the existing runner's android:targetProcesses="com.google.android.gms:ui". -->
+<instrumentation
+    android:name="org.microg.gms.passwords.PasswordAuthenticationTestRunner"
+    android:targetPackage="com.google.android.gms"
+    android:targetProcesses="com.google.android.gms" />
+
 </manifest>

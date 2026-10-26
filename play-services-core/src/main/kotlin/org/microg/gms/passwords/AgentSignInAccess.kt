@@ -21,7 +21,7 @@ class AgentSignInAccess(context: Context, private val now: () -> Long = System::
         ASK("ask"), ALWAYS("always"), NEVER("never");
         companion object { fun of(wire: String?): Level? = values().firstOrNull { it.wire == wire } }
     }
-    class State(val level: Level, val lastUsed: Long?, val incarnation: String)
+    class State(val level: Level, val lastUsed: Long?, val incarnation: String, val requireDeviceAuthentication: Boolean = false)
 
     private val directory = context.applicationContext.noBackupFilesDir
     private val file = AtomicFile(File(directory, "agent-signin-access-v1.json"))
@@ -45,25 +45,47 @@ class AgentSignInAccess(context: Context, private val now: () -> Long = System::
     }
 
     /** Called while the vault's entry lock is held. Revocations serialize with the private handover. */
-    internal fun <T> redeem(vault: String, tag: String, incarnation: String, once: Boolean, action: () -> T): T = locked {
+    internal fun <T> redeem(vault: String, tag: String, incarnation: String, once: Boolean, deviceAuthenticated: Boolean = false, action: () -> T): T = locked {
         val all = read()
         val entry = all.optJSONObject(key(vault, tag)) ?: throw SecurityException()
         val state = state(entry)
-        if (state.incarnation != incarnation || state.level == Level.NEVER || state.level != Level.ALWAYS && !once) throw SecurityException()
+        if (state.incarnation != incarnation || state.level == Level.NEVER || state.level != Level.ALWAYS && !once ||
+            state.requireDeviceAuthentication && !deviceAuthenticated) throw SecurityException()
         val result = action()
         entry.put("lastUsed", now())
         write(all)
         result
     }
 
-    private fun state(entry: JSONObject) = State(Level.of(entry.optString("level")) ?: Level.ASK,
-        entry.optLong("lastUsed", 0).takeIf { it > 0 }, entry.optString("incarnation"))
+    private fun state(entry: JSONObject): State {
+        val required = entry.optBoolean("requireDeviceAuthentication", false)
+        val level = Level.of(entry.optString("level")) ?: Level.ASK
+        return State(if (required && level == Level.ALWAYS) Level.ASK else level,
+            entry.optLong("lastUsed", 0).takeIf { it > 0 }, entry.optString("incarnation"), required)
+    }
 
     fun setCurrent(vault: String, tag: String, incarnation: String, level: Level) = locked {
         val all = read()
         val entry = all.optJSONObject(key(vault, tag)) ?: throw SecurityException()
-        if (state(entry).incarnation != incarnation) throw SecurityException()
+        val current = state(entry)
+        if (current.incarnation != incarnation || current.requireDeviceAuthentication && level == Level.ALWAYS) throw SecurityException()
         entry.put("level", level.wire)
+        write(all)
+    }
+
+    /** Owner settings only. Core's set_access cannot remove the authentication requirement. */
+    fun setOwnerPolicy(vault: String, tag: String, incarnation: String, level: Level, requireDeviceAuthentication: Boolean) = locked {
+        val all = read()
+        val entry = all.optJSONObject(key(vault, tag)) ?: throw SecurityException()
+        val current = state(entry)
+        if (current.incarnation != incarnation) throw SecurityException()
+        if (current.requireDeviceAuthentication != requireDeviceAuthentication) {
+            // Invalidate prompts and pending authentication in both directions. An old ref
+            // must never become a more permissive capability after settings change.
+            entry.put("incarnation", UUID.randomUUID().toString())
+        }
+        entry.put("requireDeviceAuthentication", requireDeviceAuthentication)
+        entry.put("level", if (requireDeviceAuthentication && level == Level.ALWAYS) Level.ASK.wire else level.wire)
         write(all)
     }
 

@@ -19,6 +19,8 @@ abstract class PasswordOwnerActivity : AppCompatActivity() {
     private var confirmationResult: Boolean? = null
     private val keyguard get() = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
     protected val hasSecureScreenLock get() = Build.VERSION.SDK_INT >= 23 && keyguard.isDeviceSecure
+    protected open val ownerAuthenticationTitle: String get() = getString(R.string.passwords_unlock)
+    protected open val ownerAuthenticationDescription: String get() = getString(R.string.passwords_unlock_description)
     private val deviceUnlocked get() = Build.VERSION.SDK_INT >= 23 && !keyguard.isDeviceLocked && !keyguard.isKeyguardLocked
     private val confirmOwner = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         confirming = false
@@ -46,7 +48,7 @@ abstract class PasswordOwnerActivity : AppCompatActivity() {
         try {
             @Suppress("DEPRECATION")
             val prompt = keyguard.createConfirmDeviceCredentialIntent(
-                getString(R.string.passwords_unlock), getString(R.string.passwords_unlock_description))
+                ownerAuthenticationTitle, ownerAuthenticationDescription)
             if (prompt == null) { access.cancel(); onOwnerAuthenticationFailed(); return }
             confirming = true
             confirmOwner.launch(prompt)

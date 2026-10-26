@@ -46,23 +46,50 @@ internal class AgentSignInBroker(private val context: Context) {
                 val vault = vault(choice)
                 val before = vault.list().singleOrNull { it.id == choice.tag } ?: throw SecurityException()
                 if (!PasswordAffiliationMatcher(context, vault).canFill(before.data, request.realm)) throw SecurityException()
+                // Capture only metadata in a pending authentication request, never a PasswordView.
+                val realm = before.data.realm
+                val username = before.data.username
+                val requiresAuthentication = withChoice(choice, vault) {
+                    val state = access.get(choice.vaultKey, choice.tag)
+                    if (state.level == AgentSignInAccess.Level.NEVER) throw SecurityException()
+                    state.requireDeviceAuthentication
+                }
+                if (requiresAuthentication && !(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceSecure) {
+                    throw SecurityException()
+                }
                 claimHandle(request.handle, request.deadline)
                 PasswordAgentFillRequests.put(request)
-                try {
-                    withChoice(choice, vault) { current ->
-                        // The earlier affiliation proof covers exactly this entry's current realm.
-                        if (current.realm != before.data.realm || current.username != before.data.username ||
-                            current.blocked || current.password.isEmpty()) throw SecurityException()
-                        access.redeem(choice.vaultKey, choice.tag, choice.incarnation, approval == "once") {
-                            requireUnlocked()
-                            if (!request.valid(context)) throw SecurityException()
-                            request.deliver(context, current.password.toCharArray())
+                if (requiresAuthentication) {
+                    try {
+                        val authentication = PasswordAgentAuthenticationRequests.prepare(context, request, username) { authenticated ->
+                            deliver(choice, request, realm, username, once = true, authenticated = authenticated)
                         }
+                        Bundle().apply { putParcelable("authentication", authentication) }
+                    } catch (failure: Exception) {
+                        PasswordAgentFillRequests.cancel(request.handle)
+                        throw failure
                     }
+                } else {
+                    try { deliver(choice, request, realm, username, approval == "once") }
+                    finally { PasswordAgentFillRequests.cancel(request.handle) }
                     Bundle.EMPTY
-                } finally { PasswordAgentFillRequests.cancel(request.handle) }
+                }
             }
             else -> throw SecurityException()
+        }
+    }
+
+    private fun deliver(choice: Choice, request: PasswordAgentFillRequest, realm: String, username: String,
+        once: Boolean, authenticated: (() -> Boolean)? = null) {
+        withChoice(choice) { current ->
+            // The earlier affiliation proof covers exactly this entry's current realm.
+            if (current.realm != realm || current.username != username || current.blocked || current.password.isEmpty()) throw SecurityException()
+            access.redeem(choice.vaultKey, choice.tag, choice.incarnation, once, deviceAuthenticated = authenticated?.invoke() == true) {
+                requireUnlocked()
+                // Authentication is native request-local state, rechecked immediately before handover.
+                if (authenticated != null && !authenticated() || !request.valid(context)) throw SecurityException()
+                request.deliver(context, current.password.toCharArray())
+            }
         }
     }
 
@@ -92,6 +119,7 @@ internal class AgentSignInBroker(private val context: Context) {
                             putString("ref", ref); putString("username", current.username)
                             putString("account", account?.name ?: context.getString(com.google.android.gms.R.string.passwords_on_device))
                             putString("access", state.level.wire)
+                            putBoolean("require_authentication", state.requireDeviceAuthentication)
                             state.lastUsed?.let { putLong("last_used", it) }
                         })
                     }

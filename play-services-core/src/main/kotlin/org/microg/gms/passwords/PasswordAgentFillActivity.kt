@@ -21,14 +21,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.microg.gms.cyclon.CyclonMaterialTheme
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owner-selected account and entry; passwords are never drawn, copied, persisted in a ticket or sent to an agent. */
 class PasswordAgentFillActivity : PasswordOwnerActivity() {
-    private class Choice(val account: Account?, val selection: NativePasswordSelection, val username: String)
+    private class Choice(val account: Account?, val selection: NativePasswordSelection, val username: String, val incarnation: String)
     private var choices by mutableStateOf<List<Choice>>(emptyList())
     private var busy by mutableStateOf(false)
     private var failed by mutableStateOf(false)
     private var request: PasswordAgentFillRequest? = null
+    private val ownerReady = AtomicBoolean(false)
+    private val deviceAuthenticated = AtomicBoolean(false)
+    private val resumed = AtomicBoolean(false)
+    private val focused = AtomicBoolean(false)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT < 28) { finish(); return }
@@ -57,6 +62,8 @@ class PasswordAgentFillActivity : PasswordOwnerActivity() {
         authenticateOwner()
     }
     override fun onOwnerAuthenticated() {
+        ownerReady.set(true)
+        deviceAuthenticated.set(hasSecureScreenLock)
         val selected = request ?: return
         lifecycleScope.launch {
             try {
@@ -68,7 +75,12 @@ class PasswordAgentFillActivity : PasswordOwnerActivity() {
                         val vault = vault(account)
                         val matcher = PasswordAffiliationMatcher(this@PasswordAgentFillActivity, vault)
                         if (!vault.enabled) emptyList() else vault.list().filter { matcher.canFill(it.data, selected.realm) }
-                            .take(100).map { Choice(account, NativePasswordSelection(account?.name, stableId, it.id), it.data.username) }
+                            .take(100).mapNotNull { entry -> withEntry(vault, entry.id) { current ->
+                                if (current.realm != entry.data.realm || current.username != entry.data.username) return@withEntry null
+                                val state = AgentSignInAccess(this@PasswordAgentFillActivity).get(AgentSignInAccess.vaultKey(stableId), entry.id)
+                                if (state.level == AgentSignInAccess.Level.NEVER || state.requireDeviceAuthentication && !deviceAuthenticated.get()) null
+                                else Choice(account, NativePasswordSelection(account?.name, stableId, entry.id), current.username, state.incarnation)
+                            } }
                     }.getOrDefault(emptyList()) }.take(200)
                 }
                 requireOwner()
@@ -83,27 +95,41 @@ class PasswordAgentFillActivity : PasswordOwnerActivity() {
         val selected = request ?: return
         busy = true
         lifecycleScope.launch {
-            var secret: CharArray? = null
             try {
-                secret = withContext(Dispatchers.IO) {
+                withContext(Dispatchers.IO) {
                     if (!selected.valid(this@PasswordAgentFillActivity)) throw SecurityException()
-                    if (!choice.selection.matches(choice.account?.name, stableUserId(choice.account))) throw SecurityException()
+                    val stableId = stableUserId(choice.account)
+                    if (!choice.selection.matches(choice.account?.name, stableId)) throw SecurityException()
                     val vault = vault(choice.account)
                     if (!vault.enabled) throw VaultLockedException()
                     val matcher = PasswordAffiliationMatcher(this@PasswordAgentFillActivity, vault)
                     val entry = vault.list().singleOrNull { it.id == choice.selection.entryId && matcher.canFill(it.data, selected.realm) } ?: throw VaultLockedException()
-                    if (!choice.selection.matches(choice.account?.name, stableUserId(choice.account))) throw SecurityException()
-                    entry.data.password.toCharArray()
+                    withEntry(vault, choice.selection.entryId) { current ->
+                        if (current.realm != entry.data.realm || current.username != choice.username || current.blocked) throw SecurityException()
+                        AgentSignInAccess(this@PasswordAgentFillActivity).redeem(AgentSignInAccess.vaultKey(stableId),
+                            choice.selection.entryId, choice.incarnation, once = true,
+                            deviceAuthenticated = deviceAuthenticated.get() && hasSecureScreenLock) {
+                            if (!ownerReady.get() || !resumed.get() || !focused.get()) throw SecurityException()
+                            requireOwner()
+                            if (!choice.selection.matches(choice.account?.name, stableUserId(choice.account))) throw SecurityException()
+                            selected.deliver(this@PasswordAgentFillActivity, current.password.toCharArray())
+                        }
+                    }
                 }
-                requireOwner()
-                if (!choice.selection.matches(choice.account?.name, stableUserId(choice.account))) throw SecurityException()
-                selected.deliver(this@PasswordAgentFillActivity, checkNotNull(secret))
                 request = null
                 finish()
             } catch (_: Exception) { failed = true }
-            finally { secret?.fill('\u0000'); busy = false }
+            finally { busy = false }
         }
     }
+    private fun <T> withEntry(vault: PasswordVault, id: String, action: (PasswordData) -> T): T = when (vault) {
+        is PasswordRepository -> vault.withAgentEntry(id, action)
+        is DevicePasswordVault -> vault.withAgentEntry(id, action)
+        else -> throw SecurityException()
+    }
+    override fun onResume() { resumed.set(true); super.onResume() }
+    override fun onPause() { resumed.set(false); ownerReady.set(false); super.onPause() }
+    override fun onWindowFocusChanged(hasFocus: Boolean) { super.onWindowFocusChanged(hasFocus); focused.set(hasFocus) }
     private fun vault(account: Account?): PasswordVault = account?.let { PasswordRepository(this, it) } ?: DevicePasswordVault(this)
     private fun stableUserId(account: Account?): String? {
         if (account == null) return null
@@ -113,7 +139,7 @@ class PasswordAgentFillActivity : PasswordOwnerActivity() {
     }
     private fun cancel() { request?.let { PasswordAgentFillRequests.cancel(it.handle) }; request = null; finish() }
     override fun onOwnerAuthenticationFailed() = cancel()
-    override fun onOwnerLocked() { choices = emptyList() }
+    override fun onOwnerLocked() { ownerReady.set(false); deviceAuthenticated.set(false); choices = emptyList() }
     override fun onDestroy() {
         request?.let { PasswordAgentFillRequests.cancel(it.handle) }
         request = null
