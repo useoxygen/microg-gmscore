@@ -161,7 +161,7 @@ class PrivatePeopleExtrasMutationTest {
                 baseline = PhotoBaseline(sentToken, ContactPhotos.reference(remote), ContactPhotos.revision(remote), remoteHash))
         }
         override fun installPhoto(existing: PhotoContact, remote: Person, bytes: ByteArray?) {
-            assertNull(row.contact.pending); installed = bytes; row = row.copy(contact = row.contact.copy(dirty = false))
+            installed = bytes; row = row.copy(contact = row.contact.copy(pending = null, dirty = false))
         }
     }
     @Test fun lostPrivatePhotoRepliesReconcileByReadbackAndTransformedImagesAdoptGooglesVersion() {

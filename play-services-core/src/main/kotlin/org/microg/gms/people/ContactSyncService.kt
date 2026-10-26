@@ -61,7 +61,7 @@ class ContactSyncService : Service() {
                     store.configureMode()
                     val contactReport = ContactsSync(api, store, currentMode).sync()
                     val photoReport = if (groupReport.skipped > 0 || contactReport.skipped > 0) SyncReport(0, 0, 0, 0)
-                        else PhotosSync(api, api, store, currentMode).sync()
+                        else PhotosSync(api, api, store, mode = currentMode).sync()
                     val report = groupReport + contactReport + photoReport
                     result.stats.numEntries += report.downloaded
                     result.stats.numUpdates += report.uploaded

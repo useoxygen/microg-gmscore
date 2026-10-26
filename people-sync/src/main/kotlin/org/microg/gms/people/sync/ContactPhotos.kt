@@ -64,12 +64,16 @@ interface PhotoStore {
     fun rejectPhoto(existing: PhotoContact)
     /** Keep a concurrent local photo/text edit; acknowledge only the sent token. */
     fun completePhoto(existing: PhotoContact, remote: Person, sentToken: String, remoteHash: String? = null)
-    /** Atomically install bounded image bytes plus baseline under a row-version assertion. */
+    /** Atomically install bounded image bytes plus baseline and close any photo journal, under a row-version assertion. */
     fun installPhoto(existing: PhotoContact, remote: Person, bytes: ByteArray?)
 }
 
 class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
-    private val store: PhotoStore, private val mode: () -> SyncMode) {
+    private val store: PhotoStore, private val now: () -> Long = System::currentTimeMillis, private val mode: () -> SyncMode) {
+    companion object {
+        /** A write still unseen this long after sending is treated as lost and sent again. */
+        const val RETRY_AFTER_MILLIS = 10 * 60 * 1000L
+    }
     fun sync(): SyncReport {
         if (mode() == SyncMode.OFF) return SyncReport(0, 0, 0, 0)
         var downloaded = 0; var uploaded = 0; var conflicts = 0; var uncertain = 0; var skipped = 0
@@ -100,14 +104,17 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
                 // tells a re-encode from a small edit. Decide by whether the cloud photo changed at all.
                 val before = pending.opt("beforeRemote").takeUnless { it == JSONObject.NULL } as String?
                 // The photo reference changes only when the photo does (not on other contact edits).
-                val cloudUnchanged = remote == before
-                store.rejectPhoto(local) // Close the journal; nothing below replays over a changed cloud photo.
-                if (cloudUnchanged) { uncertain++; continue } // The write never landed: the next pass sends it again.
+                if (remote == before) {
+                    // Not landed yet, or never. The write may still be in flight, so wait before sending it again.
+                    // A photo write sets the same image again, so a late original and the retry converge.
+                    if (now() - pending.optLong("sentAt") >= RETRY_AFTER_MILLIS) store.rejectPhoto(local)
+                    uncertain++; continue
+                }
                 // The cloud photo changed (our upload, re-encoded, or someone else's newer photo): Google's version
-                // wins, unless the photo here was edited again since it was sent - that edit is kept for upload.
-                val reopened = store.photoContacts().singleOrNull { it.contact.id == local.contact.id } ?: continue
-                if (reopened.token == pending.optString("sentToken")) { store.installPhoto(reopened, current, remoteBytes); downloaded++ }
-                else conflicts++
+                // wins and is installed together with closing the journal. If the photo here was edited again since
+                // it was sent, keep that edit: take Google's photo as the baseline so the edit uploads next pass.
+                if (local.token == pending.getString("sentToken")) { store.installPhoto(local, current, remoteBytes); downloaded++ }
+                else store.completePhoto(local, current, pending.getString("sentToken"), hash)
                 continue
             }
             val changed = local.token != (local.baseline?.token ?: ContactPhotos.NONE)
@@ -136,7 +143,7 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
                 }
             }
             val journal = JSONObject().put("kind", "photo").put("action", if (bytes == null) "delete" else "upload")
-                .put("sentToken", local.token).put("hash", hash).put("beforeRemote", remote)
+                .put("sentToken", local.token).put("hash", hash).put("beforeRemote", remote).put("sentAt", now())
 
             val saved = store.beginPhoto(local, journal)
             try {
