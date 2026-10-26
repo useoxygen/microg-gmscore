@@ -51,12 +51,12 @@ class HybridClientController(context: Context, val staticKey: Pair<ECPublicKey, 
     @RequiresPermission(Manifest.permission.BLUETOOTH_SCAN)
     fun release() {
         runCatching { scan?.stopScanning() }.onFailure {
-            Log.w(TAG, "release: stopScanning failed", it)
+            Log.w(TAG, "release: stopScanning failed")
         }
         scan = null
 
         runCatching { transport?.stopConnecting() }.onFailure {
-            Log.w(TAG, "release: websocket close failed", it)
+            Log.w(TAG, "release: websocket close failed")
         }
         transport = null
     }

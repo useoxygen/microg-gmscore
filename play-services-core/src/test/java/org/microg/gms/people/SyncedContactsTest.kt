@@ -90,6 +90,7 @@ class SyncedContactsTest {
         }
         ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
         val prefs = ContactSyncPreferences(context, account)
+        ContactMigrationPrivacy(context).developerControlsEnabled = true // fixture floors (customers use 0, like Google)
         prefs.configure(SyncMode.TWO_WAY, 10, 20)          // legacy floors
         prefs.initializePrivateFloors(20, 30)               // the private engine's floors
         prefs.privateGroupCheckpoint("binding", "token")
@@ -107,6 +108,7 @@ class SyncedContactsTest {
         assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
         assertNull(prefs.privateGroupCheckpoint("binding"))
         assertEquals(0, synced.unsyncedChanges())
+        ContactMigrationPrivacy(context).developerControlsEnabled = false
         client.close()
     }
 

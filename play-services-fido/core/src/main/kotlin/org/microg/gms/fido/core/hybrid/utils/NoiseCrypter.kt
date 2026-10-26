@@ -14,7 +14,7 @@ class NoiseCrypter(private val rKey: ByteArray, private val wKey: ByteArray) {
     private var rCtr = 0
     private var wCtr = 0
 
-    fun encrypt(plain: ByteArray): ByteArray? = try {
+    @Synchronized fun encrypt(plain: ByteArray): ByteArray? = try {
         val padded = pad32(plain)
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(
@@ -25,7 +25,7 @@ class NoiseCrypter(private val rKey: ByteArray, private val wKey: ByteArray) {
         null
     }
 
-    fun decrypt(cipher: ByteArray): ByteArray? = try {
+    @Synchronized fun decrypt(cipher: ByteArray): ByteArray? = try {
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(
             Cipher.DECRYPT_MODE, SecretKeySpec(rKey, AEMK_ALGORITHM), GCMParameterSpec(128, nonce(rCtr++))

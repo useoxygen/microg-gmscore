@@ -92,8 +92,12 @@ public class AccountContentProvider extends ContentProvider {
                 }
 
                 result.putParcelableArray(PROVIDER_EXTRA_ACCOUNTS, accounts);
+                if ("com.google.android.apps.restore".equals(packageName)) {
+                    Log.d(TAG, "Android Switch account query completed, count=" + accounts.length);
+                }
                 return result;
-            } else if (PROVIDER_METHOD_CLEAR_PASSWORD.equals(method) && hasGooglePackagePermission) {
+            } else if (PROVIDER_METHOD_CLEAR_PASSWORD.equals(method) && hasGooglePackagePermission
+                    && !"com.google.android.apps.restore".equals(packageName)) {
                 Account a = extras.getParcelable(PROVIDER_EXTRA_CLEAR_PASSWORD);
                 AccountManager.get(getContext()).clearPassword(a);
                 return null;

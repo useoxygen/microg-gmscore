@@ -1,0 +1,39 @@
+// SPDX-FileCopyrightText: 2026 Cyclon
+// SPDX-License-Identifier: Apache-2.0
+plugins {
+    id 'java-library'
+    id 'com.google.protobuf' version '0.9.4'
+    id 'com.gradleup.shadow' version '8.3.6'
+}
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+configurations {
+    shadedProto { canBeConsumed = false }
+}
+dependencies {
+    // Core still uses protobuf-java 2.6. Do not replace that runtime globally.
+    compileOnly 'com.google.protobuf:protobuf-javalite:3.25.5'
+    shadedProto 'com.google.protobuf:protobuf-javalite:3.25.5'
+    testImplementation 'com.google.protobuf:protobuf-javalite:3.25.5'
+    implementation "com.google.guava:guava:$guavaVersion"
+    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
+    testImplementation 'junit:junit:4.13.2'
+}
+tasks.named('shadowJar') {
+    configurations = [project.configurations.shadedProto]
+    relocate 'com.google.protobuf', 'org.microg.gms.migration.protobuf'
+}
+// Android consumers must see relocated signatures at compile time as well as runtime.
+['apiElements', 'runtimeElements'].each { name ->
+    configurations.named(name) {
+        outgoing.artifacts.clear()
+        outgoing.variants.clear()
+        outgoing.artifact(tasks.named('shadowJar'))
+    }
+}
+protobuf {
+    protoc { artifact = 'com.google.protobuf:protoc:3.25.5' }
+    generateProtoTasks { all().configureEach { builtins { java { option 'lite' } } } }
+}

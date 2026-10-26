@@ -29,6 +29,7 @@ class ContactSyncService : Service() {
             override fun onPerformSync(account: Account, extras: Bundle, authority: String,
                 provider: ContentProviderClient, result: SyncResult) {
                 val prefs = ContactSyncPreferences(this@ContactSyncService, account)
+                prefs.ensureDefaults()
                 if (prefs.mode == SyncMode.OFF) return
                 // Turning sync off removes synced contacts under the same lock; never write after that.
                 val lock = ContactSyncLock.of(account)
@@ -48,7 +49,10 @@ class ContactSyncService : Service() {
                     val token = contactsToken(this@ContactSyncService, account, mode)
                     usedToken = token
                     val currentMode = { if (prefs.mode == mode) mode else SyncMode.OFF }
-                    val api = privateContactsApi(token) { currentMode() == SyncMode.TWO_WAY }
+                    // Uploads pause after a phone transfer until the owner resumes them (Android Switch).
+                    val api = privateContactsApi(token, canCreate = { prefs.uploadNewContacts }) {
+                        currentMode() == SyncMode.TWO_WAY && !ContactMigrationPrivacy(this@ContactSyncService).held
+                    }
                     // Establish private ownership floors before adopting any new
                     // editor-created rows. Existing public/unowned rows stay separate.
                     val contactFloor = provider.query(android.provider.ContactsContract.RawContacts.CONTENT_URI,
@@ -89,7 +93,7 @@ class ContactSyncService : Service() {
                     // context. A new advertised version or user refresh unlocks it.
                 } catch (e: ApiException) {
                     if (e.status == 401) {
-                        AccountManager.get(this@ContactSyncService).invalidateAuthToken(account.type,
+                        org.microg.gms.auth.invalidateAccountAuthToken(this@ContactSyncService, account.type,
                             usedToken)
                     }
                     prefs.status = if (e.status == 401 || e.status == 403) "authorization" else "network"
@@ -167,8 +171,14 @@ class ContactSyncService : Service() {
                 }
             }
         }
-        fun privateContactsApi(token: String, canUpload: () -> Boolean = { false }): PrivatePeopleApi = http().let {
-            PrivatePeopleApi(transport(it, token, PrivatePeopleApi.ORIGIN), privatePeopleContext, canUpload, "${android.os.Build.MANUFACTURER} - ${android.os.Build.MODEL}")
+        fun privateContactsApi(token: String, canCreate: () -> Boolean = { true }, canUpload: () -> Boolean = { false }): PrivatePeopleApi = http().let {
+            val base = transport(it, token, PrivatePeopleApi.ORIGIN)
+            // New/imported contacts upload only with the account's upload choice (developer fixture control).
+            val gated = HttpTransport { method, url, body ->
+                if (method == "POST" && url.substringBefore('?').endsWith("people/bulkInsertContacts") && !canCreate()) throw UploadDisabled()
+                base.request(method, url, body)
+            }
+            PrivatePeopleApi(gated, privatePeopleContext, canUpload, "${android.os.Build.MANUFACTURER} - ${android.os.Build.MODEL}")
         }
         // Retained for an eventual separately registered public OAuth client.
         // Production account sync and activation never call this factory.

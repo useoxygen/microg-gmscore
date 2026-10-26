@@ -49,7 +49,8 @@ message ListSecurityDomainMembersRequest {
   optional string parent = 1;
   repeated int32 view = 2 [packed = true];
   repeated string filter = 3;
-  optional int32 pageSize = 4;
+  // hzwp field4 is the member-selection enum, not a numeric page-size limit.
+  optional int32 memberSelection = 4;
   optional string pageToken = 6;
   optional FilterOptions filterOptions = 7;
   optional string requestId = 8;
@@ -60,9 +61,61 @@ message ListSecurityDomainMembersResponse {
   optional string nextPageToken = 2;
 }
 
+// Pinned hzwg/hzwh; no reset, recovery-proof or new-domain policy is inferred here.
+message JoinSecurityDomainRequest {
+  optional GetSecurityDomainResponse securityDomain = 1;
+  optional SecurityDomainMemberResponse member = 2;
+  repeated MemberKey sharedKeys = 3;
+  optional int32 joinOptions = 4;
+  optional bytes authenticationProof = 5;
+  optional string requestId = 6;
+}
+
+message JoinSecurityDomainResponse {
+  optional GetSecurityDomainResponse securityDomain = 1;
+}
+
+// anqx / hzxb: reset does not take a made-up epoch precondition.
+message ResetSecurityDomainRequest {
+  optional string name = 1;
+  optional string requestId = 3;
+}
+message ResetSecurityDomainResponse {}
+
+// anwc.U / hzxd/hzxc/hzxe.
+message RotatedMemberKey {
+  optional string memberName = 1;
+  optional bytes wrappedKey = 2;
+  optional bytes membershipProof = 3;
+}
+message RotateSharedKeyRequest {
+  optional string name = 1;
+  optional int32 currentEpoch = 2;
+  repeated RotatedMemberKey memberKeys = 3;
+  optional bytes rotationProof = 4;
+  optional string requestId = 6;
+}
+message RotateSharedKeyResponse { optional int32 newEpoch = 1; }
+
+// anwc.T / hzwk: leave one known member's membership, never reset the domain.
+message LeaveSecurityDomainRequest {
+  optional string name = 1;
+  optional string memberName = 2;
+  optional string requestId = 3;
+}
+message LeaveSecurityDomainResponse {}
+
+// anwc.u / hzyg and google.protobuf.FieldMask's wire representation.
+message MemberUpdateMask { repeated string paths = 1; }
+message UpdateSecurityDomainMemberRequest {
+  optional SecurityDomainMemberResponse member = 1;
+  optional MemberUpdateMask updateMask = 2;
+  optional string requestId = 3;
+}
+
 message SecurityDomainMemberResponse {
   optional string name = 1;
-  optional bytes createTime = 2;
+  optional bytes publicKey = 2;
   repeated MemberSecurityDomain securityDomains = 3;
   optional int32 memberType = 4;
   optional MemberMetadata memberMetadata = 6;
@@ -70,20 +123,30 @@ message SecurityDomainMemberResponse {
 
 message MemberSecurityDomain {
   optional string name = 1;
+  // GMS hzxq: shared member keys and rotation proofs are different messages.
   repeated MemberKey memberKeys = 3;
-  repeated TrustedVaultKey trustedVaultKeys = 4;
+  repeated KeyRotationProof rotationProofs = 4;
   optional CurrentKeyMetadata currentKeyMetadata = 5;
+  optional MembershipMetadata metadata = 6;
+}
+
+message MembershipMetadata {
+  oneof metadata { LockscreenMembershipMetadata lockscreenMembershipMetadata = 1; }
+}
+message LockscreenMembershipMetadata {
+  optional bool backupEnabled = 1;
+  optional bool consent = 2;
 }
 
 message MemberKey {
-  optional int32 keyType = 1;
-  optional bytes publicKey = 2;
-  optional bytes wrappedKey = 3;
-}
-
-message TrustedVaultKey {
   optional int32 epoch = 1;
   optional bytes wrappedKey = 2;
+  optional bytes membershipProof = 3;
+}
+
+message KeyRotationProof {
+  optional int32 epoch = 1;
+  optional bytes rotationProof = 2;
 }
 
 message CurrentKeyMetadata {
@@ -104,7 +167,8 @@ message MemberMetadata {
     ChromeBrowserMetadata chromeBrowser = 2;
     IOSMetadata ios = 3;
     AndroidMetadata android = 4;
-    LSKFMetadata lskf = 5;
+    // Pinned hzxi and Chromium GooglePasswordManagerPinMetadata, not LSKF.
+    GooglePasswordManagerPinMetadata googlePasswordManagerPin = 5;
     ICloudKeychainMetadata icloudKeychain = 6;
     GooglePasswordManagerMetadata googlePasswordManager = 7;
   }
@@ -122,9 +186,10 @@ message AndroidMetadata {
   optional bool isPrimary = 2;
 }
 
-message LSKFMetadata {
-  optional bytes encryptedData = 2;
-  optional int32 algorithm = 3;
+message GooglePasswordManagerPinMetadata {
+  // WrappedPIN/jtdb: encrypted CBOR plus claim key, form and scrypt parameters.
+  optional bytes encryptedPinHash = 2;
+  optional int32 pinFormat = 3;
 }
 
 message ICloudKeychainMetadata {
@@ -160,4 +225,9 @@ service SecurityDomainService {
   rpc GetSecurityDomain(GetSecurityDomainRequest) returns (GetSecurityDomainResponse);
   rpc GetSecurityDomainMember(GetSecurityDomainMemberRequest) returns (SecurityDomainMemberResponse);
   rpc ListSecurityDomainMembers(ListSecurityDomainMembersRequest) returns (ListSecurityDomainMembersResponse);
+  rpc JoinSecurityDomain(JoinSecurityDomainRequest) returns (JoinSecurityDomainResponse);
+  rpc ResetSecurityDomain(ResetSecurityDomainRequest) returns (ResetSecurityDomainResponse);
+  rpc RotateSharedKey(RotateSharedKeyRequest) returns (RotateSharedKeyResponse);
+  rpc LeaveSecurityDomain(LeaveSecurityDomainRequest) returns (LeaveSecurityDomainResponse);
+  rpc UpdateSecurityDomainMember(UpdateSecurityDomainMemberRequest) returns (SecurityDomainMemberResponse);
 }

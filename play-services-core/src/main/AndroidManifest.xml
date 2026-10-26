@@ -145,7 +145,15 @@
     <uses-permission android:name="com.google.android.gms.auth.permission.GOOGLE_ACCOUNT_CHANGE" />
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Explicit owner opt-in Wi-Fi sync requires the matching privileged image allowlist. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.READ_WIFI_CREDENTIAL" />
+    <!-- Real RecoveryController snapshots require the matching privileged image grant. -->
+    <uses-permission android:name="android.permission.RECOVER_KEYSTORE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
@@ -165,6 +173,7 @@
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
 
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
@@ -206,18 +215,49 @@
         androidx.compose.ui.tooling.data, androidx.compose.ui.tooling.preview, androidx.compose.ui.tooling,androidx.compose.material" />
 
     <permission android:name="ai.cyclon.microg.permission.ENROLLMENT_CHALLENGE" android:protectionLevel="signature|privileged" />
+    <uses-permission android:name="android.permission.BACKUP" tools:ignore="ProtectedPermissions" />
+
+    <!-- Classic Nearby migration: public radio APIs; LOCAL_MAC_ADDRESS is needed
+         only for regular BLE advertisements to carry the real RFCOMM endpoint.
+         The image must allowlist this privileged permission; never use 02:00... . -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.LOCAL_MAC_ADDRESS" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
     <application
+        android:name="org.microg.gms.common.ServicesApplication"
         android:allowBackup="true"
         android:forceQueryable="true"
         android:fullBackupOnly="true"
+        android:fullBackupContent="@xml/password_key_backup_rules"
+        android:dataExtractionRules="@xml/password_key_extraction_rules"
         android:icon="@mipmap/ic_cyclon_services"
         android:roundIcon="@mipmap/ic_cyclon_services"
         android:label="${appLabel}"
         android:multiArch="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.App">
+        <activity android:name="org.microg.gms.migration.android.AndroidD2dBootstrapActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD"
+            android:excludeFromRecents="true" />
+
 
         <library android:name="com.google.android.gms" />
+
+        <!-- All processes use the same on-demand WorkManager configuration. Only the
+             main process schedules/executes jobs; secondary processes use its remote API. -->
+        <provider android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup" android:exported="false" tools:node="merge">
+            <meta-data android:name="androidx.work.WorkManagerInitializer" tools:node="remove" />
+        </provider>
+        <service android:name="androidx.work.multiprocess.RemoteWorkManagerService"
+            android:exported="false" android:process="${applicationId}" tools:node="merge" />
 
         <!-- Provision -->
 
@@ -457,6 +497,22 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+        <receiver android:name="org.microg.gms.people.ContactSyncAccountsReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <service android:name="org.microg.gms.esim.EsimTransferService" android:exported="true">
+            <intent-filter><action android:name="com.google.android.gms.esim.service.START" /><action android:name="com.google.android.gms.esim.provisioning.service.START" /></intent-filter>
+        </service>
+        <provider android:name="org.microg.gms.people.ContactMigrationPrivacyProvider"
+            android:authorities="org.microg.gms.migration.contacts" android:exported="true"
+            android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <activity-alias android:name="org.microg.gms.people.ContactsSyncSettings"
+            android:targetActivity="org.microg.gms.people.ContactsSyncActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
@@ -653,6 +709,41 @@
             </intent-filter>
         </service>
 
+        <activity android:name="org.microg.gms.auth.credentials.LegacyPasswordActivity"
+            android:exported="false" android:process=":ui" />
+
+        <provider android:name="org.microg.gms.passwords.PasswordAgentFillProvider"
+            android:authorities="com.google.android.gms.cyclon.password_fill"
+            android:exported="true" />
+        <activity android:name="org.microg.gms.passwords.PasswordAgentFillActivity"
+            android:exported="false" android:excludeFromRecents="true" />
+        <activity android:name="org.microg.gms.passwords.PasswordSharingActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordWifiSyncActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.SyncedPasskeyManagerActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordBreachActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.LegacySyncedPasskeyActivity"
+            tools:targetApi="28" android:exported="false" android:excludeFromRecents="true" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordRecoveryEnrollmentActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.PasswordEncryptionActivity"
+            android:exported="false" android:excludeFromRecents="true" android:process=":password_encryption" />
+        <activity android:name="org.microg.gms.auth.folsom.ui.SecurityDomainLifecycleActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.auth.folsom.ui.FolsomConsentActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.RecoverableVaultActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.GpmPinRenewalActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.EnclavePinActivity"
+            android:exported="false" android:process=":ui" />
+        <activity android:name="org.microg.gms.passwords.RecoveryRestoreActivity"
+            android:exported="false" android:process=":ui" />
+
         <service android:name="org.microg.gms.auth.proxy.AuthProxyService">
             <intent-filter>
                 <action android:name="com.google.android.gms.auth.service.START" />
@@ -664,6 +755,32 @@
                 <action android:name="com.google.android.gms.auth.be.appcert.AppCertService" />
             </intent-filter>
         </service>
+
+        <service android:name="org.microg.gms.passwords.ChromePasswordService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.chromesync.service.firstparty.START" />
+            </intent-filter>
+        </service>
+        <receiver android:name="org.microg.gms.passwords.PasswordInvalidationReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+            </intent-filter>
+        </receiver>
+
+        <service android:name="org.microg.gms.passwords.PasswordAutofillService" android:exported="true"
+            android:label="@string/passwords_title" android:permission="android.permission.BIND_AUTOFILL_SERVICE" tools:targetApi="28">
+            <intent-filter><action android:name="android.service.autofill.AutofillService" /></intent-filter>
+            <meta-data android:name="android.autofill" android:resource="@xml/password_autofill_service" />
+        </service>
+        <activity android:name="org.microg.gms.passwords.PasswordAutofillActivity" android:exported="false"
+            android:process=":ui" android:excludeFromRecents="true" android:theme="@style/Theme.Cyclon" tools:targetApi="28" />
+
+        <receiver android:name="org.microg.gms.passwords.PasswordAccountRemovedReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.accounts.action.ACCOUNT_REMOVED" />
+                <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
+            </intent-filter>
+        </receiver>
 
         <service android:name="org.microg.gms.credential.CredentialManagerService">
             <intent-filter>
@@ -815,6 +932,14 @@
                 android:resource="@xml/credentials_provider_google_id" />
         </service>
 
+
+        <activity
+            android:name="org.microg.gms.passwords.PasswordProxyActivity"
+            android:exported="false"
+            android:process=":ui"
+            android:theme="@style/Theme.App.Translucent"
+            android:excludeFromRecents="true"
+            tools:targetApi="34" />
 
         <activity
             android:name="org.microg.gms.auth.credentials.provider.PublicKeyProxyActivity"
@@ -1273,7 +1398,7 @@
             android:exported="true"
             android:process=":ui"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.Translucent"/>
+            android:theme="@style/Theme.Cyclon"/>
 
         <service android:name="org.microg.gms.clearcut.ClearcutLoggerService">
             <intent-filter>
@@ -1384,6 +1509,18 @@
             </intent-filter>
         </service>
 
+        <service android:name="org.microg.gms.common.ClientNotificationTelemetryService">
+            <intent-filter>
+                <action android:name="com.google.android.gms.common.telemetry.notification.service.START" />
+            </intent-filter>
+        </service>
+
+        <service android:name="org.microg.gms.common.ClientThrottlingTelemetryService">
+            <intent-filter>
+                <action android:name="com.google.android.gms.common.telemetry.throttling.service.START" />
+            </intent-filter>
+        </service>
+
         <service android:name="org.microg.gms.common.GmsCommonService">
             <intent-filter>
                 <action android:name="com.google.android.gms.common.service.START" />
@@ -1464,6 +1601,7 @@
             <intent-filter>
                 <action android:name="org.microg.gms.gcm.MESSAGE_RECEIVE" />
                 <action android:name="org.microg.gms.gcm.NOTIFY_COMPLETE" />
+                <action android:name="org.microg.gms.gcm.TWO_STEP_DISMISSED" />
             </intent-filter>
         </receiver>
 
@@ -1555,7 +1693,6 @@
                 <action android:name="com.google.android.gms.mdm.services.DeviceManagerApiService.START" />
                 <action android:name="com.google.android.gms.mdns.service.START" />
                 <action android:name="com.google.android.gms.nearby.bootstrap.service.NearbyBootstrapService.START" />
-                <action android:name="com.google.android.gms.nearby.connection.service.START" />
                 <action android:name="com.google.android.gms.nearby.fastpair.START" />
                 <action android:name="com.google.android.gms.nearby.messages.service.NearbyMessagesService.START" />
                 <action android:name="com.google.android.gms.nearby.sharing.service.NearbySharingService.START" />
@@ -1580,10 +1717,7 @@
                 <action android:name="com.google.android.gms.scheduler.ACTION_PROXY_SCHEDULE" />
                 <action android:name="com.google.android.gms.setup.auth.SecondDeviceAuth.START" />
                 <action android:name="com.google.android.gms.smartdevice.d2d.SourceDeviceService.START" />
-                <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
                 <action android:name="com.google.android.gms.smartdevice.directtransfer.SourceDirectTransferService.START" />
-                <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
-                <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
                 <action android:name="com.google.android.gms.smartdevice.setup.accounts.AccountsService.START" />
                 <action android:name="com.google.android.gms.smartdevice.wifi.START_WIFI_HELPER_SERVICE" />
                 <action android:name="com.google.android.gms.social.location.activity.service.START" />
@@ -1625,6 +1759,51 @@
                     tools:ignore="WearableBindListener" />
             </intent-filter>
         </service>
+        <service android:name="org.microg.gms.migration.TargetQuickStartService" android:exported="false" />
+        <service android:name="org.microg.gms.migration.nearby.NearbyDctService" android:exported="true">
+            <intent-filter><action android:name="com.google.android.gms.nearby.connection.service.START" /></intent-filter>
+        </service>
+        <!-- CYC-700: optional Android Switch setup queries, authenticated in the broker. -->
+        <service android:name="org.microg.gms.migration.SwitchSupportService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.smartdevice.d2d.TargetDeviceService.START" />
+                <action android:name="com.google.android.gms.smartdevice.directtransfer.TargetDirectTransferService.START" />
+                <action android:name="com.google.android.gms.smartdevice.postsetup.PostSetupService.START" />
+            </intent-filter>
+        </service>
+        <service android:name="org.microg.gms.migration.SwitchExportService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.quickstart.xos.api.SourceXosApiService.START" />
+                <action android:name="com.google.android.gms.backup.d2d.api.OsMigrationWifiExportApiService.START" />
+            </intent-filter>
+        </service>
+        <!-- Local migration restore only. The system also requires its explicit transport allowlist. -->
+        <service android:name="com.google.android.gms.backup.BackupTransportService"
+            android:permission="android.permission.CONFIRM_FULL_BACKUP" android:exported="false">
+            <intent-filter><action android:name="android.backup.TRANSPORT_HOST" /></intent-filter>
+        </service>
+        <service android:name="org.microg.gms.migration.MigrateHelperService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.backup.D2D_MIGRATE_HELPER" />
+            </intent-filter>
+        </service>
+        <!-- Cyclon-owned setup UI; Google internal quickstart Binder remains non-exported. -->
+        <activity android:name="org.microg.gms.migration.MigrationWirelessActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD"
+            android:excludeFromRecents="true" />
+        <activity-alias android:name="org.microg.gms.migration.MigrationWirelessSetup"
+            android:targetActivity="org.microg.gms.migration.MigrationWirelessActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <receiver android:name="org.microg.gms.migration.MigrationCancelledReceiver"
+            android:exported="true" android:permission="android.permission.BACKUP">
+            <intent-filter><action android:name="com.google.android.gms.smartdevice.OS_MIGRATION_CANCELLED" /></intent-filter>
+        </receiver>
+
+        <provider android:name="org.microg.gms.migration.android.ClassicFileProvider"
+            android:authorities="${applicationId}.migration.classic.files"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/classic_nearby_paths" />
+        </provider>
     </application>
 
 </manifest>

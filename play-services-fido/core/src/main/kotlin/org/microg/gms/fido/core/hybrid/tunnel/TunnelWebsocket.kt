@@ -91,20 +91,24 @@ class TunnelWebsocket(val url: String, val callback: TunnelWebCallback) {
                             Log.d(TAG, "runReader() called when websocket is disconnected")
                             close()
                         } catch (e: IOException) {
-                            Log.w(TAG, "connect: Socket failed to close", e)
+                            Log.w(TAG, "connect: Socket failed to close")
                         }
                     } else {
                         val request = Request.Builder().url(url).header("Sec-WebSocket-Protocol", "fido.cable").build()
 
-                        Log.d(TAG, "connect: request: $request")
 
                         socket = client.newWebSocket(request, object : WebSocketListener() {
+                            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                                closeWebsocket()
+                            }
+
                             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                                 closeWebsocket()
                             }
 
                             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                                Log.e(TAG, "Tunnel failure: ${t.message}", t)
+                                Log.e(TAG, "Tunnel failure")
+                                socketStatus = SocketStatus.DISCONNECTED
                                 callback.error(TunnelException("Websocket failed", t))
                             }
 
@@ -121,7 +125,7 @@ class TunnelWebsocket(val url: String, val callback: TunnelWebCallback) {
                     }
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "connect: ", e)
+                Log.d(TAG, "connect: ")
                 callback.error(TunnelException("Websocket connect failed", e))
             }
         }
@@ -131,20 +135,18 @@ class TunnelWebsocket(val url: String, val callback: TunnelWebCallback) {
         this.submitThread?.start()
     }
 
-    @Synchronized
-    fun send(bArr: ByteArray) {
-        Log.d(TAG, "send() with state= $socketStatus")
-        if (this.socketStatus != SocketStatus.CONNECTED) {
-            Log.d(TAG, "send() called when websocket is not connected")
-            this.callback.error(TunnelException("sending data error: websocket is not connected"))
-            return
-        }
-        try {
-            socket?.send(ByteString.of(*bArr))
-        } catch (e: Exception) {
-            Log.d(TAG, "Failed to send frame")
-            this.callback.error(TunnelException("Failed to send frame", e))
-            close()
-        }
+    // OkHttp WebSocket.send is thread-safe. Never acquire this object's monitor or call
+    // callbacks here: a caller may hold the controller output guard, while close has this monitor.
+    internal fun enqueue(bArr: ByteArray): Boolean {
+        val activeSocket = socket
+        if (socketStatus != SocketStatus.CONNECTED || activeSocket == null) return false
+        return try { activeSocket.send(ByteString.of(*bArr)) } catch (_: Exception) { false }
+    }
+
+    fun send(bArr: ByteArray): Boolean {
+        val accepted = enqueue(bArr)
+        // The ordinary handshake/client callers retain their failure callback, outside any output guard.
+        if (!accepted) callback.error(TunnelException("Websocket rejected frame"))
+        return accepted
     }
 }

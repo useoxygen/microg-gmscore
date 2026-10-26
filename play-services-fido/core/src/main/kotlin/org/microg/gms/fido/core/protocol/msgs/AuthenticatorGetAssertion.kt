@@ -38,10 +38,7 @@ class AuthenticatorGetAssertionRequest(
     if (pinAuth != null) set(0x06, pinAuth.encodeAsCbor())
     if (pinProtocol != null) set(0x07, pinProtocol.encodeAsCbor())
 }) {
-    override fun toString() = "AuthenticatorGetAssertionRequest(rpId=${rpId}," +
-            "clientDataHash=0x${clientDataHash.toBase64(Base64.NO_WRAP)}, " +
-            "allowList=[${allowList.joinToString()}],extensions=[${extensions.entries.joinToString()}]," +
-            "options=$options,pinAuth=${pinAuth?.toBase64(Base64.NO_WRAP)},pinProtocol=$pinProtocol)"
+    override fun toString() = "AuthenticatorGetAssertionRequest[redacted]"
 
     companion object {
         class Options(
@@ -63,6 +60,7 @@ class AuthenticatorGetAssertionRequest(
             rpId = obj[0x01]?.AsString() ?: "",
             clientDataHash = obj[0x02].GetByteString(),
             allowList = obj[0x03]?.values?.map { it.decodeAsPublicKeyCredentialDescriptor() } ?: emptyList(),
+            extensions = obj[0x04]?.let { ext -> ext.keys.associate { it.AsString() to ext[it] } }.orEmpty(),
             options = obj[0x05]?.let { optObj ->
                 Options(
                     userPresence = optObj["up"]?.AsBoolean() ?: true,
@@ -77,7 +75,9 @@ class AuthenticatorGetAssertionResponse(
     val authData: ByteArray,
     val signature: ByteArray,
     val user: PublicKeyCredentialUserEntity?,
-    val numberOfCredentials: Int?
+    val numberOfCredentials: Int?,
+    val unsignedExtensionOutputs: CBORObject? = null,
+    val userSelected: Boolean? = null
 ) : Ctap2Response() {
 
     override fun encodePayloadAsCbor() = CBORObject.NewMap().apply {
@@ -86,6 +86,8 @@ class AuthenticatorGetAssertionResponse(
         set(0x03, signature.encodeAsCbor())
         if (user != null) set(0x04, user.encodeAsCbor())
         if (numberOfCredentials != null) set(0x05, numberOfCredentials.encodeAsCbor())
+        if (userSelected != null) set(0x06, userSelected.encodeAsCbor())
+        if (unsignedExtensionOutputs != null) set(0x08, unsignedExtensionOutputs)
     }
 
     companion object {
@@ -94,7 +96,9 @@ class AuthenticatorGetAssertionResponse(
             authData = obj.get(0x02).GetByteString(),
             signature = obj.get(0x03).GetByteString(),
             user = obj.get(0x04)?.decodeAsPublicKeyCredentialUserEntity(),
-            numberOfCredentials = obj.get(0x05)?.AsInt32Value()
+            numberOfCredentials = obj.get(0x05)?.AsInt32Value(),
+            unsignedExtensionOutputs = obj.get(0x08),
+            userSelected = obj.get(0x06)?.AsBoolean()
         )
     }
 }

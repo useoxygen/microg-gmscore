@@ -1,0 +1,11 @@
+{
+  "name": "cyclon-google-prompt-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build-ocr": "swiftc -O ocr.swift -o ocr"
+  },
+  "dependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}

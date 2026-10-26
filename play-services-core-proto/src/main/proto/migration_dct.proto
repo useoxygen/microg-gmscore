@@ -1,0 +1,219 @@
+// Independently reconstructed wire schema from GMS 26.41.31 protobuf-lite metadata.
+// Field names are research aliases; field numbers/types and oneof membership are recovered.
+// Unknown enum domains use int32 (same varint wire representation).
+// DctPacket is an internal aggregate; do NOT add it around HTTP control bodies.
+syntax = "proto3";
+package org.microg.gms.migration.dct;
+
+// GMS class iyxb
+message DctOfflineFrame {
+  oneof choice0 {
+    DctControlFrame control = 1;
+  }
+}
+
+// GMS class iyxe
+message DctControlFrame {
+  oneof choice0 {
+    DeviceInfoRequest device_info_request = 1;
+    DeviceInfoResponse device_info_response = 2;
+    WirelessMediumNegotiationRequest medium_negotiation_request = 3;
+    WirelessMediumNegotiationResponse medium_negotiation_response = 4;
+    MediumClosureRequest medium_closure_request = 5;
+    MediumClosureResponse medium_closure_response = 6;
+    DisconnectionRequest disconnection_request = 7;
+    DisconnectionResponse disconnection_response = 8;
+    WifiCredentialRequest wifi_credential_request = 9;
+    WifiCredentialResponse wifi_credential_response = 10;
+    DeviceIntegrityStartRequest integrity_start_request = 11;
+    DeviceIntegrityStartResponse integrity_start_response = 12;
+    DeviceIntegrityAttestation integrity_attestation = 13;
+    DeviceIntegrityAttestationAck integrity_attestation_ack = 14;
+  }
+}
+
+// GMS class iywy
+message DeviceCapabilityRequest {
+  NcmCapabilities field1 = 1;
+  bool field2 = 2;
+}
+
+// GMS class iywz
+message DeviceCapabilityResponse {
+  NcmCapabilities field1 = 1;
+  bool field2 = 2;
+}
+
+// GMS class iyxa
+message NcmCapabilities {
+  bool host_support = 1;
+  bool device_support = 2;
+  bool role_swap_support = 3;
+}
+
+// GMS class iyxf
+message DeviceInfoRequest {
+  string device_model = 1;
+  int32 platform = 2;
+  string country_code = 3;
+  string manufacturer = 4;
+}
+
+// GMS class iyxg
+message DeviceInfoResponse {
+  string device_model = 1;
+  int32 platform = 2;
+  string country_code = 3;
+  string manufacturer = 4;
+}
+
+// GMS class iyxl
+message DeviceIntegrityStartRequest {
+  oneof choice0 {
+    IntegritySkip skip = 1;
+    IntegrityChallenge challenge = 2;
+  }
+}
+
+// GMS class iyxm
+message DeviceIntegrityStartResponse {
+  bool field3 = 3;
+  oneof choice0 {
+    IntegritySkip skip = 1;
+    IntegrityChallenge challenge = 2;
+  }
+}
+
+// GMS class iyxj
+message IntegrityChallenge {
+  string cloud_project_id = 1;
+  bytes salt = 2;
+}
+
+// GMS class iyxk
+message IntegritySkip {
+}
+
+// GMS class iyxh
+message DeviceIntegrityAttestation {
+  int32 status = 1;
+  oneof choice0 {
+    GoogleIntegrity google = 2;
+    AppleIntegrity apple = 3;
+  }
+}
+
+// GMS class iyyd
+message GoogleIntegrity {
+  bytes token = 1;
+}
+
+// GMS class iyww
+message AppleIntegrity {
+}
+
+// GMS class iyxi
+message DeviceIntegrityAttestationAck {
+}
+
+// GMS class iyxw
+message WirelessMediumNegotiationRequest {
+  WifiLanRequest wifi_lan = 1;
+  WifiHotspotRequest wifi_hotspot = 2;
+  WifiAwareRequest wifi_aware = 3;
+  WifiDirectRequest wifi_direct = 4;
+}
+
+// GMS class iyxs
+message WifiLanRequest {
+  bytes field1 = 1;
+  bytes field2 = 2;
+  bool field3 = 3;
+}
+
+// GMS class iyxt
+message WifiHotspotRequest {
+  bytes field1 = 1;
+}
+
+// GMS class iyxu
+message WifiAwareRequest {
+  bytes field1 = 1;
+  bool field2 = 2;
+}
+
+// GMS class iyxv
+message WifiDirectRequest {
+  bytes field1 = 1;
+  bool field2 = 2;
+  bool field3 = 3;
+}
+
+// GMS class iyyb
+message WirelessMediumNegotiationResponse {
+  WifiLanResponse wifi_lan = 1;
+  WifiHotspotResponse wifi_hotspot = 2;
+  WifiAwareResponse wifi_aware = 3;
+  WifiDirectResponse wifi_direct = 4;
+}
+
+// GMS class iyxx
+message WifiLanResponse {
+}
+
+// GMS class iyxy
+message WifiHotspotResponse {
+  bytes ssid = 1;
+  string password = 2;
+  bytes frequency_bytes = 3;
+}
+
+// GMS class iyxz
+message WifiAwareResponse {
+  string passphrase = 1;
+  bool supports_r4 = 2;
+}
+
+// GMS class iyya
+message WifiDirectResponse {
+  bytes ssid = 1;
+  string password = 2;
+  bytes frequency_bytes = 3;
+}
+
+// GMS class iyxq
+message MediumClosureRequest {
+}
+
+// GMS class iyxr
+message MediumClosureResponse {
+}
+
+// GMS class iyxo
+message DisconnectionRequest {
+  int32 field1 = 1;
+}
+
+// GMS class iyxp
+message DisconnectionResponse {
+}
+
+// GMS class iyyf
+message WifiCredentialRequest {
+}
+
+// GMS class iyyg
+message WifiCredentialResponse {
+  int32 field1 = 1;
+  bytes field2 = 2;
+  string field3 = 3;
+  bool field4 = 4;
+}
+
+// GMS class iyxd
+message DctPacket {
+  DctOfflineFrame offline_frame = 1;
+  DeviceCapabilityRequest capability_request = 2;
+  DeviceCapabilityResponse capability_response = 3;
+  int32 field4_enum = 4;
+}

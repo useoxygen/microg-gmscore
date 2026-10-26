@@ -1,0 +1,2 @@
+# Preserve the license text emitted by the reviewed upstream artifact verbatim.
+cyclon/notices/texts/bouncycastle-1.83.txt whitespace=-blank-at-eol

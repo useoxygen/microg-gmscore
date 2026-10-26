@@ -5,6 +5,7 @@
 
 package org.microg.gms.phenotype
 
+import android.content.Context
 import android.os.Parcel
 import android.util.Log
 import com.google.android.gms.common.api.Status
@@ -24,7 +25,7 @@ private const val TAG = "PhenotypeService"
 class PhenotypeService : BaseService(TAG, GmsService.PHENOTYPE) {
     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest?, service: GmsService?) {
         val packageName = PackageUtils.getAndCheckCallingPackage(this, request?.packageName)
-        callback.onPostInitComplete(0, PhenotypeServiceImpl(packageName).asBinder(), null)
+        callback.onPostInitComplete(0, PhenotypeServiceImpl(packageName, this).asBinder(), null)
     }
 }
 
@@ -172,7 +173,8 @@ private val CONFIGURATION_OPTIONS = mapOf(
     ),
 )
 
-class PhenotypeServiceImpl(val packageName: String?) : IPhenotypeService.Stub() {
+class PhenotypeServiceImpl(val packageName: String?, private val context: Context? = null) : IPhenotypeService.Stub() {
+    private fun localFolsomFlags(namespace: String?): Array<Flag>? = context?.let { FolsomPhenotypeConfiguration.flags(it, namespace) }
     override fun register(callbacks: IPhenotypeCallbacks, packageName: String?, version: Int, p3: Array<out String>?, p4: ByteArray?) {
         Log.d(TAG, "register($packageName, $version, $p3, $p4)")
         callbacks.onRegistered(if (version != 0) Status.SUCCESS else Status.CANCELED)
@@ -213,20 +215,24 @@ class PhenotypeServiceImpl(val packageName: String?) : IPhenotypeService.Stub() 
 
     override fun getFlag(callbacks: IPhenotypeCallbacks, packageName: String?, name: String?, type: Int) {
         Log.d(TAG, "getFlag($packageName, $name, $type)")
-        callbacks.onFlag(Status.SUCCESS, null)
+        callbacks.onFlag(Status.SUCCESS, localFolsomFlags(packageName)?.singleOrNull { it.name == name })
     }
 
     override fun getCommitedConfiguration(callbacks: IPhenotypeCallbacks, packageName: String?) {
         Log.d(TAG, "getCommitedConfiguration($packageName)")
-        callbacks.onCommittedConfiguration(Status.SUCCESS, configurationsResult())
+        val resolvedFlags = localFolsomFlags(packageName)
+        callbacks.onCommittedConfiguration(Status.SUCCESS, if (resolvedFlags == null) configurationsResult() else configurationsResult(arrayOf(Configuration().apply {
+            id = 0; flags = resolvedFlags; removeNames = emptyArray()
+        })))
     }
 
     override fun getConfigurationSnapshotWithToken(callbacks: IPhenotypeCallbacks, packageName: String?, user: String?, p3: String?) {
         Log.d(TAG, "getConfigurationSnapshotWithToken($packageName, $user, $p3)")
-        if (packageName in CONFIGURATION_OPTIONS.keys) {
+        val resolvedFlags = localFolsomFlags(packageName) ?: CONFIGURATION_OPTIONS[packageName]
+        if (resolvedFlags != null) {
             callbacks.onConfiguration(Status.SUCCESS, configurationsResult(arrayOf(Configuration().apply {
                 id = 0
-                flags = CONFIGURATION_OPTIONS[packageName]
+                flags = resolvedFlags
                 removeNames = emptyArray()
             })))
         } else {

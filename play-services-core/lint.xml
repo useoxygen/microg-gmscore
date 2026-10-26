@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CYC-700: the Android Switch migration code checks its radio permissions at runtime before it starts, uses hidden
+     network-capability constants on purpose and writes its Parcelables by hand. Scoped to the migration package only. -->
+<lint>
+    <issue id="MissingPermission">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+        <ignore path="src/debug/java/org/microg/gms/migration/**" />
+    </issue>
+    <issue id="WrongConstant">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+    </issue>
+    <issue id="ParcelCreator">
+        <ignore path="src/main/kotlin/org/microg/gms/migration/**" />
+    </issue>
+</lint>

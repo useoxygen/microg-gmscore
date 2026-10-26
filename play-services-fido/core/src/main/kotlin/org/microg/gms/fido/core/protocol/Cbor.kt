@@ -38,6 +38,15 @@ fun ByteArray.encodeAsCbor() = CBORObject.FromObject(this)
 fun Int.encodeAsCbor() = CBORObject.FromObject(this)
 fun Boolean.encodeAsCbor() = CBORObject.FromObject(this)
 
+/** credBlob is authenticated extension data, so callers include these bytes before signing. */
+fun encodeCredBlobAuthenticationExtension(blob: ByteArray): ByteArray = CBORObject.NewMap().apply {
+    set("credBlob", blob.encodeAsCbor())
+}.EncodeToBytes()
+
+fun encodeCredBlobCreationExtension(stored: Boolean): ByteArray = CBORObject.NewMap().apply {
+    set("credBlob", stored.encodeAsCbor())
+}.EncodeToBytes()
+
 fun PublicKeyCredentialRpEntity.encodeAsCbor() = CBORObject.NewMap().apply {
     set("id", id.encodeAsCbor())
     if (!name.isNullOrBlank()) set("name", name.encodeAsCbor())

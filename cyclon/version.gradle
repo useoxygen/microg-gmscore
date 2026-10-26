@@ -6,12 +6,23 @@ import groovy.json.JsonSlurper
 
 // Upstream gives every commit after a tag the same versionCode. Allocate each
 // Cyclon delivery explicitly so Android can replace the previous signed APKs.
-ext.cyclonValidateVersion = { Map release, int gmsCode, int vendingCode ->
+//
+// reportedGmsVersion is the Play services version microG reports to apps and to
+// Google's servers. Upstream's tag pins its own, older version; ours may be newer
+// so that current Google apps stop asking to update Play services
+// (cyclon/reported-gms-version.md).
+ext.cyclonValidateVersion = { Map release, int vendingCode ->
     def tag = (release.upstreamTag ?: '') =~ /^v0\.\d+\.(\d+)\.(\d+)$/
-    if (release.format != 1 || !tag.matches() || Integer.parseInt(tag.group(2)) != gmsCode) {
-        throw new GradleException('Cyclon version allocation does not match the upstream GMS version')
+    def reported = (release.reportedGmsVersion ?: '') =~ /^\d{2}\.\d{2}\.\d{2}$/
+    if (release.format != 2 || !tag.matches() || !reported.matches()) {
+        throw new GradleException('Cyclon version allocation does not match the expected format')
     }
     int upstreamMinor = Integer.parseInt(tag.group(1))
+    int upstreamGmsCode = Integer.parseInt(tag.group(2))
+    int gmsCode = Integer.parseInt(release.reportedGmsVersion.replaceAll('\\.', ''))
+    if (gmsCode < upstreamGmsCode) {
+        throw new GradleException('Cyclon reportedGmsVersion allocation is older than the upstream release')
+    }
     def allocations = [
         [name: 'gmsVersionCode', base: gmsCode * 1000, width: 1000],
         [name: 'vendingVersionCode', base: 80000000 + vendingCode * 100, width: 100]
@@ -23,9 +34,9 @@ ext.cyclonValidateVersion = { Map release, int gmsCode, int vendingCode ->
             throw new GradleException("Invalid Cyclon ${allocation.name} allocation for the pinned upstream release")
         }
     }
-    return release
+    return release + [gmsVersion: release.reportedGmsVersion, gmsCode: gmsCode]
 }
 
-ext.cyclonVersion = { int gmsCode, int vendingCode ->
-    cyclonValidateVersion(new JsonSlurper().parse(rootProject.file('cyclon/version.json')), gmsCode, vendingCode)
+ext.cyclonVersion = { int vendingCode ->
+    cyclonValidateVersion(new JsonSlurper().parse(rootProject.file('cyclon/version.json')), vendingCode)
 }

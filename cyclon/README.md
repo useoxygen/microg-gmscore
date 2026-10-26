@@ -36,7 +36,8 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME=~/Library/Android/sdk \
   -Pcyclon.locationSourceApk=/absolute/path/upstream.apk
 ```
 
-`version.json` allocates GmsCore and Companion version codes for this delivery.
+`version.json` allocates GmsCore and Companion version codes for this delivery and sets the
+Play services version microG reports ([reported-gms-version.md](reported-gms-version.md)).
 Upstream's Git-based formula gives every commit after a tag the same code, which
 would leave the fixed APK unable to advance Cyclon's currently shipped versions.
 The checked-in allocation is identical in CI and a clean delivery build. Bump

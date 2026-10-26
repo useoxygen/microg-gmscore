@@ -1,0 +1,1 @@
+Public production-server attestation fixture and handshake hash from Chromium 145.0.7632.218 device/fido/enclave/attestation_unittest.cc. Contains only public server attestation, no account, PIN or client credentials. Used as an independent verifier oracle. Source: https://chromium.googlesource.com/chromium/src/+/145.0.7632.218/device/fido/enclave/attestation_unittest.cc

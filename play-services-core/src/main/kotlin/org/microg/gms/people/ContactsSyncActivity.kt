@@ -87,6 +87,9 @@ class ContactsSyncActivity : ComponentActivity() {
         retryPendingRemovals()
         setContent {
             CyclonMaterialTheme {
+                var resumeUploads by remember { mutableStateOf(false) }
+                var confirmation by remember { mutableStateOf<Account?>(null) }
+                var newContactsConfirmation by remember { mutableStateOf<Account?>(null) }
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
@@ -97,6 +100,7 @@ class ContactsSyncActivity : ComponentActivity() {
                         CyclonOutlinedButton(onClick = { openUrl("https://contacts.google.com") }) {
                             Text(stringResource(R.string.contacts_sync_open_google_contacts))
                         }
+                        MigrationHold()
                         failure?.let { ActivationProblem(it) }
                         if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         @Suppress("UNUSED_EXPRESSION")
@@ -112,8 +116,51 @@ class ContactsSyncActivity : ComponentActivity() {
                     }
                 }
                 turnOff?.let { TurnOffDialog(it) }
+                if (resumeUploads) ResumeUploadsDialog()
+                newContactsConfirmation?.let { NewContactsDialog(it) }
             }
         }
+    }
+
+    private var resumeUploads by mutableStateOf(false)
+    private var newContactsConfirmation by mutableStateOf<Account?>(null)
+
+    @Composable
+    private fun MigrationHold() {
+        val privacy = ContactMigrationPrivacy(this)
+        if (com.google.android.gms.BuildConfig.DEBUG) Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.contacts_sync_developer_controls), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+            Switch(checked = privacy.developerControlsEnabled, onCheckedChange = { privacy.developerControlsEnabled = it; revision++ })
+        }
+        if (privacy.held) {
+            Text(stringResource(R.string.contacts_sync_migration_held), color = MaterialTheme.colorScheme.error)
+            CyclonOutlinedButton(onClick = { resumeUploads = true }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) }
+        }
+    }
+
+    @Composable
+    private fun ResumeUploadsDialog() {
+        AlertDialog(onDismissRequest = { resumeUploads = false }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(stringResource(R.string.contacts_sync_resume_uploads)) },
+            text = { Text(stringResource(R.string.contacts_sync_resume_uploads_consent)) },
+            confirmButton = { CyclonTextButton(onClick = {
+                ContactMigrationPrivacy(this).ownerResume()
+                AccountManager.get(this).getAccountsByType("com.google").forEach { ContactSyncPreferences(this, it).refresh() }
+                resumeUploads = false; revision++
+            }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) } },
+            dismissButton = { CyclonTextButton(onClick = { resumeUploads = false }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
+    }
+
+    @Composable
+    private fun NewContactsDialog(account: Account) {
+        AlertDialog(onDismissRequest = { newContactsConfirmation = null }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(stringResource(R.string.contacts_sync_upload_new)) },
+            text = { Text(stringResource(R.string.contacts_sync_upload_new_consent)) },
+            confirmButton = { CyclonTextButton(onClick = {
+                ContactSyncPreferences(this, account).apply { uploadNewContacts = true; refresh() }
+                newContactsConfirmation = null; revision++
+            }) { Text(stringResource(R.string.contacts_sync_allow)) } },
+            dismissButton = { CyclonTextButton(onClick = { newContactsConfirmation = null }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
     }
 
     private data class TurnOff(val account: Account, val unsynced: Int)
@@ -179,6 +226,15 @@ class ContactsSyncActivity : ComponentActivity() {
                     Switch(checked = prefs.mode == SyncMode.TWO_WAY, enabled = !busy, onCheckedChange = { upload ->
                         choose(account, if (upload) SyncMode.TWO_WAY else SyncMode.DOWNLOAD)
                     })
+                }
+                // Developer fixture control (main's Android Switch work); customers always upload new contacts.
+                if (prefs.mode == SyncMode.TWO_WAY && ContactMigrationPrivacy(this@ContactsSyncActivity).developerControlsEnabled) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.contacts_sync_upload_new), Modifier.weight(1f))
+                        Switch(checked = prefs.uploadNewContacts, enabled = !busy, onCheckedChange = { enabled ->
+                            if (enabled) newContactsConfirmation = account else { prefs.uploadNewContacts = false; revision++ }
+                        })
+                    }
                 }
             }
         }
@@ -345,7 +401,7 @@ class ContactsSyncActivity : ComponentActivity() {
                     } catch (e: ApiException) {
                         if (e.status != 401) throw e
                         // Retry one expired cached token. A 403 is a separate API-access failure.
-                        AccountManager.get(this@ContactsSyncActivity).invalidateAuthToken(account.type, token)
+                        org.microg.gms.auth.invalidateAccountAuthToken(this@ContactsSyncActivity, account.type, token)
                         stage = ActivationStage.AUTHORIZATION
                         token = authToken(account, mode)
                         stage = ActivationStage.API
