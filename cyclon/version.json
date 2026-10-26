@@ -1,6 +1,7 @@
 {
-  "format": 1,
+  "format": 2,
   "upstreamTag": "v0.3.17.252432",
-  "gmsVersionCode": 252432075,
-  "vendingVersionCode": 84022675
+  "reportedGmsVersion": "25.41.32",
+  "gmsVersionCode": 254132076,
+  "vendingVersionCode": 84022676
 }
