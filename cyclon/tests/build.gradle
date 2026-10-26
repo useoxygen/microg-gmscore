@@ -11,9 +11,9 @@ tasks.register('testVersionAllocation') {
     doLast {
         def release = new JsonSlurper().parse(file('../version.json'))
         def allocated = cyclonValidateVersion(release, 40226)
-        // Every shipped APK must be replaceable: 252432074/84022674 is the last 25.24 delivery.
-        assert allocated.gmsVersionCode > 252432074
-        assert allocated.vendingVersionCode > 84022674
+        // Every shipped APK must be replaceable: 252432075/84022675 is the last 25.24 delivery.
+        assert allocated.gmsVersionCode > 252432075
+        assert allocated.vendingVersionCode > 84022675
         assert allocated.gmsCode == Integer.parseInt(release.reportedGmsVersion.replaceAll('\\.', ''))
         // Stay below Cloud Messaging's 26.12 gate until microG implements that service.
         assert allocated.gmsCode < 261200
@@ -21,7 +21,7 @@ tasks.register('testVersionAllocation') {
             [format: 1],
             [reportedGmsVersion: '25.41'],
             [reportedGmsVersion: '25.20.32'],
-            [gmsVersionCode: 252432075],
+            [gmsVersionCode: 252432076],
             [gmsVersionCode: (allocated.gmsCode * 1000 + 1000)],
             [vendingVersionCode: 84022634],
             [vendingVersionCode: 84022700],
