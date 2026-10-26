@@ -377,8 +377,9 @@ class ContactsSyncActivity : ComponentActivity() {
 
     private fun statusOf(account: Account, prefs: ContactSyncPreferences): String {
         if (prefs.mode == SyncMode.OFF) return "off"
-        val active = ContentResolver.isSyncActive(account, ContactSyncPreferences.AUTHORITY) ||
-            ContentResolver.isSyncPending(account, ContactSyncPreferences.AUTHORITY) && prefs.lastSuccess == 0L
+        // Only a running sync is "in progress". Android keeps failed syncs queued for retry, so counting a
+        // queued one would hide a stored problem (e.g. sign-in needed) and disable Sync now indefinitely.
+        val active = ContentResolver.isSyncActive(account, ContactSyncPreferences.AUTHORITY)
         return when {
             !hasContactsPermission -> "permission"
             active -> "active"
