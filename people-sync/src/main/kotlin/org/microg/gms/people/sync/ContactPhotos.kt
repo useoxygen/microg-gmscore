@@ -33,6 +33,13 @@ object ContactPhotos {
     fun reference(person: Person): String? = selected(person)?.getString("url")?.also { if (!safeUrl(it) && !PrivatePeopleApi.isPhotoReference(it)) throw UnreadableContact() }
     fun revision(person: Person): String = hash(canonical(JSONObject().put("personEtag", person.json.optString("etag"))
         .put("contactEtag", person.etag).put("photo", selected(person) ?: JSONObject.NULL)).toByteArray(Charsets.UTF_8))
+    /** Signatures (see PhotoStore.photoSignature) describe the same picture despite re-encoding. */
+    fun similar(a: String?, b: String?): Boolean {
+        if (a == null || b == null || a.length != b.length || a.length % 2 != 0 || a.isEmpty()) return false
+        var diff = 0L
+        for (i in a.indices step 2) diff += kotlin.math.abs(a.substring(i, i + 2).toInt(16) - b.substring(i, i + 2).toInt(16))
+        return diff / (a.length / 2) <= 12
+    }
     fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
     fun base64(bytes: ByteArray): String {
         val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -55,6 +62,8 @@ data class PhotoContact(val contact: LocalContact, val token: String, val baseli
     /** The last metadata read recorded that Google has no photo for this contact. */
     val remoteKnownNone: Boolean = false)
 interface PhotoStore {
+    /** A tiny downscaled image fingerprint (hex), or null if the bytes don't decode. */
+    fun photoSignature(bytes: ByteArray): String? = null
     fun photoContacts(): List<PhotoContact>
     fun photoBytes(existing: PhotoContact): ByteArray?
     fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact
@@ -89,8 +98,13 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
             val remote = ContactPhotos.reference(current)
             if (pending != null) {
                 if (pending.optBoolean("conflict")) { conflicts++; continue }
-                val hash = remote?.let { ContactPhotos.hash(photos.readPhoto(it)) }
-                val matches = if (pending.getString("action") == "delete") remote == null else hash == pending.getString("hash")
+                val remoteBytes = remote?.let(photos::readPhoto)
+                val hash = remoteBytes?.let(ContactPhotos::hash)
+                // Google re-encodes uploads (e.g. PNG to JPEG), so an exact hash can't confirm a lost reply.
+                // While the local photo is still the one that was sent, compare what the pictures look like.
+                val sameImage = remoteBytes != null && local.token == pending.optString("sentToken") &&
+                    store.photoBytes(local)?.let { sent -> ContactPhotos.similar(store.photoSignature(sent), store.photoSignature(remoteBytes)) } == true
+                val matches = if (pending.getString("action") == "delete") remote == null else hash == pending.getString("hash") || sameImage
                 if (matches) {
                     store.completePhoto(local, current, pending.getString("sentToken"), hash); uploaded++
                 } else uncertain++ // Never replay a photo over a possible concurrent cloud edit.

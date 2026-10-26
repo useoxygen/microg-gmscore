@@ -32,6 +32,8 @@ class PhotosSyncTest {
         override fun acknowledge(existing: LocalContact, remote: Person?) = error("Unexpected metadata acknowledgment")
         var value = PhotoContact(LocalContact(1, 1, "people/a", "e1", emptyMap(), emptyMap(), false, false), ContactPhotos.NONE, null, null)
         var bytes: ByteArray? = null; var installs = 0; var afterBegin: (() -> Unit)? = null
+        // Synthetic "picture" = first byte; re-encoding keeps it, a different picture changes it.
+        override fun photoSignature(bytes: ByteArray) = if (bytes.isEmpty()) null else "%02x".format((bytes[0] * 37) and 255).repeat(4)
         override fun photoContacts() = listOf(value)
         override fun photoBytes(existing: PhotoContact) = bytes
         override fun beginPhoto(existing: PhotoContact, pending: JSONObject): PhotoContact {
@@ -60,6 +62,7 @@ class PhotosSyncTest {
     private inner class Api : ContactsApi, PhotosApi {
         var remote: Person? = person(); val images = mutableMapOf<String, ByteArray>(); var writes = 0; var reads = 0
         var afterWrite: (() -> Unit)? = null; var loseReply = false; var reject: ApiException? = null
+        var reencode: ((ByteArray) -> ByteArray)? = null
         var page: ((String?, String?) -> Page)? = null
         override fun get(resource: String): Person? { reads++; return remote }
         override fun list(syncToken: String?, pageToken: String?) = page?.invoke(syncToken, pageToken) ?: Page(listOfNotNull(remote), null, "checkpoint")
@@ -69,7 +72,7 @@ class PhotosSyncTest {
         override fun readPhoto(url: String) = images.getValue(url)
         override fun writePhoto(resource: String, bytes: ByteArray?): Person {
             reject?.let { throw it }; writes++
-            val url = bytes?.let { "https://lh3.googleusercontent.com/new$writes".also { url -> images[url] = it } }
+            val url = bytes?.let { "https://lh3.googleusercontent.com/new$writes".also { url -> images[url] = reencode?.invoke(it) ?: it } }
             val result = person(url, "updated-$writes"); remote = result; afterWrite?.invoke()
             if (loseReply) throw IOException("Lost reply")
             return result
@@ -93,6 +96,25 @@ class PhotosSyncTest {
         store.value = store.value.copy(baseline = null, remoteKnownNone = false)
         PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
         assertEquals(2, api.reads)
+    }
+    @Test fun lostReplyForAReencodedPhotoIsConfirmedByLookNotBytes() {
+        val (store, api) = setup()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
+        api.reencode = { byteArrayOf(it[0], 9, 9, 9, 9) } // Google stores the same picture, different bytes (seen live: PNG -> JPEG)
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        api.loseReply = false
+        val report = PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, report.uploaded); assertEquals(0, report.uncertain)
+        assertNull(store.value.contact.pending); assertEquals(1, api.writes) // never replayed
+    }
+    @Test fun lostReplyWithADifferentCloudPictureStaysUncertain() {
+        val (store, api) = setup()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
+        api.reencode = { byteArrayOf(42, 9, 9) } // someone else's picture won
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        api.loseReply = false
+        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain)
+        assertNotNull(store.value.contact.pending); assertEquals(1, api.writes)
     }
     @Test fun lostPhotoReplyHoldsMetadataCheckpointUntilCloudNameIsApplied() {
         val (store, api) = setup()
