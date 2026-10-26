@@ -273,8 +273,8 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     }
     override fun photoSignature(bytes: ByteArray): String? {
         val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-        val small = android.graphics.Bitmap.createScaledBitmap(bitmap, 8, 8, true)
-        return buildString { for (y in 0 until 8) for (x in 0 until 8) small.getPixel(x, y).let { p ->
+        val small = android.graphics.Bitmap.createScaledBitmap(bitmap, 32, 32, true)
+        return buildString { for (y in 0 until 32) for (x in 0 until 32) small.getPixel(x, y).let { p ->
             append("%02x%02x%02x".format((p shr 16) and 255, (p shr 8) and 255, p and 255)) } }
     }
     override fun photoBytes(existing: PhotoContact): ByteArray? {
