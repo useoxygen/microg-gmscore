@@ -210,37 +210,33 @@ class AgentSignInAndroidTest {
                 step = "tap-owner-open"
                 tap(compose.onNodeWithText(context.getString(R.string.passwords_open)))
                 step = "wait-local-storage-choice"
-                compose.waitUntil(10_000) {
-                    compose.onAllNodesWithText(context.getString(R.string.passwords_on_device)).fetchSemanticsNodes().size == 1
-                }
+                waitForOneNode(hasText(context.getString(R.string.passwords_on_device)))
                 step = "tap-local-storage-choice"
                 tap(compose.onNodeWithText(context.getString(R.string.passwords_on_device)))
                 step = "wait-local-search-field"
-                compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().size == 1 }
+                waitForOneNode(hasSetTextAction())
                 step = "filter-local-probe"
                 compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement(USERNAME)
                 closeSoftKeyboard()
                 step = "wait-filtered-probe-row"
                 // Search now also contains USERNAME. Count the displayed credential row only;
                 // otherwise a correctly loaded result and the editable query make two matches.
-                compose.waitUntil(10_000) {
-                    compose.onAllNodes(hasText(USERNAME) and !hasSetTextAction()).fetchSemanticsNodes().size == 1
-                }
+                waitForOneNode(hasText(USERNAME) and !hasSetTextAction())
                 val settingsTab = hasText(context.getString(R.string.passwords_tab_settings)) and hasClickAction()
                 val passwordsTab = hasText(context.getString(R.string.passwords_tab_passwords)) and hasClickAction()
                 step = "tap-local-settings-tab"
                 tap(compose.onNode(settingsTab).performScrollTo())
                 step = "wait-local-settings-tab-selected"
-                waitForOneNavigationNode(settingsTab and isSelected())
+                waitForOneNode(settingsTab and isSelected())
                 step = "assert-settings-hides-search"
                 compose.onAllNodes(hasSetTextAction()).assertCountEquals(0)
                 step = "tap-return-to-passwords-tab"
                 // The page heading is also "Passwords". Only the tab has a click action.
                 tap(compose.onNode(passwordsTab).performScrollTo())
                 step = "wait-passwords-tab-selected"
-                waitForOneNavigationNode(passwordsTab and isSelected())
+                waitForOneNode(passwordsTab and isSelected())
                 step = "wait-returned-passwords-search"
-                waitForOneNavigationNode(hasSetTextAction())
+                waitForOneNode(hasSetTextAction())
                 step = "assert-returned-search-preserves-query"
                 compose.onNode(hasSetTextAction() and hasText(USERNAME)).assertExists()
                 step = "verify-tab-navigation-preserves-data"
@@ -328,9 +324,9 @@ class AgentSignInAndroidTest {
         }
     }
 
-    private fun waitForOneNavigationNode(matcher: SemanticsMatcher) {
+    private fun waitForOneNode(matcher: SemanticsMatcher) {
         compose.waitUntil(10_000) {
-            // A tab transition can briefly detach the semantics root. Missing roots are
+            // Screen loading or a tab transition can briefly detach the semantics root. Missing roots are
             // not readiness; keep polling. Other failures and the timeout still propagate.
             compose.onAllNodes(matcher).fetchSemanticsNodes(atLeastOneRootRequired = false).size == 1
         }
