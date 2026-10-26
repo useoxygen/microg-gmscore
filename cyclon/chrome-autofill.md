@@ -17,13 +17,51 @@ This reduces compatibility with older Chrome or disabled forwarding but avoids
 selecting a parent site's password for a child frame. Explicit matching fields
 and password-only forms remain supported by the owner flow.
 
-This does **not** enable unattended `security.password.fill` in Chrome. Ask,
-Always and Never remain assistant grants; they do not make this owner picker an
-assistant redemption path. No Always dataset bypass or agent fallback is added.
-Neither host classifier tests nor successful owner autofill establish assistant
-privacy, and no physical-device acceptance has been performed for this change.
+## Separate private assistant path
 
-## Why the assistant path remains closed
+Core's matching controller now implements a separate Chrome path through the
+browser's local DevTools socket. The controller must run as root or shell, and
+verifies the installed stable Chrome Google signer, unique UID, socket peer UID,
+PID and browser process. The model cannot choose a socket, DevTools command or
+JavaScript expression.
+
+A fixed script in a fresh isolated world captures only the focused main-frame
+password field. The target retains the exact HTTPS origin (including port),
+frame/document identity and original field object. It refuses child frames,
+shadow roots, changed focus, navigation and repeated use. At delivery it rechecks
+the target and arms the durable whole-Chrome-UID privacy fence before sending the
+password through a fixed private call. Ask, Always and Never remain Services
+policy; strict logins still require fresh device authentication.
+
+This source path needs matching Core, Services and controller builds. A missing
+or changed local browser interface fails closed; it never falls back to combining
+an address-bar URL with an Android field ID. The matching image also needs the
+controller's outbound `connectto` and cross-MLS process-metadata policy, plus its
+init service's `readproc` group. SELinux cannot match Chrome's package, signer or
+abstract socket name; the native transport verifies those identities separately.
+These additions grant no reverse app connection, app-data access or ptrace.
+Installing a Core/Services APK or controller JAR alone cannot supply the policy
+and init-group changes. Passing host policy compilation does not mean a matching
+whole image was built or its policy loaded and accepted on the phone.
+Host/component/device results must be reported separately. Generic post-fill
+agent continuation remains fenced and is tracked in CYC-787.
+
+## Current Chrome implementation reference
+
+The private path is based on the matching Chromium `155.0.8059.84` sources used
+by the designated 7a, in addition to the pinned 145 Autofill investigation below.
+[`ProcessInitializationHandler`](https://chromium.googlesource.com/chromium/src/+/refs/tags/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/init/ProcessInitializationHandler.java)
+starts the local server during deferred initialization.
+[`DevToolsServer`](https://chromium.googlesource.com/chromium/src/+/refs/tags/155.0.8059.84/chrome/android/java/src/org/chromium/chrome/browser/DevToolsServer.java)
+respects the existing remote-debugging policy, while the native server checks Unix
+peer credentials. The controller changes neither Chrome policy nor settings.
+[`InspectorPageAgent`](https://chromium.googlesource.com/chromium/src/+/refs/tags/155.0.8059.84/third_party/blink/renderer/core/inspector/inspector_page_agent.cc)
+provides frame/document metadata and isolated-world creation with a copied security
+origin. The fixed private scripts use that world without universal access.
+A changed browser implementation still needs qualification; these references are
+source evidence, not proof of successful device delivery.
+
+## Why Android Autofill alone cannot authorize the assistant
 
 Android's [ViewNode API](https://developer.android.com/reference/android/app/assist/AssistStructure.ViewNode#getWebDomain())
 exposes a document's scheme and host. Its
@@ -43,7 +81,7 @@ focused-field identifier or a per-frame origin. A top-tab URL therefore cannot
 authorize a password for an arbitrary focused field, which may belong to a
 different frame. A URL read from the address bar is not a replacement.
 
-Completing assistant support needs a browser-owned interface that reports the
+An assistant path needs a browser-owned interface that reports the
 exact focused frame origin and an opaque, one-use field/document handle, then
 rechecks that handle and origin while performing the fill. Core must also install
 its durable whole-Chrome-UID privacy fence **before** a secret is delivered: a
@@ -87,7 +125,7 @@ frame origin and field identity, but the stock Android contract does not export
 both full authority and a revocable fill operation to Services/Core. Combining
 an unrelated top-tab AssistContent URL with these IDs cannot restore that binding.
 
-### Minimum browser-side integration
+### Alternative browser-side Binder integration
 
 A Chromium integration can reuse that native field/frame identity. It must expose
 a Core-only or Services-only Binder API that captures the focused password input,
@@ -104,7 +142,9 @@ distinct. The API must verify the actual installed authorized caller UID/signing
 identity, return only nonsecret status, and release a secret only after Core's
 durable browser-UID privacy fence is acknowledged. Returning a populated Android
 dataset without this handshake is not an agent-safe implementation. These are
-requirements for new Chromium code, not features present in the stock APK.
+requirements for an alternative Chromium Binder API, not an API present in the
+stock APK. The current controller implementation instead uses the separately
+authenticated local DevTools transport described above.
 
 The field-origin owner-flow regression tests added during this pass cover missing
 child metadata under an HTTPS parent, explicit iframe metadata, mismatched

@@ -128,6 +128,48 @@ class PasswordAgentFillProviderTest {
             override fun onReceiveResult(resultCode: Int, resultData: Bundle?) { if (resultCode == 0) cancelled++ }
         })
     }
+    private fun chromeSignature(): Signature = Signature(java.util.Base64.getMimeDecoder().decode(
+        javaClass.getResourceAsStream("/google-chrome-release-cert.base64")!!.bufferedReader().use { it.readText() }))
+
+    @Suppress("DEPRECATION")
+    private fun installChrome(cert: Signature) {
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+            packageName = "com.android.chrome"
+            applicationInfo = ApplicationInfo().apply { packageName = "com.android.chrome"; uid = targetUid }
+            signatures = arrayOf(cert)
+            signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(cert)) }
+        })
+    }
+
+    private fun chromeTarget(cert: Signature, uid: Int = targetUid, origin: String = "https://example.test:8443/") = Bundle().apply {
+        putString("package", "com.android.chrome"); putInt("uid", uid)
+        putByteArray("certificate", MessageDigest.getInstance("SHA-256").digest(cert.toByteArray()))
+        putString("web_origin", origin)
+    }
+
+    @Test fun googleSignedChromeAcceptsCoreAttestedExactHttpsOriginIncludingPort() {
+        val cert = chromeSignature()
+        assertEquals("f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83",
+            MessageDigest.getInstance("SHA-256").digest(cert.toByteArray()).joinToString("") { "%02x".format(it) })
+        installChrome(cert)
+        val target = PasswordAgentFillTarget.from(context, chromeTarget(cert))
+        assertEquals("https://example.test:8443/", target.realm)
+        assertTrue(target.valid(context))
+        assertNotEquals(target.realm, PasswordAgentFillTarget.from(context,
+            chromeTarget(cert, origin = "https://example.test:9443/")).realm)
+    }
+
+    @Test fun chromeWrongSignerOrClaimedUidCannotSelectAWebRealm() {
+        val cert = chromeSignature()
+        installChrome(signature)
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, chromeTarget(signature)) }
+        installChrome(cert)
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, chromeTarget(cert, uid = targetUid + 1)) }
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, chromeTarget(signature)) }
+        val target = PasswordAgentFillTarget.from(context, chromeTarget(cert))
+        installChrome(signature)
+        assertFalse(target.valid(context))
+    }
     @Suppress("DEPRECATION")
     private fun prepare(): PendingIntent = provider.call("prepare", null, input()).getParcelable("picker")!!
 

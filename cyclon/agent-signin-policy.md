@@ -24,5 +24,7 @@ Google. Test or device evidence is reported separately from this protocol.
 
 This policy authorizes password use only. It does not implement the additional
 confirmation gates for payments, bookings, sending messages or security changes.
-Chrome automatic agent fill still needs its browser-owned exact-frame contract;
-the existing native whole-UID privacy fence remains in place after delivery.
+Matching Core/controller builds now have a separate authenticated local Chrome
+path bound to a main-frame document and one-use field object. Its host/component
+and device acceptance are tracked separately. The native whole-UID privacy fence
+remains in place after delivery; generic post-login continuation remains open.

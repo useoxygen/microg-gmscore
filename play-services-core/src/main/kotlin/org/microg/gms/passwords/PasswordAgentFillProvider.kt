@@ -18,6 +18,8 @@ import android.os.Looper
 import android.os.ResultReceiver
 import android.os.SystemClock
 import java.security.MessageDigest
+import org.microg.gms.common.GooglePackagePermission
+import org.microg.gms.utils.ExtendedPackageInfo
 import okio.ByteString.Companion.toByteString
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -81,18 +83,20 @@ internal class PasswordAgentFillTarget private constructor(val packageName: Stri
     fun valid(context: Context): Boolean = Build.VERSION.SDK_INT >= 28 && runCatching {
         val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
         val signers = info.signingInfo?.apkContentsSigners?.takeIf { it.size == 1 } ?: return@runCatching false
-        info.applicationInfo?.uid == uid && (!web || info.applicationInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) != 0) &&
+        info.applicationInfo?.uid == uid && (!web || if (packageName == "org.lineageos.jelly")
+            info.applicationInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) != 0 else trustedChrome(context, packageName)) &&
             MessageDigest.isEqual(certificate, MessageDigest.getInstance("SHA-256").digest(signers.single().toByteArray()))
     }.getOrDefault(false)
     companion object {
         fun from(context: Context, bundle: Bundle): PasswordAgentFillTarget {
             val pkg = bundle.getString("package")?.takeIf { it.isNotBlank() && it.length <= 255 } ?: throw SecurityException()
             val cert = bundle.getByteArray("certificate")?.takeIf { it.size == 32 }?.copyOf() ?: throw SecurityException()
-            // web_origin is exclusively Core's attestation of Jelly's authenticated focused_login.
+            // web_origin is Core's attestation of Jelly's native bridge or the root controller's
+            // authenticated Chrome DevTools main-frame capture. Never a model-provided URL.
             // General apps cannot select web realms, and model URL arguments never reach here.
             val origin = bundle.getString("web_origin")
             val realm = if (origin == null) "android://${cert.toByteString().base64Url().trimEnd('=')}@$pkg/" else {
-                if (pkg != "org.lineageos.jelly" || origin.length > 4096) throw SecurityException()
+                if (pkg != "org.lineageos.jelly" && !trustedChrome(context, pkg) || origin.length > 4096) throw SecurityException()
                 val uri = java.net.URI(origin)
                 if (uri.scheme != "https" || uri.host.isNullOrEmpty() || uri.userInfo != null ||
                     uri.rawQuery != null || uri.rawFragment != null || uri.rawPath !in listOf("", "/")) throw SecurityException()
@@ -101,6 +105,9 @@ internal class PasswordAgentFillTarget private constructor(val packageName: Stri
             return PasswordAgentFillTarget(pkg, bundle.getInt("uid", -1), cert, realm, origin != null)
                 .also { if (!it.valid(context)) throw SecurityException() }
         }
+        private fun trustedChrome(context: Context, pkg: String): Boolean = pkg == "com.android.chrome" && runCatching {
+            ExtendedPackageInfo(context, pkg).hasGooglePackagePermission(GooglePackagePermission.CREDENTIALS)
+        }.getOrDefault(false)
     }
 }
 
