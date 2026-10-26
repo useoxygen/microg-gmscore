@@ -20,6 +20,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -38,6 +40,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.res.painterResource
@@ -330,7 +334,13 @@ class ContactsSyncActivity : ComponentActivity() {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Avatar(account)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(account.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // Like Google's card: the account's name above its email address, when microG knows the name.
+                    val name = remember(account.name) {
+                        runCatching { PeopleManager.getDisplayName(this@ContactsSyncActivity, account.name) }.getOrNull()?.takeIf { it.isNotBlank() }
+                    }
+                    Text(name ?: account.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (name != null) Text(account.name, style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     StatusLine(status, prefs)
                 }
                 Switch(checked = on, enabled = !busy, modifier = Modifier.semantics { contentDescription = toggleLabel }, onCheckedChange = { checked ->
@@ -368,10 +378,21 @@ class ContactsSyncActivity : ComponentActivity() {
         }
     }
 
+    /** The account's Google profile photo (cached, else fetched once), like Google's card; the initial until then. */
     @Composable
     private fun Avatar(account: Account) {
+        val photo by produceState<Bitmap?>(null, account.name) {
+            value = withContext(Dispatchers.IO) {
+                runCatching {
+                    PeopleManager.getOwnerAvatarBitmap(this@ContactsSyncActivity, account.name, false)
+                        ?: PeopleManager.getOwnerAvatarBitmap(this@ContactsSyncActivity, account.name, true)
+                }.getOrNull()
+            }
+        }
         Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-            Text(account.name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+            val image = photo
+            if (image != null) Image(image.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else Text(account.name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
         }
     }
 
