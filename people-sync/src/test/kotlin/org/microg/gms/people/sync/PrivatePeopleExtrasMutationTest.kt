@@ -190,9 +190,12 @@ class PrivatePeopleExtrasMutationTest {
                     }
                 }
             }
-            fun sync() = PrivatePeopleApi(transport, context, { true }).let { PhotosSync(it, it, store) { SyncMode.TWO_WAY }.sync() }
+            var clock = 1_000_000L
+            fun sync() = PrivatePeopleApi(transport, context, { true }).let { PhotosSync(it, it, store, { clock }) { SyncMode.TWO_WAY }.sync() }
             assertThrows(IOException::class.java) { sync() }
             assertNotNull(store.row.contact.pending); drop = false
+            if (action == "transformed") { assertEquals(1, sync().uncertain); assertNotNull(store.row.contact.pending) } // held through the grace
+            clock += PhotosSync.RETRY_AFTER_MILLIS
             val report = sync()
             assertEquals(1, writes)
             if (action == "transformed") { // Google re-encoded it: take Google's version, never replay

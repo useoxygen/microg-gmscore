@@ -104,14 +104,12 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
                 // tells a re-encode from a small edit. Decide by whether the cloud photo changed at all.
                 val before = pending.opt("beforeRemote").takeUnless { it == JSONObject.NULL } as String?
                 // The photo reference changes only when the photo does (not on other contact edits).
-                // The write may still be in flight. A photo write sets the same image again, so after the grace a
-                // late original and a retry converge; before it, nothing newer may be sent that it could overwrite.
-                val graceOver = now() - pending.optLong("sentAt") >= RETRY_AFTER_MILLIS
+                // The write may still be in flight: until the grace ends, keep the journal so nothing newer is sent
+                // that it could land over. After it, a photo write sets the same image again, so a late original
+                // and a retry converge.
+                if (now() - pending.optLong("sentAt") < RETRY_AFTER_MILLIS) { uncertain++; continue }
+                if (remote == before) { store.rejectPhoto(local); uncertain++; continue } // Not landed: sent again next pass.
                 val editedSince = local.token != pending.getString("sentToken")
-                if (remote == before || editedSince && !graceOver) {
-                    if (graceOver) store.rejectPhoto(local) // Not landed: the next pass sends it again.
-                    uncertain++; continue
-                }
                 // The cloud photo changed (our upload, re-encoded, or someone else's newer photo): Google's version
                 // wins and is installed together with closing the journal. If the photo here was edited again since
                 // it was sent, keep that edit: take Google's photo as the baseline so the edit uploads next pass.

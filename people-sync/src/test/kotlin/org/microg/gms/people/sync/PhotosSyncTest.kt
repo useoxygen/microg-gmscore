@@ -8,6 +8,7 @@ import org.junit.Test
 import java.io.IOException
 
 class PhotosSyncTest {
+    private var clock = 1_000_000L
     private fun person(url: String? = null, etag: String = "e1"): Person = Person.parse(JSONObject()
         .put("resourceName", "people/a").put("metadata", JSONObject().put("sources", JSONArray().put(JSONObject().put("type", "CONTACT").put("etag", etag))))
         .apply { if (url != null) put("photos", JSONArray().put(JSONObject().put("url", url).put("metadata", JSONObject()
@@ -82,41 +83,43 @@ class PhotosSyncTest {
     }
     private fun setup(): Pair<Store, Api> {
         val store = Store(); val api = Api()
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync()
         return store to api
     }
     @Test fun photoLessContactsNeedNoGoogleReads() {
         val store = Store(); val api = Api()
         store.value = store.value.copy(remoteKnownNone = true)
-        assertEquals(0, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
+        assertEquals(0, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().downloaded)
         assertEquals(0, api.reads); assertEquals(0, store.installs)
         // A local photo removal (baseline had one) or an unknown remote state still checks Google.
         store.value = store.value.copy(baseline = PhotoBaseline("old-token", null))
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertEquals(1, api.reads)
         store.value = store.value.copy(baseline = null, remoteKnownNone = false)
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertEquals(2, api.reads)
     }
     @Test fun lostReplyWithAReencodedCloudPhotoAdoptsGooglesVersionWithoutReplay() {
         val (store, api) = setup()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
         api.reencode = { byteArrayOf(7, 9, 9, 9, 9) } // Google stores it re-encoded (seen live: PNG -> JPEG)
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         api.loseReply = false
-        val report = PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uncertain) // held through the grace
+        assertNotNull(store.value.contact.pending); clock += PhotosSync.RETRY_AFTER_MILLIS
+        val report = PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertEquals(1, report.downloaded); assertEquals(0, report.uncertain)
         assertNull(store.value.contact.pending); assertEquals(1, api.writes) // never replayed
         assertArrayEquals(byteArrayOf(7, 9, 9, 9, 9), store.bytes) // the phone now shows exactly what Google has
-        assertEquals(0, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain)
+        assertEquals(0, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uncertain)
     }
     @Test fun lostReplyWithSomeoneElsesNewerCloudPhotoNeverOverwritesIt() {
         val (store, api) = setup()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true
         api.afterWrite = { api.cloud("https://lh3.googleusercontent.com/other", byteArrayOf(42)) } // a later edit elsewhere wins
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.loseReply = false; api.afterWrite = null
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
+        api.loseReply = false; api.afterWrite = null; clock += PhotosSync.RETRY_AFTER_MILLIS
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().downloaded)
         assertArrayEquals(byteArrayOf(42), store.bytes); assertEquals(1, api.writes); assertNull(store.value.contact.pending)
     }
     @Test fun anUploadThatNeverReachedGoogleIsSentAgainOnlyAfterTheGracePeriod() {
@@ -140,19 +143,34 @@ class PhotosSyncTest {
         clock += 30_000
         assertEquals(1, sync().uncertain); assertNotNull(store.value.contact.pending)
         api.cloud("https://lh3.googleusercontent.com/late", byteArrayOf(7, 9, 9)) // the original commits, re-encoded
-        clock += 30_000
+        clock += PhotosSync.RETRY_AFTER_MILLIS
         assertEquals(1, sync().downloaded); assertNull(store.value.contact.pending)
         assertEquals(1, api.dispatches); assertArrayEquals(byteArrayOf(7, 9, 9), store.bytes)
     }
     @Test fun aFailedInstallKeepsTheJournalAndRecoversNextPass() {
         val (store, api) = setup()
         store.edit(byteArrayOf(7, 1, 2, 3)); api.loseReply = true; api.reencode = { byteArrayOf(7, 9, 9) }
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.loseReply = false; store.failInstall = true
-        assertThrows(IllegalStateException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
+        api.loseReply = false; store.failInstall = true; clock += PhotosSync.RETRY_AFTER_MILLIS
+        assertThrows(IllegalStateException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         assertNotNull(store.value.contact.pending)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().downloaded)
         assertNull(store.value.contact.pending); assertArrayEquals(byteArrayOf(7, 9, 9), store.bytes); assertEquals(1, api.writes)
+    }
+    @Test fun aPhotoEditedRightAfterRecoveryIsNotOverwrittenByALateWrite() {
+        val (store, api) = setup(); var clock = 1_000_000L
+        fun sync() = PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
+        store.edit(byteArrayOf(7, 1, 2, 3)); api.failBeforeWrite = true // upload A still processing at Google
+        assertThrows(IOException::class.java) { sync() }
+        api.failBeforeWrite = false
+        api.cloud("https://lh3.googleusercontent.com/other", byteArrayOf(42)) // another device sets C
+        clock += 60_000
+        assertEquals(1, sync().uncertain)  // C seen, journal still held
+        store.edit(byteArrayOf(5, 5))      // owner picks B right after
+        assertEquals(1, sync().uncertain); assertEquals(1, api.dispatches) // B is not sent while A could land
+        clock += PhotosSync.RETRY_AFTER_MILLIS
+        sync(); assertEquals(1, sync().uploaded)
+        assertArrayEquals(byteArrayOf(5, 5), api.images.getValue(ContactPhotos.reference(api.remote!!)!!))
     }
     @Test fun aPhotoEditedAgainAfterALostReplyWaitsOutTheGraceThenUploads() {
         val (store, api) = setup(); var clock = 1_000_000L
@@ -179,7 +197,7 @@ class PhotosSyncTest {
         store.value = store.value.copy(contact = store.value.contact.copy(fields = store.project(before), baseline = store.project(before)))
         store.saved = "old"
         store.edit(byteArrayOf(1, 2, 3)); api.loseReply = true
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         api.remote = named(api.remote!!, "CloudEdit")
         api.page = { token, _ -> Page(if (token == "old") listOf(api.remote!!) else emptyList(), null, "new") }
 
@@ -188,7 +206,7 @@ class PhotosSyncTest {
         assertEquals(1, blocked.uncertain)
         assertEquals(store.project(before), store.value.contact.fields)
         assertNotNull(store.value.contact.pending)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uploaded)
         assertNull(store.value.contact.pending); assertFalse(store.value.contact.dirty)
 
         // A fresh engine must revisit the old incremental range after recovery,
@@ -215,157 +233,157 @@ class PhotosSyncTest {
     @Test fun changedStateAfterConfirmedPhotoReplyIsRevisitedWithoutMutationReplay() {
         val (store, api) = setup(); store.edit(byteArrayOf(1))
         api.afterWrite = { api.cloud("https://lh3.googleusercontent.com/later", byteArrayOf(2)) }
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertNull(store.value.contact.pending); assertNull(store.value.baseline!!.hash)
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertArrayEquals(byteArrayOf(2), store.bytes); assertEquals(1, api.writes)
     }
     @Test fun independentlyDeletedPhotoIsAcknowledgedWithoutAnotherMutation() {
         val (store, api) = setup(); val url = "https://lh3.googleusercontent.com/image"
         api.cloud(url, byteArrayOf(1)); store.value = store.value.copy(remoteHint = url)
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync(); store.edit(null)
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync(); store.edit(null)
         api.remote = person(etag = "cloud-delete")
-        val report = PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        val report = PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertEquals(0, report.conflicts); assertEquals(0, api.writes); assertFalse(store.value.contact.dirty)
     }
     @Test fun unchangedUrlWithNewRevisionDownloadsChangedImage() {
         val (store, api) = setup(); val url = "https://lh3.googleusercontent.com/stable"
         api.cloud(url, byteArrayOf(1)); store.value = store.value.copy(remoteHint = url, remoteRevision = "cloud")
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync()
         api.images[url] = byteArrayOf(2); api.remote = person(url, "new-image")
         store.value = store.value.copy(remoteRevision = "new-image")
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync().downloaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync().downloaded)
         assertArrayEquals(byteArrayOf(2), store.bytes)
     }
     @Test fun unrelatedTextRevisionDoesNotRewriteImageOrBlockNextPhotoEdit() {
         val (store, api) = setup(); val url = "https://lh3.googleusercontent.com/stable"
         api.cloud(url, byteArrayOf(1)); store.value = store.value.copy(remoteHint = url, remoteRevision = "cloud")
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync(); val installs = store.installs
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync(); val installs = store.installs
         api.remote = person(url, "text-only"); store.value = store.value.copy(remoteRevision = "text-only")
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync(); assertEquals(installs, store.installs)
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync(); assertEquals(installs, store.installs)
         store.edit(byteArrayOf(2)); api.remote = person(url, "more-text")
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uploaded)
     }
     @Test fun cloudImageChangeAtSameUrlConflictsWithLocalEdit() {
         val (store, api) = setup(); val url = "https://lh3.googleusercontent.com/stable"
         api.cloud(url, byteArrayOf(1)); store.value = store.value.copy(remoteHint = url, remoteRevision = "cloud")
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync()
         store.edit(byteArrayOf(2)); api.images[url] = byteArrayOf(3); api.remote = person(url, "new-image")
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().conflicts); assertEquals(0, api.writes)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().conflicts); assertEquals(0, api.writes)
     }
     @Test fun pendingPhotoRecoveryPreservesAConcurrentContactTombstone() {
         val (store, api) = setup(); store.edit(byteArrayOf(1)); api.loseReply = true
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         store.value = store.value.copy(contact = store.value.contact.copy(deleted = true, dirty = true))
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertNull(store.value.contact.pending); assertTrue(store.value.contact.deleted); assertTrue(store.value.contact.dirty)
     }
     @Test fun malformedLocalPhotoDoesNotDispatchOrReadRemote() {
         val store = Store(); val api = Api(); store.value = store.value.copy(unreadable = true)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().skipped)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().skipped)
         assertEquals(0, api.reads); assertEquals(0, api.writes)
     }
     @Test fun offDoesNothingAndUnchangedPhotoDoesNotRefetch() {
         val store = Store(); val api = Api()
-        PhotosSync(api, api, store) { SyncMode.OFF }.sync(); assertEquals(0, api.reads)
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
-        val reads = api.reads; PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync(); assertEquals(reads, api.reads)
+        PhotosSync(api, api, store, { clock }) { SyncMode.OFF }.sync(); assertEquals(0, api.reads)
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync()
+        val reads = api.reads; PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync(); assertEquals(reads, api.reads)
     }
     @Test fun downloadsAndRemovesOnlyAfterDirectRead() {
         val (store, api) = setup(); val url = "https://lh3.googleusercontent.com/cloud"
         api.cloud(url, byteArrayOf(1, 2)); store.value = store.value.copy(remoteHint = url)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync().downloaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync().downloaded)
         assertArrayEquals(byteArrayOf(1, 2), store.bytes)
         api.remote = person(); store.value = store.value.copy(remoteHint = null)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync().downloaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync().downloaded)
         assertNull(store.bytes); assertEquals(0, api.writes)
     }
     @Test fun stalePhotoHintDoesNotReplaceCurrentCloudState() {
         val (store, api) = setup(); store.value = store.value.copy(remoteHint = "https://lh3.googleusercontent.com/stale")
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync()
         assertEquals(0, store.installs); assertNull(store.value.remoteHint)
     }
     @Test fun uploadAndDeleteAreJournaledAndBecomeClean() {
         val (store, api) = setup(); store.edit(byteArrayOf(3, 4))
         api.afterWrite = { assertEquals("photo", store.value.contact.pending!!.getString("kind")) }
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uploaded)
         assertFalse(store.value.contact.dirty); assertNull(store.value.contact.pending)
         store.edit(null)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uploaded)
         assertNull(ContactPhotos.reference(api.remote!!)); assertEquals(2, api.writes)
     }
     @Test fun readOnlyKeepsEditedPhotoAndNeverDispatches() {
         val (store, api) = setup(); store.edit(byteArrayOf(5))
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync().conflicts)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync().conflicts)
         assertArrayEquals(byteArrayOf(5), store.bytes); assertEquals(0, api.writes)
     }
     @Test fun simultaneousCloudPhotoEditIsAConflict() {
         val (store, api) = setup(); store.edit(byteArrayOf(5))
         api.cloud("https://lh3.googleusercontent.com/other", byteArrayOf(6))
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().conflicts)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().conflicts)
         assertArrayEquals(byteArrayOf(5), store.bytes); assertEquals(0, api.writes)
     }
     @Test fun coldStartDoesNotOverwriteExistingPhotoAndCanAdoptExactMatch() {
         val store = Store(); val api = Api(); store.edit(byteArrayOf(1))
         api.cloud("https://lh3.googleusercontent.com/cloud", byteArrayOf(2))
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().conflicts)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().conflicts)
         api.images[ContactPhotos.reference(api.remote!!)!!] = byteArrayOf(1)
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertNotNull(store.value.baseline); assertFalse(store.value.contact.dirty); assertEquals(0, api.writes)
     }
     @Test fun lostUploadReplyRecoversAfterRestartWithoutAnotherMutation() {
         val (store, api) = setup(); store.edit(byteArrayOf(7, 8)); api.loseReply = true
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         assertNotNull(store.value.contact.pending)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uploaded)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uploaded)
         assertEquals(1, api.writes); assertNull(store.value.contact.pending); assertFalse(store.value.contact.dirty)
     }
     @Test fun transformedOrDifferentReadbackAdoptsGooglesPhotoAndIsNeverReplayed() {
         val (store, api) = setup(); store.edit(byteArrayOf(7)); api.loseReply = true
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        api.images[ContactPhotos.reference(api.remote!!)!!] = byteArrayOf(9)
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().downloaded) // Google's version wins
-        assertEquals(0, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().uncertain)
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
+        api.images[ContactPhotos.reference(api.remote!!)!!] = byteArrayOf(9); clock += PhotosSync.RETRY_AFTER_MILLIS
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().downloaded) // Google's version wins
+        assertEquals(0, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().uncertain)
         assertEquals(1, api.writes); assertNull(store.value.contact.pending); assertArrayEquals(byteArrayOf(9), store.bytes)
     }
     @Test fun laterLocalPhotoEditSurvivesUploadAndRecovery() {
         val (store, api) = setup(); store.edit(byteArrayOf(1)); api.loseReply = true
         api.afterWrite = { store.edit(byteArrayOf(2)) }
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertArrayEquals(byteArrayOf(2), store.bytes); assertTrue(store.value.contact.dirty); assertNull(store.value.contact.pending)
         api.afterWrite = null; api.loseReply = false
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync(); assertEquals(2, api.writes); assertFalse(store.value.contact.dirty)
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync(); assertEquals(2, api.writes); assertFalse(store.value.contact.dirty)
     }
     @Test fun lostDeleteReplyConfirmsAbsenceWithoutReplay() {
         val (store, api) = setup(); val url = "https://lh3.googleusercontent.com/cloud"
         api.cloud(url, byteArrayOf(1)); store.value = store.value.copy(remoteHint = url)
-        PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync(); store.edit(null); api.loseReply = true
-        assertThrows(IOException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync(); assertEquals(1, api.writes); assertNull(store.value.contact.pending)
+        PhotosSync(api, api, store, { clock }) { SyncMode.DOWNLOAD }.sync(); store.edit(null); api.loseReply = true
+        assertThrows(IOException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync(); assertEquals(1, api.writes); assertNull(store.value.contact.pending)
     }
     @Test fun modeChangeBeforeDispatchClearsUnsentPhotoJournal() {
         val (store, api) = setup(); store.edit(byteArrayOf(1)); var mode = SyncMode.TWO_WAY
         store.afterBegin = { mode = SyncMode.OFF }
-        PhotosSync(api, api, store) { mode }.sync(); assertEquals(0, api.writes); assertNull(store.value.contact.pending)
+        PhotosSync(api, api, store, { clock }) { mode }.sync(); assertEquals(0, api.writes); assertNull(store.value.contact.pending)
     }
     @Test fun definiteRejectionClearsJournalButServerFailureRetainsIt() {
         val (store, api) = setup(); store.edit(byteArrayOf(1)); api.reject = ApiException(429)
-        assertThrows(ApiException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(ApiException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         assertNull(store.value.contact.pending)
         api.reject = ApiException(503)
-        assertThrows(ApiException::class.java) { PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync() }
+        assertThrows(ApiException::class.java) { PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync() }
         assertNotNull(store.value.contact.pending)
     }
     @Test fun oversizedLocalImageIsRejectedBeforeJournalingOrDispatch() {
         val (store, api) = setup(); store.edit(ByteArray(ContactPhotos.MAX_BYTES + 1))
-        assertEquals(1, PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync().skipped)
+        assertEquals(1, PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync().skipped)
         assertNull(store.value.contact.pending); assertEquals(0, api.writes)
     }
     @Test fun concurrentTextEditSurvivesPhotoAcknowledgment() {
         val (store, api) = setup(); store.edit(byteArrayOf(1))
         api.afterWrite = { store.value = store.value.copy(contact = store.value.contact.copy(fields = mapOf("names" to "[]"), dirty = true)) }
-        PhotosSync(api, api, store) { SyncMode.TWO_WAY }.sync()
+        PhotosSync(api, api, store, { clock }) { SyncMode.TWO_WAY }.sync()
         assertTrue(store.value.contact.dirty); assertEquals(mapOf("names" to "[]"), store.value.contact.fields)
     }
     @Test fun profileAndDefaultImagesAreNotContactPhotos() {
