@@ -3,8 +3,27 @@
 <resources>
     <string name="contacts_sync_title">Google Contacts sync</string>
     <string name="contacts_sync_description">Keep your contacts synced with Google Contacts so you never lose them</string>
-    <string name="contacts_sync_header">Keep your contacts synced with Google Contacts (contacts.google.com) so you never lose them. Contacts saved on the device or by other apps aren\'t affected.</string>
-    <string name="contacts_sync_open_google_contacts">Open Google Contacts</string>
+    <!-- %1$s is the link text contacts_sync_header_link -->
+    <string name="contacts_sync_header">Never lose a contact. Keep your contacts synced between your Google Account and this phone with %1$s.</string>
+    <string name="contacts_sync_header_link">Google Contacts</string>
+    <string name="contacts_sync_header_note">Contacts saved only on this phone or by other apps aren\'t affected.</string>
+    <string name="contacts_sync_open_google_contacts">Google Contacts</string>
+    <string name="contacts_sync_open_google_contacts_summary">contacts.google.com</string>
+    <string name="contacts_sync_account_settings">Account settings</string>
+    <string name="contacts_sync_account_settings_summary">Sync settings for all accounts and apps</string>
+    <string name="contacts_sync_more_title">Looking for something else?</string>
+    <string name="contacts_sync_options_title">Sync options</string>
+    <!-- Status line: "Sync on • Last sync 5 minutes ago" -->
+    <string name="contacts_sync_status_bullet">%1$s • %2$s</string>
+    <string name="contacts_sync_toggle_description">Google Contacts sync for %1$s</string>
+
+    <!-- Android\'s account-wide auto-sync switch is off -->
+    <string name="contacts_sync_auto_sync_off_status">Auto-sync is off</string>
+    <string name="contacts_sync_auto_sync_off">Auto-sync is off. Changes will only be updated when you sync manually.</string>
+    <string name="contacts_sync_turn_on_auto_sync">Turn on Auto-sync</string>
+    <string name="contacts_sync_auto_sync_dialog_title">Auto-sync account &amp; app data?</string>
+    <string name="contacts_sync_auto_sync_dialog_body">Changes you make to other apps and accounts, not just Google contacts, will be kept up to date between the web and your devices.</string>
+    <string name="contacts_sync_turn_on">Turn on</string>
     <string name="contacts_sync_no_accounts">Google Contacts sync requires a signed-in Google account.</string>
     <string name="contacts_sync_add_account">Add Google account</string>
 
@@ -22,6 +41,8 @@
     <!-- Status line -->
     <string name="contacts_sync_ready">Waiting to sync</string>
     <string name="contacts_sync_in_progress">Sync in progress</string>
+    <string name="contacts_sync_status_trouble">Trouble syncing</string>
+    <string name="contacts_sync_status_permission">Permission needed</string>
     <string name="contacts_sync_last_sync">Last sync %1$s</string>
     <string name="contacts_sync_last_sync_just_now">Last sync just now</string>
     <string name="contacts_sync_network">Trouble syncing, waiting to try again</string>
@@ -65,7 +86,8 @@
     <string name="contacts_sync_turn_off_failed">Sync is off. The synced contacts couldn\'t be removed yet; they\'ll be removed the next time you open this screen.</string>
     <string name="contacts_sync_upload_new">Test: upload new and imported contacts</string>
     <string name="contacts_sync_upload_new_consent">Allow contacts added to this Google account on this phone, including contacts imported from an iPhone or Android phone, to be uploaded to Google. Device-only contacts remain on this phone. This choice also applies to future imports. Leave this off to keep new and imported contacts local. Contacts already uploaded are not removed from Google when you turn this off.</string>
-    <string name="contacts_sync_migration_held">Contact uploads are paused after a phone transfer. This includes changes merged into contacts already synced with Google. Downloads can continue. Review your contacts and account choices before resuming uploads.</string>
+    <string name="contacts_sync_migration_held_title">Uploads paused after phone transfer</string>
+    <string name="contacts_sync_migration_held">Changes on this phone, including contacts merged by the transfer, aren\'t uploaded to Google yet. Downloads continue. Check your contacts, then resume.</string>
     <string name="contacts_sync_resume_uploads">Resume contact uploads</string>
     <string name="contacts_sync_resume_uploads_consent">Resume uploads using the account choices below. Changes to contacts already synced with Google, including changes made by the transfer, can be uploaded. New and imported contacts still require the separate account upload choice. Leave uploads paused to keep imported changes on this phone. Already uploaded contacts are not removed from Google.</string>
     <string name="contacts_sync_developer_controls">Developer test: pause uploads during migration and expose fixture upload controls (off by default)</string>
