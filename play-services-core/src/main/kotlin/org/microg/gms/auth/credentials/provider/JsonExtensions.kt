@@ -123,12 +123,8 @@ fun AuthenticationExtensionsCredPropsOutputs.toJsonObject() = JSONObject().apply
 }
 
 fun AuthenticationExtensionsPrfOutputs.toJsonObject() = JSONObject().apply {
-    val first = first
-    val second = second
-
-    if (isEnabled) put("enabled", true)
-    if (first != null) put("first", first.encodeBase64Url())
-    if (second != null) put("second", second.encodeBase64Url())
+    val result = org.microg.gms.passwords.SyncedPasskeyPrf.json(isEnabled, first, second)
+    for (key in result.keys()) put(key, result.get(key))
 }
 
 fun JSONObject.parsePublicKeyCredentialRequestOptions(): PublicKeyCredentialRequestOptions {

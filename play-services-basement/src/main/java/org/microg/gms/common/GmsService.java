@@ -321,7 +321,7 @@ public enum GmsService {
     APP_SET_ID(300, "com.google.android.gms.appset.service.START"),
     NNAPI_DRIVER_MANAGER(301),
     CRED_SYNC(302),
-    CHROME_SYNC_FIRST_PARTY(303),
+    CHROME_SYNC_FIRST_PARTY(303, "com.google.android.gms.chromesync.service.firstparty.START"),
     USONIA(304),
     THREADNETWORK(305, "com.google.android.gms.threadnetwork.service.START"),
     CODELAB_SEPARATE(306),
@@ -351,7 +351,8 @@ public enum GmsService {
     PHOTOPICKER(330),
     SEALEDCOMPUTING(331),
     APPSEARCH(332),
-    ESIM(333),
+    ESIM(333, "com.google.android.gms.esim.service.START"),
+    ESIM_PROVISIONING(508, "com.google.android.gms.esim.provisioning.service.START"),
     APP_ERROR(334, "com.google.android.gms.apperrors.service.START_APP_ERROR"),
     ADID(335),
 
@@ -467,6 +468,7 @@ public enum GmsService {
 
     NATIVE_HOTLOADER(447),
     TELEMETRY_NOTIFICATION(449, "com.google.android.gms.common.telemetry.notification.service.START"),
+    TELEMETRY_THROTTLING(483, "com.google.android.gms.common.telemetry.throttling.service.START"),
     ;
 
     public int SERVICE_ID;

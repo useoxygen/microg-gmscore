@@ -8,5 +8,5 @@ package com.google.android.gms.auth.folsom.internal;
 import com.google.android.gms.common.api.Status;
 
 interface IKeyRetrievalSyncStatusCallback {
-    void onResult(in Status status, boolean sync);
+    void onResult(in Status status, int syncStatus);
 }

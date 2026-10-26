@@ -63,6 +63,27 @@
         "Apache-2.0.txt",
         "opensans-OFL.txt"
       ]
+    },
+    {
+      "title": "Google UKEY2 and Nearby wire formats",
+      "license": "Apache-2.0",
+      "texts": [
+        "google-ukey2-nearby.txt",
+        "Apache-2.0.txt"
+      ],
+      "modules": [
+        "play-services-core"
+      ]
+    },
+    {
+      "title": "Protocol Buffers Java lite 3.25.5 (relocated migration runtime)",
+      "license": "BSD-3-Clause",
+      "texts": [
+        "protobuf-3.25.5.txt"
+      ],
+      "modules": [
+        "play-services-core"
+      ]
     }
   ],
   "dependencies": {
@@ -1626,6 +1647,17 @@
         "http://www.apache.org/licenses/LICENSE-2.0.txt"
       ]
     },
+    "androidx.work:work-multiprocess:2.7.0": {
+      "licenses": [
+        "Apache-2.0"
+      ],
+      "texts": [
+        "Apache-2.0.txt"
+      ],
+      "metadataSources": [
+        "https://dl.google.com/dl/android/maven2/androidx/work/work-multiprocess/2.7.0/work-multiprocess-2.7.0.pom"
+      ]
+    },
     "androidx.work:work-runtime-ktx:2.7.0": {
       "licenses": [
         "Apache-2.0"
@@ -1855,6 +1887,20 @@
       ],
       "metadataSources": [
         "http://www.opensource.org/licenses/bsd-license.php"
+      ]
+    },
+    "com.google.protobuf:protobuf-javalite:3.25.5": {
+      "licenses": [
+        "BSD-3-Clause"
+      ],
+      "texts": [
+        "protobuf-3.25.5.txt"
+      ],
+      "metadataSources": [
+        "https://repo.maven.apache.org/maven2/com/google/protobuf/protobuf-javalite/3.25.5/protobuf-javalite-3.25.5.pom"
+      ],
+      "noticeSources": [
+        "https://github.com/protocolbuffers/protobuf/blob/v25.5/LICENSE"
       ]
     },
     "com.google.zxing:core:3.5.2": {
@@ -2511,6 +2557,18 @@
       ],
       "metadataSources": [
         "http://www.apache.org/licenses/LICENSE-2.0.txt"
+      ]
+    },
+    "org.bouncycastle:bcprov-jdk15to18:1.83": {
+      "licenses": [
+        "Bouncy Castle Licence"
+      ],
+      "texts": [
+        "bouncycastle-1.83.txt"
+      ],
+      "metadataSources": [
+        "https://www.bouncycastle.org/licence.html",
+        "https://github.com/bcgit/bc-java/tree/r1rv83"
       ]
     }
   }

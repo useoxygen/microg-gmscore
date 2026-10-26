@@ -210,6 +210,7 @@ public class AuthManager {
     }
 
     public String peekAuthToken() {
+        if (service.startsWith("weblogin:")) return null;
         Log.d(TAG, "peekAuthToken: " + buildTokenKey());
         return getAccountManager().peekAuthToken(getAccount(), buildTokenKey());
     }
@@ -238,6 +239,7 @@ public class AuthManager {
     }
 
     public void setAuthToken(String service, String auth) {
+        if (service.startsWith("weblogin:")) return;
         getAccountManager().setAuthToken(getAccount(), buildTokenKey(service), auth);
         if (SDK_INT >= 26 && packageName != null && auth != null) {
             // Make account persistently visible as we already granted access
@@ -390,7 +392,6 @@ public class AuthManager {
             Log.i("GmsContactSync", "stage=authorization client=com.google.android.gms client_sig_presented=" + signature
                     + " caller=com.google.android.gms caller_sig=" + callerSignature + " is_gms_app=" + isGmsApp);
         }
-        request.suppressSensitiveLogs = contactsSelfRequest;
         recordContactsProbe(request, org.microg.gms.people.sync.ProbeAuthState.UNKNOWN, null, null);
         AuthResponse response;
         try {

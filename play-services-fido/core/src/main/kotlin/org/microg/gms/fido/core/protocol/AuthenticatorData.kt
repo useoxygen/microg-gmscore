@@ -18,12 +18,16 @@ class AuthenticatorData(
     val attestedCredentialData: AttestedCredentialData? = null,
     val extensions: ByteArray? = null
 ) {
+    /** Synced credentials advertise their backup status; local AndroidKeyStore credentials keep both false. */
+    var backupEligible: Boolean = false
+    var backedUp: Boolean = false
     fun encode(): ByteArray {
         val attestedCredentialData = attestedCredentialData?.encode() ?: ByteArray(0)
         val extensions = extensions ?: ByteArray(0)
         return ByteBuffer.allocate(rpIdHash.size + 5 + attestedCredentialData.size + extensions.size)
             .put(rpIdHash)
-            .put(buildFlags(userPresent, userVerified, attestedCredentialData.isNotEmpty(), extensions.isNotEmpty()))
+            .put((buildFlags(userPresent, userVerified, attestedCredentialData.isNotEmpty(), extensions.isNotEmpty()).toInt() or
+                (if (backupEligible) 0x08 else 0) or (if (backedUp) 0x10 else 0)).toByte())
             .order(ByteOrder.BIG_ENDIAN).putInt(signCount)
             .put(attestedCredentialData)
             .put(extensions)
@@ -59,7 +63,10 @@ class AuthenticatorData(
             } else {
                 null
             }
-            return@run AuthenticatorData(rpIdHash, flags and FLAG_UP == FLAG_UP, flags and FLAG_UV == FLAG_UV, signCount, attestedCredentialData, extensions)
+            return@run AuthenticatorData(rpIdHash, flags and FLAG_UP == FLAG_UP, flags and FLAG_UV == FLAG_UV, signCount, attestedCredentialData, extensions).apply {
+                backupEligible = flags.toInt() and 0x08 != 0
+                backedUp = flags.toInt() and 0x10 != 0
+            }
         }
     }
 }

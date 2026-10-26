@@ -126,12 +126,17 @@ class ContactsPrivateProbeTest {
         val context = RuntimeEnvironment.getApplication()
         val account = Account("synthetic-floors@invalid", "com.google")
         val prefs = ContactSyncPreferences(context, account)
-        assertEquals(Long.MAX_VALUE, prefs.privateAdoptionFloor)
+        // Customers follow Google: the account's own new rows are adopted (floor 0).
+        ContactMigrationPrivacy(context).developerControlsEnabled = false
         prefs.initializePrivateFloors(23, 42)
+        assertEquals(0L, prefs.privateAdoptionFloor); assertEquals(0L, prefs.privateGroupAdoptionFloor)
+        // The developer fixture controls keep the first recorded floors, independent of legacy ones.
+        ContactMigrationPrivacy(context).developerControlsEnabled = true
         prefs.initializePrivateFloors(100, 200)
         val restarted = ContactSyncPreferences(context, account)
         assertEquals(23L, restarted.privateAdoptionFloor); assertEquals(42L, restarted.privateGroupAdoptionFloor)
-        assertEquals(Long.MAX_VALUE, restarted.adoptionFloor); assertNull(restarted.groupAdoptionFloor)
+        assertNull(restarted.groupAdoptionFloor)
+        ContactMigrationPrivacy(context).developerControlsEnabled = false
     }
     @Test fun quietAuthParserNeverLogsUnknownFieldsOrMalformedValues() {
         ShadowLog.clear()

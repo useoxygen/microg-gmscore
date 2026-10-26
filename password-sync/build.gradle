@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+apply plugin: 'org.jetbrains.kotlin.jvm'
+
+dependencies {
+    implementation "com.squareup.okhttp3:okhttp:$okHttpVersion"
+    implementation 'org.bouncycastle:bcprov-jdk15to18:1.83'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation "com.squareup.okhttp3:mockwebserver:$okHttpVersion"
+}
+
+compileKotlin { kotlinOptions.jvmTarget = '1.8' }
+compileTestKotlin { kotlinOptions.jvmTarget = '1.8' }
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}

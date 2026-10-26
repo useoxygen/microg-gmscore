@@ -262,13 +262,15 @@ fun getClientDataAndHash(
     options: RequestOptions,
     callingPackage: String
 ): Pair<ByteArray, ByteArray> {
-    val clientData: ByteArray?
-    var clientDataHash = (options as? BrowserRequestOptions)?.clientDataHash
-    if (clientDataHash == null) {
-        clientData = options.getWebAuthnClientData(callingPackage, getOrigin(context, options, callingPackage))
-        clientDataHash = clientData.digest("SHA-256")
-    } else {
-        clientData = "<invalid>".toByteArray()
-    }
-    return clientData to clientDataHash
+    getProvidedClientData(options)?.let { return it }
+    val clientData = options.getWebAuthnClientData(callingPackage, getOrigin(context, options, callingPackage))
+    return clientData to clientData.digest("SHA-256")
+}
+
+/** The privileged browser already built and confirmed SPC clientDataJSON; its hash must remain byte-exact. */
+fun getProvidedClientData(options: RequestOptions): Pair<ByteArray, ByteArray>? {
+    val hash = (options as? BrowserRequestOptions)?.clientDataHash ?: return null
+    if (hash.size != 32) throw RequestHandlingException(DATA_ERR, "Invalid client data hash")
+    // Chromium replaces this deliberately invalid placeholder with the browser's original JSON.
+    return "<invalid>".toByteArray(Charsets.UTF_8) to hash.copyOf()
 }

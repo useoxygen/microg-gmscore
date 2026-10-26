@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="Synthetic restore fixture" android:allowBackup="true" android:fullBackupOnly="true" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/extraction_rules" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".FixtureActivity" android:exported="true" android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

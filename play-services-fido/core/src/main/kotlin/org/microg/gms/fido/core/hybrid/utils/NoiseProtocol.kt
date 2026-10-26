@@ -25,6 +25,8 @@ class NoiseHandshakeState(mode: Int) {
     private var chainingKey: ByteArray = handshakeHash.clone()
     private var cipherKey: ByteArray? = null
 
+    fun handshakeDigest(): ByteArray = handshakeHash.copyOf()
+
     fun mixHash(data: ByteArray) {
         handshakeHash = MessageDigest.getInstance("SHA-256").run {
             update(handshakeHash)

@@ -45,7 +45,7 @@ public class FidoCredentialDetails extends AbstractSafeParcelable {
     }
 
     @Constructor
-    FidoCredentialDetails(@Nullable @Param(1) String userName, @Nullable @Param(2) String userDisplayName, @Nullable @Param(3) byte[] userId, @NonNull @Param(4) byte[] credentialId, @Param(5) boolean discoverable, @Param(6) boolean paymentCredential) {
+    public FidoCredentialDetails(@Nullable @Param(1) String userName, @Nullable @Param(2) String userDisplayName, @Nullable @Param(3) byte[] userId, @NonNull @Param(4) byte[] credentialId, @Param(5) boolean discoverable, @Param(6) boolean paymentCredential) {
         this.userName = userName;
         this.userDisplayName = userDisplayName;
         this.userId = userId;

@@ -235,7 +235,7 @@ public class AuthenticationExtensions extends AbstractSafeParcelable {
          */
         @NonNull
         public AuthenticationExtensions build() {
-            return new AuthenticationExtensions(fidoAppIdExtension, null, userVerificationMethodExtension, null, null, null, null, null, null, null, null, null, null);
+            return new AuthenticationExtensions(fidoAppIdExtension, null, userVerificationMethodExtension, null, null, null, null, null, null, prfExtension, null, null, null);
         }
     }
 
