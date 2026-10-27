@@ -107,15 +107,55 @@ BackupDataOutput, then asks the **installed** MediaProvider to scan
 reflection/IO/provider errors return failure, never invented success. This creates the package-manager envelope and, only if a real converted
 telephony archive was published, its actual installed telephony version and
 SHA-256 signer metadata. It does not fabricate telephony payloads or generate
-destination-signature metadata for arbitrary Android app archives. Tx6 now opens an explicit local-cache
+destination-signature metadata for arbitrary Android app archives. When a telephony
+archive exists, tx7 then acquires Transfer Phone's temporary backup-transport lease
+before acknowledging success. The protected `content://ai.cyclon.migration.restore`
+provider is used only when it resolves to the system `ai.cyclon.migration` package.
+Older images without that provider retain the existing transfer path; no lease is
+acquired and SMS/MMS restore still depends on their selected transport. A genuine
+system companion provider must return `success=true`; refusal, missing response or
+IPC failure fails tx7. Untrusted providers are never called. The
+provider owns the previous transport journal and scheduled crash recovery; microG does not
+change the selected transport directly. Tx6 opens an explicit local-cache
 BackupManager restore session, obtains the actual restore set and calls restoreAll;
 only the real RestoreObserver completion can report success. A 180-second timeout,
 missing set/session, denied hidden API or transport failure reports failure. It
-never selects this transport for normal backup or changes backup enablement.
+does not change backup enablement. The framework calls transport `finishRestore`
+before notifying `RestoreObserver.restoreFinished`, including failure. Switch's
+`iex.java:b` can then retry through a new current-transport session after 30 seconds.
+The lease therefore survives individual transport sessions and their retries;
+Transfer Phone's wizard-return and persisted deadline cleanup restore the owner's
+transport. The transport retains its staged bytes for retry.
 Helper11 and credential-recovery9/10 remain honest failure (CYC-715). Agent A supplies the
 target restore-only `.backup.BackupTransportService`; the image experiment
 allowlists that component while preserving Seedvault/AOSP local transports and
-does not select it for normal backup.
+does not make it the default for normal backup.
+
+Pinned Switch 1140078's iOS path uses `defpackage/dpn.java:s` to publish the
+converted telephony archive, then `dsc.java:p` generates iOS metadata through helper
+tx7. `iex.java` opens `cxi.a()`'s no-argument `BackupManager.beginRestoreSession()`;
+it binds the current transport. `iev.java:restoreSetsAvailable` requires an exact
+match against `ies.b`, then calls `restorePackages` for `ies.c` (or `restoreAll`
+when that list is empty). The iOS restore token is 1. This path does not call tx6.
+Android-source transport switching is a separate task and does not fix iOS.
+
+The staged telephony set already satisfies that contract: `@pm@` is key/value,
+and Lineage's installed telephony package declares `fullBackupOnly=true`, so its
+converted raw tar is served as `TYPE_FULL_STREAM`. `dsk.java:a` strips the
+FullBackupDataOutput chunk framing before staging. The framework preserves its
+normal policy checks; Lineage's `BackupEligibilityRules.signaturesMatch` accepts
+the same system package across platform signing keys, including Switch's embedded
+Pixel SMS manifest signature. No manifest rewriting is needed.
+
+Lineage's `TelephonyBackupAgent.onRestoreFinished` starts
+`DeferredSmsMmsRestoreService`. It reads the restored `*_sms_backup` and
+`*_mms_backup` files and writes SMS rows through `bulkInsert(content://sms)` and
+MMS through `insert(content://mms)` plus parts/addresses, then notifies the default
+SMS app. That deferred work can outlast BackupManager's restore callback. Device
+acceptance must verify provider counts and attachments after it finishes, in
+addition to `System restore finished with result: 0` and transport cleanup. Host
+transport tests verify token/type/byte counts and lease IPC; they do not execute
+the installed TelephonyProvider or prove message visibility.
 
 The retained cable log has no post-copy scan request and explicitly logs that
 system restore/final hold during transfer is disabled. Switch has its own scan

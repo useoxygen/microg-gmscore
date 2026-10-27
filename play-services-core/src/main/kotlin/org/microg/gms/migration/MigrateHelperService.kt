@@ -129,6 +129,9 @@ internal class EmptyMigrateHelper(uid: Int, private val context: Context? = null
                     // Use the installed AOSP MediaProvider, not Google's package-name-specific restore path.
                     requireNotNull(context).contentResolver.call(Uri.parse("content://media"),
                         "scan_volume", "external_primary", null)
+                    // Switch's iOS peer opens the current transport, rather than helper tx6.
+                    if (requireNotNull(store).contains("com.android.providers.telephony"))
+                        MigrationRestoreTransport(requireNotNull(context)).acquire()
                 }
             }
             3 -> {
