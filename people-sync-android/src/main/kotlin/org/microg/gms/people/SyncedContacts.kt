@@ -69,6 +69,9 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
         val device = DeviceContacts(provider)
         for (id in kept) device.keepOnPhone(id, keptScope, accountArgs)
         provider.applyBatch(arrayListOf(
+            // A contact saved here since the list above would be deleted: fail the whole removal instead. The caller
+            // keeps pendingRemoval, and the retry keeps that contact first.
+            ContentProviderOperation.newAssertQuery(RawContacts.CONTENT_URI).withSelection(keptScope, accountArgs).withExpectedCount(0).build(),
             ContentProviderOperation.newDelete(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope, args).build(),
             ContentProviderOperation.newDelete(syncUri(Groups.CONTENT_URI)).withSelection(groupScope, args).build(),
             ContactsContract.SyncState.newSetOperation(account, "{}".toByteArray(Charsets.UTF_8))))

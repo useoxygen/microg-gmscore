@@ -65,9 +65,11 @@ class DeviceContacts(private val provider: ContentProviderClient) {
         } ?: emptyList()
 
     private fun move(account: Account, id: Long): Outcome {
-        val rows = rows(id)
-        if (!rows.all(::uploadable)) return Outcome.UNSUPPORTED
-        return if (transfer(id, LOCAL, null, rows, account.name, account.type, deleteAsSyncAdapter = false)) Outcome.MOVED else Outcome.SKIPPED
+        var unsupported = false
+        val moved = transfer(id, LOCAL, null, account.name, account.type, deleteAsSyncAdapter = false) { rows ->
+            rows.all(::uploadable).also { unsupported = !it }
+        }
+        return if (moved) Outcome.MOVED else if (unsupported) Outcome.UNSUPPORTED else Outcome.SKIPPED
     }
 
     /**
@@ -75,14 +77,19 @@ class DeviceContacts(private val provider: ContentProviderClient) {
      * instead of being deleted with the synced ones. [selection] and [args] must identify it in its account.
      */
     fun keepOnPhone(id: Long, selection: String, args: Array<String>): Boolean =
-        transfer(id, selection, args, rows(id), null, null, deleteAsSyncAdapter = true)
+        transfer(id, selection, args, null, null, deleteAsSyncAdapter = true) { true }
 
-    /** One transaction: assert the source is unchanged, insert the copy (target null = device), delete the source. */
-    private fun transfer(id: Long, selection: String, args: Array<String>?, rows: List<ContentValues>,
-        targetName: String?, targetType: String?, deleteAsSyncAdapter: Boolean): Boolean {
+    /**
+     * One transaction: assert the source is unchanged, insert the copy (target null = device), delete the source.
+     * The version is read before the data rows, so an edit in between fails the assertion instead of being lost.
+     */
+    private fun transfer(id: Long, selection: String, args: Array<String>?, targetName: String?, targetType: String?,
+        deleteAsSyncAdapter: Boolean, accept: (List<ContentValues>) -> Boolean): Boolean {
         val source = ContentUris.withAppendedId(RawContacts.CONTENT_URI, id)
         val raw = provider.query(source, arrayOf(RawContacts.VERSION, RawContacts.STARRED, RawContacts.CUSTOM_RINGTONE, RawContacts.SEND_TO_VOICEMAIL),
             selection, args, null)?.use { if (it.moveToFirst()) values(it) else null } ?: return false
+        val rows = rows(id)
+        if (!accept(rows)) return false
         val version = raw.getAsInteger(RawContacts.VERSION)
         raw.remove(RawContacts.VERSION)
         val ops = arrayListOf(

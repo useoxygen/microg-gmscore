@@ -49,8 +49,11 @@ class SyncedContactsTest {
             val id = uri.pathSegments.getOrNull(1) ?: return selection
             return "_id=$id" + (selection?.let { " AND ($it)" } ?: "")
         }
-        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor =
-            db.query(table(uri), projection, where(uri, selection), args, null, null, sort)
+        var onDataRead: (() -> Unit)? = null
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor {
+            if (table(uri) == "data") onDataRead?.invoke()
+            return db.query(table(uri), projection, where(uri, selection), args, null, null, sort)
+        }
         override fun insert(uri: Uri, values: ContentValues?): Uri {
             if (table(uri) != "syncstate") return ContentUris.withAppendedId(uri, db.insert(table(uri), null, values))
             state = values!!.getAsByteArray(ContactsContract.SyncState.DATA)
@@ -170,6 +173,25 @@ class SyncedContactsTest {
         val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
         SyncedContacts(client, account, prefs).remove()
         assertEquals(setOf(1L), provider.ids("raw_contacts"))
+        client.close()
+    }
+
+    @Test fun aContactSavedDuringTurnOffIsKeptOnTheRetry() {
+        val context = RuntimeEnvironment.getApplication()
+        val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }); contact(1, private) }
+        ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
+        val prefs = ContactSyncPreferences(context, account)
+        prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
+        provider.contact(2, null, dirty = true) // never uploaded: kept
+        provider.onDataRead = { provider.contact(3, null, dirty = true); provider.onDataRead = null } // saved while 2 is being kept
+        val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
+        assertThrows(Exception::class.java) { SyncedContacts(client, account, prefs).remove() }
+        assertTrue(prefs.pendingRemoval)
+        assertTrue(1L in provider.ids("raw_contacts") && 3L in provider.ids("raw_contacts")) // nothing deleted yet
+        SyncedContacts(client, account, prefs).remove()
+        assertFalse(prefs.pendingRemoval)
+        val accounts = provider.db.rawQuery("SELECT account_name FROM raw_contacts", null).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
+        assertEquals(listOf(null, null), accounts) // 2 and 3 now on the device; the synced 1 removed
         client.close()
     }
 }

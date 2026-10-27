@@ -41,8 +41,11 @@ class DeviceContactsTest {
             val id = uri.pathSegments.getOrNull(1) ?: return selection
             return "_id=$id" + (selection?.let { " AND ($it)" } ?: "")
         }
-        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor =
-            db.query(table(uri), projection, where(uri, selection), args, null, null, sort?.replace(" COLLATE LOCALIZED", ""))
+        var onDataRead: (() -> Unit)? = null
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor {
+            if (table(uri) == "data") onDataRead?.invoke()
+            return db.query(table(uri), projection, where(uri, selection), args, null, null, sort?.replace(" COLLATE LOCALIZED", ""))
+        }
         override fun insert(uri: Uri, values: ContentValues?): Uri = ContentUris.withAppendedId(uri, db.insert(table(uri), null, values))
         override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?): Int = error("Unexpected update")
         override fun delete(uri: Uri, selection: String?, args: Array<out String>?): Int {
@@ -135,5 +138,19 @@ class DeviceContactsTest {
         var allowed = 1
         assertEquals(DeviceContacts.MoveResult(1, 0), device.moveTo(google, listOf(1L, 2L, 3L)) { allowed-- > 0 })
         assertEquals(listOf(2L, 3L), device.list().map { it.id }.sorted())
+    }
+
+    @Test fun anEditWhileTheContactIsReadIsNeverLost() {
+        val (provider, device) = setup()
+        provider.contact(1, "DEVICE", "com.android.contacts", "Ada")
+        provider.row(1, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE, "+15550100")
+        provider.onDataRead = { // an editor saves a new number right after the move read the contact
+            provider.db.execSQL("UPDATE data SET data1='+15550199' WHERE raw_contact_id=1")
+            provider.db.execSQL("UPDATE raw_contacts SET version=version+1 WHERE _id=1")
+            provider.onDataRead = null
+        }
+        assertEquals(DeviceContacts.MoveResult(0, 0), device.moveTo(google, listOf(1L)))
+        assertEquals(listOf(ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE to "+15550199"), provider.rows(1)) // edit kept on the phone
+        assertEquals(1L, provider.db.rawQuery("SELECT COUNT(*) FROM raw_contacts", null).use { it.moveToFirst(); it.getLong(0) })
     }
 }
