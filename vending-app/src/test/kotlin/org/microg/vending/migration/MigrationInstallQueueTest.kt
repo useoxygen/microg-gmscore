@@ -43,6 +43,27 @@ class MigrationInstallQueueTest {
         assertTrue(restarted.dispatch("org.example.app")); assertTrue(restarted.pending().isEmpty())
         assertEquals(listOf(3, 2, 3), calls)
     }
+    @Test fun playRateLimitKeepsTheAppPendingAndInstallsItLaterWithoutReview() {
+        val calls = mutableListOf<Int>()
+        var limited = true
+        val queue = MigrationInstallQueue(context) { operation, name ->
+            calls += operation
+            when {
+                operation == 3 -> state("none")
+                limited -> MigrationInstallQueue.unavailable(name, "rate_limited")
+                else -> state("queued")
+            }
+        }
+        queue.select(selected())
+        assertFalse(queue.dispatch("org.example.app"))
+        assertTrue(queue.throttled)
+        assertEquals(setOf("org.example.app"), queue.pending())
+        assertFalse(queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single().getBoolean("terminal"))
+        limited = false
+        assertTrue(queue.dispatch("org.example.app"))
+        assertTrue(queue.pending().isEmpty())
+        assertEquals(listOf(3, 2, 3, 3, 2), calls)
+    }
     @Test fun queueNeverReportsDownloadingOrOldInstalledVersionAsComplete() {
         val queue = MigrationInstallQueue(context) { _, _ -> state("downloading", false, 11) }
         queue.select(selected()); assertFalse(queue.summary().getBoolean("all_installed"))
