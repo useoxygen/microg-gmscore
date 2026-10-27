@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit
 /** Android Switch's Play setup wire contract. Installs belong to Aurora's durable download queue. */
 class PlaySetupService : Service() {
     private val work = Executors.newSingleThreadScheduledExecutor()
-    private val queue by lazy { MigrationInstallQueue(this) }
-    private val protocol by lazy { PlaySetupProtocol(queue, { trusted }, { task -> work.execute(task) }) }
+    // The queue opens on the first binder call: its lock may be held by an install, and onBind runs on the main thread.
+    private val protocol by lazy { PlaySetupProtocol({ MigrationInstallQueue(this) }, { trusted }, { task -> work.execute(task) }) }
     private val trusted: Boolean get() = runCatching {
         packageManager.getApplicationInfo(SWITCH, 0).uid == Binder.getCallingUid() && ExtendedPackageInfo(this, SWITCH)
             .hasGooglePackagePermission(GooglePackagePermission.ACCOUNT)
@@ -44,8 +44,10 @@ class PlaySetupService : Service() {
 }
 
 /** Parcel layouts: Switch chc.java; transaction names: eja.java. */
-internal class PlaySetupProtocol(private val queue: MigrationInstallQueue,
+internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
     private val trusted: () -> Boolean, private val execute: (() -> Unit) -> Unit) : Binder() {
+    constructor(queue: MigrationInstallQueue, trusted: () -> Boolean, execute: (() -> Unit) -> Unit) : this({ queue }, trusted, execute)
+    private val queue by lazy(open)
     private val lookups = Executors.newFixedThreadPool(8)
     init { attachInterface(null, PlaySetupService.DESCRIPTOR) }
     fun close() { lookups.shutdownNow() }

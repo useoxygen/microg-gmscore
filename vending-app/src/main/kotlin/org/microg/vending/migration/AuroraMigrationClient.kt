@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.os.Parcel
 import java.io.Closeable
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** No APK bytes or owner credentials cross this bridge. */
@@ -26,8 +27,9 @@ internal class AuroraMigrationClient(private val context: Context) : Closeable {
     init {
         val app = context.packageManager.getApplicationInfo("com.aurora.store", 0)
         check(app.flags and ApplicationInfo.FLAG_SYSTEM != 0) { "Aurora must be the image's system app" }
+        // Callers hold the install queue lock; a main-thread callback would wait behind Switch's next bind.
         bound = context.bindService(Intent("com.aurora.store.migration.BIND").setPackage("com.aurora.store"),
-            connection, Context.BIND_AUTO_CREATE)
+            Context.BIND_AUTO_CREATE, CALLBACKS, connection)
         check(bound) { "Aurora migration bridge unavailable" }
         binder = connected.poll(10, TimeUnit.SECONDS) ?: run {
             context.unbindService(connection)
@@ -39,7 +41,10 @@ internal class AuroraMigrationClient(private val context: Context) : Closeable {
     fun call(operation: Int, name: String, options: Bundle? = null): Bundle = wire.call(operation, name, options)
     fun control(operation: Int, options: Bundle): Bundle = wire.control(operation, options)
     override fun close() { if (bound) context.unbindService(connection) }
-    companion object { const val DESCRIPTOR = "com.aurora.store.migration.IMigrationStore" }
+    companion object {
+        const val DESCRIPTOR = "com.aurora.store.migration.IMigrationStore"
+        private val CALLBACKS = Executors.newSingleThreadExecutor { Thread(it, "aurora-bridge").apply { isDaemon = true } }
+    }
 }
 
 /** Negotiate private extensions before adding fields that the original bridge rejects. */

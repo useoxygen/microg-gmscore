@@ -26,7 +26,8 @@ class MigrationResultsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val queue = remember { MigrationInstallQueue(applicationContext) }
+            // Opened on first use, inside the IO blocks below: a legacy upgrade takes the install lock.
+            val queue by remember { lazy { MigrationInstallQueue(applicationContext) } }
             val scope = rememberCoroutineScope()
             var sessions by remember { mutableStateOf(emptyList<String>()) }
             var sessionId by remember { mutableStateOf(intent.getStringExtra("session_id")) }
