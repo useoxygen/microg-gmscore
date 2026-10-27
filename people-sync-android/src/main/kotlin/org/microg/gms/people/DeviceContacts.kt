@@ -97,7 +97,7 @@ class DeviceContacts(private val provider: ContentProviderClient, context: andro
             ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI).withValues(row).withValueBackReference(Data.RAW_CONTACT_ID, 1).build())
         photo(id)?.let { bytes ->
             ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI).withValueBackReference(Data.RAW_CONTACT_ID, 1)
-                .withValue(Data.MIMETYPE, Photo.CONTENT_ITEM_TYPE).withValue(Photo.PHOTO, bytes).withValue(Data.IS_SUPER_PRIMARY, 1).build())
+                .withValue(Data.MIMETYPE, Photo.CONTENT_ITEM_TYPE).withValue(Photo.PHOTO, bytes).withValue(Data.IS_PRIMARY, 1).build()) // what the import check expects
         }
         // A sync-adapter delete removes an account row at once instead of leaving a tombstone to sync.
         val delete = if (!deleteAsSyncAdapter) source

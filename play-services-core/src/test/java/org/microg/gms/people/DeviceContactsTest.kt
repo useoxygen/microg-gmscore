@@ -110,6 +110,10 @@ class DeviceContactsTest {
             ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE to "+15550100",
             ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE to null), provider.rows(copy.first))
         assertTrue(provider.rows(1).isEmpty())
+        // The copy's photo must pass the sync's import check, else the moved contact would never upload.
+        val photo = provider.db.rawQuery("SELECT * FROM data WHERE raw_contact_id=? AND mimetype=?",
+            arrayOf(copy.first.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)).use { ContactFieldMapper.readRows(it).single() }
+        assertTrue(ContactFieldMapper.losslessImport(photo))
     }
 
     @Test fun aContactThatChangedOrVanishedIsLeftAlone() {
