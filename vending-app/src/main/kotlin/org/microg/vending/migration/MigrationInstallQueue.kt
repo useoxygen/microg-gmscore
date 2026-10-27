@@ -19,9 +19,12 @@ internal class MigrationInstallQueue(private val context: Context,
     private val controlCall: ((Int, Bundle) -> Bundle)? = null,
     private val storeCall: ((Int, String) -> Bundle)? = null) {
     private val prefs get() = context.getSharedPreferences("migration-installs", Context.MODE_PRIVATE)
+    /** Play answered 429 since the job last cleared this; stop the round and wait before asking again. */
+    @Volatile var throttled = false
     init {
-        synchronized(LOCK) {
-            if (!prefs.contains("sessions") && prefs.contains("packages")) {
+        // PlaySetupService opens the queue on the main thread, which must never wait for an install in flight.
+        if (legacy()) synchronized(LOCK) {
+            if (legacy()) {
                 val id = "previous-transfer"
                 val names = prefs.getStringSet("packages", emptySet()).orEmpty().toSet()
                 val ambiguous = prefs.getStringSet("pending", emptySet()).orEmpty()
@@ -41,6 +44,7 @@ internal class MigrationInstallQueue(private val context: Context,
             }
         }
     }
+    private fun legacy() = !prefs.contains("sessions") && prefs.contains("packages")
     fun currentSessionId(): String? = prefs.getString("current_session", null)
     fun sessions(): List<String> = prefs.getString("sessions", "").orEmpty().split(',').filter { it.isNotEmpty() }
     fun beginTransfer(): String = synchronized(LOCK) {
@@ -300,6 +304,12 @@ internal class MigrationInstallQueue(private val context: Context,
             })
         } else current
         if (result.getString("error") == "store_unavailable") return false
+        if (requestedInstall && result.getString("error") == RATE_LIMITED) {
+            // Aurora refused before enqueuing, so this is no uncertain install. Keep it pending, and keep the owner's retry.
+            throttled = true
+            check(prefs.edit().putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:owner_retry", ownerRetry).commit())
+            return false
+        }
         if (requestedInstall && result.getString("status") == "installed" && !satisfies(name, result, id) &&
             (result.getBoolean("package_present") || result.getBoolean("installed"))) {
             // Legacy Aurora cannot enforce the selected minimum. Its settled lower offer needs review,
@@ -326,8 +336,9 @@ internal class MigrationInstallQueue(private val context: Context,
     }
     companion object {
         const val ACTION_CHANGED = "org.microg.vending.migration.CHANGED"
-        private val LOCK = Any()
+        internal val LOCK = Any()
         private const val JOB = 700714
+        private const val RATE_LIMITED = "rate_limited"
         private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
         private val TERMINAL = setOf("failed", "cancelled", "unavailable", "removed", "owner_action_required")
         fun unavailable(name: String, reason: String) = Bundle().apply {
@@ -349,10 +360,12 @@ class MigrationInstallJob : JobService() {
                 val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MINUTES.toNanos(8)
                 do {
                     retry = false
+                    queue.throttled = false
                     for (id in queue.sessions()) {
                         for (name in queue.pending(id).sorted()) {
                             if (cancelled.get()) return@execute
                             if (!queue.dispatch(name, id)) retry = true
+                            if (queue.throttled) break
                         }
                         val state = queue.summary(id)
                         queue.changed(id)
@@ -368,7 +381,7 @@ class MigrationInstallJob : JobService() {
                         }
                     }
                     MigrationSetupReceivers.publish(queue)
-                    if (retry && !cancelled.get()) Thread.sleep(2000)
+                    if (retry && !cancelled.get()) Thread.sleep(if (queue.throttled) 30_000 else 2000)
                 } while (retry && !cancelled.get() && System.nanoTime() < deadline)
             } catch (_: Exception) { retry = true }
             if (!cancelled.get()) runCatching { jobFinished(params, retry) }
