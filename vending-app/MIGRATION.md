@@ -47,12 +47,13 @@ session ID. Retry only authorizes that session's selected failures.
 
 Switch binds `PlaySetupService` again for every chunk and waits 5 s for the
 connection. The install job holds the queue lock during Aurora calls, so the
-main thread must never take that lock: opening the queue is lock-free, and the
-Aurora bridge receives its connection on its own thread. On 10-27 a main-thread
+main thread must never take that lock: the service opens the queue on its first
+binder call, and the Aurora bridge receives its connection on its own thread. On 10-27 a main-thread
 lock wait dropped every chunk after the first (110 of 181 apps).
 
 When Play answers 429, Aurora refuses before enqueuing. The app stays pending,
-not failed, and the job waits 30 s before asking Play again.
+not failed. The job stops dispatching in every session, waits 30 s, and then
+tries the most recently refused apps last.
 
 Before enqueue IPC, FakeStore persists an uncertain-attempt marker. A later
 Aurora status reconciles a queued/running/finished request without reenqueuing.

@@ -21,6 +21,9 @@ internal class MigrationInstallQueue(private val context: Context,
     private val prefs get() = context.getSharedPreferences("migration-installs", Context.MODE_PRIVATE)
     /** Play answered 429 since the job last cleared this; stop the round and wait before asking again. */
     @Volatile var throttled = false
+    /** Pending installs across sessions. Apps Play refused most recently go last, so one cannot block the rest. */
+    fun dispatchOrder(): List<Pair<String, String>> = sessions().flatMap { id -> pending(id).sorted().map { id to it } }
+        .sortedBy { (id, name) -> prefs.getLong("$id:$name:throttled_at", 0) }
     init {
         // PlaySetupService opens the queue on the main thread, which must never wait for an install in flight.
         if (legacy()) synchronized(LOCK) {
@@ -307,7 +310,8 @@ internal class MigrationInstallQueue(private val context: Context,
         if (requestedInstall && result.getString("error") == RATE_LIMITED) {
             // Aurora refused before enqueuing, so this is no uncertain install. Keep it pending, and keep the owner's retry.
             throttled = true
-            check(prefs.edit().putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:owner_retry", ownerRetry).commit())
+            check(prefs.edit().putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:owner_retry", ownerRetry)
+                .putLong("$id:$name:throttled_at", System.currentTimeMillis()).commit())
             return false
         }
         if (requestedInstall && result.getString("status") == "installed" && !satisfies(name, result, id) &&
@@ -361,12 +365,12 @@ class MigrationInstallJob : JobService() {
                 do {
                     retry = false
                     queue.throttled = false
+                    for ((id, name) in queue.dispatchOrder()) {
+                        if (cancelled.get()) return@execute
+                        if (!queue.dispatch(name, id)) retry = true
+                        if (queue.throttled) break // Play limits the store, not one session: pause every install.
+                    }
                     for (id in queue.sessions()) {
-                        for (name in queue.pending(id).sorted()) {
-                            if (cancelled.get()) return@execute
-                            if (!queue.dispatch(name, id)) retry = true
-                            if (queue.throttled) break
-                        }
                         val state = queue.summary(id)
                         queue.changed(id)
                         MigrationNotifications.selectionOpen(this, id, state)
