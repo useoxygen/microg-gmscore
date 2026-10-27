@@ -98,7 +98,8 @@ object ContactFieldMapper {
             }
         }
         val undefinedStyles = when (mime) {
-            StructuredName.CONTENT_ITEM_TYPE -> setOf(StructuredName.FULL_NAME_STYLE, StructuredName.PHONETIC_NAME_STYLE)
+            // Full-name style is data10; its named constant is public only from API 21.
+            StructuredName.CONTENT_ITEM_TYPE -> setOf(Data.DATA10, StructuredName.PHONETIC_NAME_STYLE)
             Organization.CONTENT_ITEM_TYPE -> setOf(Organization.PHONETIC_NAME_STYLE)
             else -> emptySet()
         }
