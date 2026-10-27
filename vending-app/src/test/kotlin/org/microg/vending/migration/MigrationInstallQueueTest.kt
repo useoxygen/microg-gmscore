@@ -64,32 +64,47 @@ class MigrationInstallQueueTest {
         assertTrue(queue.pending().isEmpty())
         assertEquals(listOf(3, 2, 3, 3, 2), calls)
     }
-    @Test fun playKeepsRefusingThenTheOwnerApprovesTheirGoogleAccount() {
-        val installs = mutableListOf<Boolean>()
-        var limited = true
-        val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, name ->
-            when {
-                operation == 3 -> state("none")
-                limited -> MigrationInstallQueue.unavailable(name, "rate_limited")
-                else -> state("queued")
-            }
+    private fun fallbackQueue(supported: Boolean, installs: MutableList<Boolean>, answer: (Boolean) -> Bundle) =
+        MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", supported) } }) { operation, name ->
+            if (operation == 3) state("none") else answer(installs.last())
+        }.apply { sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") } }
+    @Test fun anonymousRefusalFallsBackToThePhonesGoogleAccountByItself() {
+        for (error in listOf("rate_limited", "not_found", "anonymous_sign_in_required")) {
+            clear()
+            val installs = mutableListOf<Boolean>()
+            val queue = fallbackQueue(true, installs) { owner -> if (owner) state("queued") else MigrationInstallQueue.unavailable("org.example.app", error) }
+            queue.select(selected())
+            assertFalse(queue.dispatch("org.example.app"))
+            assertEquals(setOf("org.example.app"), queue.pending())
+            assertTrue(queue.dispatch("org.example.app"))
+            assertEquals(error, listOf(false, true), installs)
+            assertTrue(queue.pending().isEmpty())
         }
-        queue.sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") }
+    }
+    @Test fun fallbackNeverAppliesToPaidAppsOrWithoutAuroraSupport() {
+        val paid = mutableListOf<Boolean>()
+        val paidQueue = fallbackQueue(true, paid) { MigrationInstallQueue.unavailable("org.example.app", "paid") }
+        paidQueue.select(selected()); paidQueue.dispatch("org.example.app")
+        assertEquals(listOf(false), paid)
+        clear()
+        val legacy = mutableListOf<Boolean>()
+        val legacyQueue = fallbackQueue(false, legacy) { MigrationInstallQueue.unavailable("org.example.app", "rate_limited") }
+        legacyQueue.select(selected())
+        repeat(3) { legacyQueue.dispatch("org.example.app") }
+        assertEquals(listOf(false, false, false), legacy)
+        assertTrue(legacyQueue.pending().isEmpty()) // three refusals: a visible failure the owner can retry
+    }
+    @Test fun whenTheGoogleAccountIsAlsoRefusedTheOwnerSeesAFailureAndRetryStartsAnonymous() {
+        val installs = mutableListOf<Boolean>()
+        val queue = fallbackQueue(true, installs) { MigrationInstallQueue.unavailable("org.example.app", "rate_limited") }
         queue.select(selected())
-        repeat(3) { queue.dispatch("org.example.app") }
-        // Three refusals: a visible failure the owner can retry, no longer silently pending.
-        assertTrue(queue.pending().isEmpty())
+        repeat(4) { queue.dispatch("org.example.app") }
+        assertEquals(listOf(false, true, true, true), installs)
         val failed = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
         assertEquals("rate_limited", failed.getString("error")); assertTrue(failed.getBoolean("terminal"))
-        assertEquals(listOf("org.example.app"), queue.retryDocuments().map { it.getString("package_name") })
-        assertTrue(queue.ownerAccountSupported())
-        limited = false
-        queue.retry(queue.currentSessionId()!!, ownerAccount = true)
-        assertTrue(queue.dispatch("org.example.app"))
-        assertEquals(listOf(false, false, false, true), installs)
-        // A plain retry afterwards is anonymous again.
         queue.retry(queue.currentSessionId()!!)
-        assertEquals(emptyList<Bundle>(), queue.retryDocuments())
+        queue.dispatch("org.example.app")
+        assertEquals(false, installs.last())
     }
     @Test fun queueNeverReportsDownloadingOrOldInstalledVersionAsComplete() {
         val queue = MigrationInstallQueue(context) { _, _ -> state("downloading", false, 11) }

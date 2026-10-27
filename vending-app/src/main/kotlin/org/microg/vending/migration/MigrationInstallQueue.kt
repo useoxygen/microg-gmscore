@@ -168,16 +168,16 @@ internal class MigrationInstallQueue(private val context: Context,
         prefs.getString("$id:$name:status", null) in setOf("failed", "cancelled", "unavailable", "owner_action_required") &&
             !prefs.getBoolean("$id:$name:ever_installed", false)
     }.map { name -> document(id, name) }
-    /** Whether Aurora can install with the phone's Google account once the owner approves it. */
+    /** Whether Aurora can install with the phone's Google account, the fallback when the anonymous session fails. */
     fun ownerAccountSupported(): Boolean = control(7, Bundle()).getBoolean("owner_account_fallback")
-    /** [ownerAccount]: the owner approved their Google account for these apps, the fallback after anonymous tries. */
-    fun retry(id: String, packageName: String? = null, ownerAccount: Boolean = false) = synchronized(LOCK) {
+    /** An owner Retry starts again with the anonymous session; the Google account fallback applies again after it. */
+    fun retry(id: String, packageName: String? = null) = synchronized(LOCK) {
         require(id in sessions())
         val names = retryDocuments(id).map { it.getString("package_name")!! }.filter { packageName == null || it == packageName }
-        if (names.isNotEmpty() && !ownerAccount) control(6, options(id).apply { putBoolean("force_refresh", true) })
+        if (names.isNotEmpty()) control(6, options(id).apply { putBoolean("force_refresh", true) })
         val edit = prefs.edit().putStringSet("$id:pending", pending(id) + names)
         for (name in names) edit.putBoolean("$id:$name:terminal", false).putBoolean("$id:$name:uncertain", false)
-            .putBoolean("$id:$name:owner_retry", true).putBoolean("$id:$name:owner_account", ownerAccount)
+            .putBoolean("$id:$name:owner_retry", true).putBoolean("$id:$name:owner_account", false)
             .putInt("$id:$name:throttle_count", 0)
         check(edit.commit())
         changed(id); schedule()
@@ -336,6 +336,14 @@ internal class MigrationInstallQueue(private val context: Context,
             })
         } else current
         if (result.getString("error") == "store_unavailable") return false
+        if (requestedInstall && result.getString("error") in ANONYMOUS_FAILURES &&
+            !prefs.getBoolean("$id:$name:owner_account", false) && ownerAccountSupported()) {
+            // As on a Pixel, Play may install with the phone's Google account. Aurora refused before enqueuing,
+            // so this is no uncertain install: keep the app pending for the account and keep the owner's retry.
+            check(prefs.edit().putBoolean("$id:$name:owner_account", true).putBoolean("$id:$name:uncertain", false)
+                .putBoolean("$id:$name:owner_retry", ownerRetry).putInt("$id:$name:throttle_count", 0).commit())
+            return false
+        }
         if (requestedInstall && result.getString("error") == RATE_LIMITED) {
             // Aurora refused before enqueuing, so this is no uncertain install. Keep it pending, and keep the owner's retry.
             throttled = true
@@ -343,7 +351,7 @@ internal class MigrationInstallQueue(private val context: Context,
             check(prefs.edit().putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:owner_retry", ownerRetry)
                 .putLong("$id:$name:throttled_at", System.currentTimeMillis()).putInt("$id:$name:throttle_count", refusals).commit())
             if (refusals < MAX_RATE_LIMITED) return false
-            // Play keeps refusing: show the owner a failure they can retry, or install with their Google account.
+            // Play keeps refusing: show the owner a failure they can retry.
             result = Bundle(result).apply { putString("status", "unavailable"); putBoolean("terminal", true) }
         }
         if (requestedInstall && result.getString("status") == "installed" && !satisfies(name, result, id) &&
@@ -377,6 +385,8 @@ internal class MigrationInstallQueue(private val context: Context,
         private const val JOB = 700714
         private const val RATE_LIMITED = "rate_limited"
         private const val MAX_RATE_LIMITED = 3
+        /** The anonymous session's own limits: Play throttling it, not listing the app in its country, or no session. */
+        private val ANONYMOUS_FAILURES = setOf(RATE_LIMITED, "not_found", "anonymous_sign_in_required", "not_signed_in", "session_expired")
         private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
         private val TERMINAL = setOf("failed", "cancelled", "unavailable", "removed", "owner_action_required")
         fun unavailable(name: String, reason: String) = Bundle().apply {
