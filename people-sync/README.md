@@ -119,11 +119,16 @@ other-account, dataset and other-adapter rows remain separate.
 
 Import adoption and duplicate deletion first require every populated native
 column to survive the mapper's reconstruction (including type/label/protocol
-semantics). Organization office location, unrepresented name styles/preferences,
-nickname types and other lossy columns stay unowned for review, even if the MIME
-type is recognized. Populated provider-generated columns are held too when their
-equivalence cannot be proved; only unset style/flag values and exactly redundant
-normalized phone numbers have explicit exceptions.
+semantics). Names use ContactsProvider's read-only `complete_name` query with only
+the reconstructed mapped inputs, so redundant display names and inferred
+full/phonetic styles are accepted using the provider's own rules. Generated phone
+numbers must match the same E.164 formatter and detected-country/fallback path;
+generated photo file IDs remain subject to the existing photo-content checks.
+Organization office location, differing name/style/preferences, nickname types
+and other lossy columns stay unowned for review, even if the MIME type is
+recognized. Missing normalization proof never authorizes discarding a value.
+Versioned import checks reconsider earlier name holds; a normalization service
+becoming available can trigger another full reconciliation without a native edit.
 
 Adoption records ownership and the remote etag without replacing native data.
 Switch transfers no original etag or baseline: divergent populated fields and

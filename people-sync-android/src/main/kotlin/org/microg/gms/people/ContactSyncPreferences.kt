@@ -7,7 +7,7 @@ import android.content.Context
 import android.os.Bundle
 import org.microg.gms.people.sync.SyncMode
 
-class ContactSyncPreferences(private val context: Context, val account: Account) {
+class ContactSyncPreferences(internal val context: Context, val account: Account) {
     private val prefs = context.getSharedPreferences("contacts-sync", Context.MODE_PRIVATE)
     private val prefix = "${account.type}:${account.name}:"
     var mode: SyncMode
@@ -39,14 +39,16 @@ class ContactSyncPreferences(private val context: Context, val account: Account)
     val privateLegacyCleanupComplete: Boolean get() = prefs.getBoolean(prefix + "privateLegacyCleanupComplete", false)
     // Unverified imports remain unowned. Cache only row/version pairs so an
     // unchanged foreign source ID does not force a full account read every hour.
+    // The policy binding invalidates earlier name/style holds; negative values
+    // distinguish unavailable/unrepresentable normalization from identity holds.
     fun importChecks(backend: String): Map<Long, Long> = runCatching {
-        val json = org.json.JSONObject(prefs.getString(prefix + "importChecks:" + backend, "{}")!!)
+        val json = org.json.JSONObject(prefs.getString(prefix + "importChecks:provider-v2:" + backend, "{}")!!)
         json.keys().asSequence().associate { it.toLong() to json.getLong(it) }
     }.getOrDefault(emptyMap())
     fun importChecks(backend: String, rows: Map<Long, Long>) {
         val json = org.json.JSONObject()
         rows.forEach { (id, version) -> json.put(id.toString(), version) }
-        check(prefs.edit().putString(prefix + "importChecks:" + backend, json.toString()).commit())
+        check(prefs.edit().putString(prefix + "importChecks:provider-v2:" + backend, json.toString()).commit())
     }
     fun completePrivateLegacyCleanup() {
         check(prefs.edit().putBoolean(prefix + "privateLegacyCleanupComplete", true)

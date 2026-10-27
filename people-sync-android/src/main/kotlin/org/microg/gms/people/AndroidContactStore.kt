@@ -27,6 +27,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     private fun syncUri(uri: Uri) = uri.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
     private fun rawScope(id: Long) = "$scope AND ${RawContacts._ID}=$id"
     private val privateBackend get() = backendOwner == PrivatePeopleApi.OWNER
+    private val normalization = ContactProviderNormalization(provider, prefs.context)
     private var stagedCheckpoint: String? = null
     fun commitCheckpoint() { stagedCheckpoint?.let { saveCheckpoint(it) }; stagedCheckpoint = null }
     /** One-time replacement of hypothetical public-v1 imports, never native edits. */
@@ -142,7 +143,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
                 val hasPhoto = try { photoToken(id) != ContactPhotos.NONE } catch (error: UnreadableContact) { unreadablePhoto = true; true }
                 val unsupported = legacyNeedsReview || unreadablePhoto || rows.any { !ContactFieldMapper.supported(it) && it.getAsString(Data.MIMETYPE) != Photo.CONTENT_ITEM_TYPE &&
                     !(groupStore != null && it.getAsString(Data.MIMETYPE) == GroupMembership.CONTENT_ITEM_TYPE) } || membership.any { it.startsWith("localGroup:") } ||
-                    imported && rows.any { !ContactFieldMapper.losslessImport(it) }
+                    imported && rows.any { !ContactFieldMapper.losslessImport(it, normalization::reconstruct) }
                 val fields = ContactFieldMapper.fields(rows).toMutableMap().apply { if (groupStore != null) put("memberships", Memberships.field(membership)) }
                 add(LocalContact(id, number(RawContacts.VERSION), text(RawContacts.SOURCE_ID), text(RawContacts.SYNC1),
                     fields, text(RawContacts.SYNC2)?.let { baselineFields(JSONObject(it)) }.orEmpty(),
@@ -174,7 +175,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     }.orEmpty()
     override fun hasImportCandidates(): Boolean {
         val checked = prefs.importChecks(backendOwner)
-        return imports().any { checked[it.id] != it.version }
+        return imports().any { checked[it.id] != if (it.unsupported) -it.version - 1 else it.version }
     }
     override fun reconcileImports(people: List<Person>, full: Boolean): Int {
         check(prefs.mode != SyncMode.OFF)
@@ -202,7 +203,9 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         for (candidate in candidates) try {
             // A mapped-field signature cannot account for native data it omits
             // (e.g. Switch hmg.java:722 organization office location/data9).
-            if (candidate.unsupported) { checked[candidate.id] = candidate.version; unverified++; continue }
+            // A provider/country becoming available can change reconstruction
+            // proof without a native edit. Distinguish that hold from identity review.
+            if (candidate.unsupported) { checked[candidate.id] = -candidate.version - 1; unverified++; continue }
             if (!full && candidate.resource.isNullOrEmpty()) { unverified++; continue }
             val key = importFields(candidate.fields)
             val emptyText = candidate.fields.filterKeys { it != "memberships" }.values.all { it == "[]" }

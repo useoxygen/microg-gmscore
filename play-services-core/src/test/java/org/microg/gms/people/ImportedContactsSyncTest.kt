@@ -5,6 +5,8 @@ import android.accounts.Account
 import android.app.Application
 import android.content.ContentProviderClient
 import android.content.ContentValues
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.ProviderInfo
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
@@ -80,11 +82,12 @@ class ImportedContactsSyncTest {
             provider.addRaw(rawAccount, source, owner, dirty, dataset, deleted).also { provider.addFields(it, data) }
         fun editPhone(id: Long, number: String) = provider.update(Data.CONTENT_URI, ContentValues().apply { put(Phone.NUMBER, number) },
             "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), Phone.CONTENT_ITEM_TYPE))
-        // Native Switch-shaped columns, deliberately independent of ContactFieldMapper.rows().
+        // Native provider-shaped columns, deliberately independent of ContactFieldMapper.rows().
         fun nativeImported(source: String?, extra: ContentValues? = null): Long = provider.addRaw(account, source).also { id ->
             val rows = listOf(ContentValues().apply {
                 put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, "Synthetic")
-                put(StructuredName.FULL_NAME_STYLE, 0); put(StructuredName.PHONETIC_NAME_STYLE, 0)
+                put(StructuredName.DISPLAY_NAME, "Synthetic")
+                put(StructuredName.FULL_NAME_STYLE, 1); put(StructuredName.PHONETIC_NAME_STYLE, 0)
             }, ContentValues().apply {
                 put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
             }) + listOfNotNull(extra)
@@ -98,8 +101,11 @@ class ImportedContactsSyncTest {
             assertTrue(it.moveToFirst()); it.getString(0)
         }
     }
-    private fun fixture(mode: SyncMode = SyncMode.TWO_WAY, block: Fixture.() -> Unit) {
-        val context = RuntimeEnvironment.getApplication()
+    private fun fixture(mode: SyncMode = SyncMode.TWO_WAY, countryDetector: Any? = null, block: Fixture.() -> Unit) {
+        val application: Context = RuntimeEnvironment.getApplication()
+        val context = if (countryDetector == null) application else object : ContextWrapper(application) {
+            override fun getSystemService(name: String): Any? = if (name == "country_detector") countryDetector else super.getSystemService(name)
+        }
         context.getSharedPreferences("contacts-sync", 0).edit().clear().commit()
         context.getSharedPreferences("contacts-migration-privacy", 0).edit().clear().commit()
         val provider = ImportContactsProvider()
@@ -454,5 +460,118 @@ class ImportedContactsSyncTest {
             row.put(Data.DATA2, "Unaccounted value")
             assertFalse(ContactFieldMapper.losslessImport(row))
         }
+    }
+    @Test fun providerGeneratedNameSourceLessImportUploadsAndRepeatsWithoutDuplicates() = fixture {
+        val first = nativeImported(null)
+        assertEquals(1, sync().uploaded)
+        assertEquals(first, store.contacts().single().id); assertEquals(1, api.creates)
+        nativeImported(null); sync(); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(1, api.creates); assertEquals(0, api.updates)
+    }
+    @Test fun providerGeneratedNameGoogleImportAdoptsBeforeDownloadAndRepeats() = fixture {
+        val remote = person(); api.remote[remote.resource] = remote
+        val first = nativeImported("17")
+        assertEquals(0, sync().unverifiedImports)
+        assertEquals(first, store.contacts().single().id); assertEquals(remote.resource, store.contacts().single().resource)
+        nativeImported("17"); sync(); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(0, api.creates + api.updates)
+    }
+    @Test fun providerCompletionReceivesOnlyReconstructedInputsAndDoesNotChangeRows() = fixture {
+        nativeImported("17")
+        val before = provider.rawIds.associateWith { raw(it, RawContacts.VERSION) }
+        assertTrue(store.hasImportCandidates())
+        assertTrue(provider.nameInputs.isNotEmpty())
+        for (input in provider.nameInputs) {
+            assertEquals(mapOf(StructuredName.GIVEN_NAME to "Synthetic"), input)
+        }
+        assertEquals(before, provider.rawIds.associateWith { raw(it, RawContacts.VERSION) })
+    }
+    @Test fun providerGeneratedPhoneticStylesAdoptAndDifferentNameValuesRemainForReview() = fixture {
+        val native = ContentValues().apply {
+            put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, "太郎"); put(StructuredName.FAMILY_NAME, "山田")
+            put(StructuredName.PHONETIC_GIVEN_NAME, "タロウ"); put(StructuredName.PHONETIC_FAMILY_NAME, "ヤマダ")
+            put(StructuredName.DISPLAY_NAME, "山田 太郎"); put(StructuredName.FULL_NAME_STYLE, 4); put(StructuredName.PHONETIC_NAME_STYLE, 4)
+        }
+        // Literal lineage-23.0 name completion for these mapped components.
+        provider.completeNameResponse = { input ->
+            assertEquals("太郎", input[StructuredName.GIVEN_NAME]); assertEquals("山田", input[StructuredName.FAMILY_NAME])
+            assertFalse(input.containsKey(StructuredName.DISPLAY_NAME)); assertFalse(input.containsKey(Data.DATA10))
+            ContentValues(native)
+        }
+        val remote = person().also { it.json.put("names", JSONArray().put(JSONObject().put("givenName", "太郎").put("familyName", "山田")
+            .put("phoneticGivenName", "タロウ").put("phoneticFamilyName", "ヤマダ"))) }
+        api.remote[remote.resource] = remote
+        fun insert(name: ContentValues): Long = provider.addRaw(account, "17").also { id ->
+            provider.insert(Data.CONTENT_URI, ContentValues(name).apply { put(Data.RAW_CONTACT_ID, id) })
+            provider.insert(Data.CONTENT_URI, ContentValues().apply {
+                put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            })
+        }
+        val first = insert(native); sync(); insert(native); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(first, store.contacts().single().id)
+        for (different in listOf(
+            ContentValues(native).apply { put(StructuredName.DISPLAY_NAME, "Preferred name") },
+            ContentValues(native).apply { put(StructuredName.FULL_NAME_STYLE, 3) },
+            ContentValues(native).apply { put(StructuredName.PHONETIC_NAME_STYLE, 3) }
+        )) {
+            val id = insert(different)
+            assertTrue(sync().unverifiedImports > 0)
+            assertNull(raw(id, RawContacts.SYNC4))
+            assertEquals(different.getAsString(StructuredName.DISPLAY_NAME), data(id, StructuredName.CONTENT_ITEM_TYPE, StructuredName.DISPLAY_NAME))
+        }
+        assertEquals(0, api.creates + api.updates)
+    }
+    @Test fun earlierReviewCacheCannotStrandNowRepresentableNativeNames() = fixture {
+        val id = nativeImported(null)
+        val previousKey = "${account.type}:${account.name}:importChecks:${PrivatePeopleApi.OWNER}"
+        RuntimeEnvironment.getApplication().getSharedPreferences("contacts-sync", 0).edit()
+            .putString(previousKey, JSONObject().put(id.toString(), raw(id, RawContacts.VERSION)!!.toLong()).toString()).commit()
+        store.checkpoint("old-cursor")
+        sync()
+        assertEquals(listOf<String?>(null), api.listTokens); assertEquals(1, api.creates); assertEquals(id, store.contacts().single().id)
+    }
+    @Test fun unavailableCompletionHoldsDataAndCanRecoverWithoutANativeEdit() = fixture {
+        val id = nativeImported(null)
+        provider.completeNameAvailable = false
+        assertEquals(1, sync().unverifiedImports); assertNull(raw(id, RawContacts.SYNC4))
+        assertEquals("Synthetic", data(id, StructuredName.CONTENT_ITEM_TYPE, StructuredName.DISPLAY_NAME))
+        val version = raw(id, RawContacts.VERSION)
+        provider.completeNameAvailable = true
+        assertEquals(version, raw(id, RawContacts.VERSION)); sync()
+        assertEquals(1, api.creates); assertEquals(listOf(id), provider.rawIds)
+        assertEquals(listOf<String?>(null, null), api.listTokens)
+    }
+    class FixtureCountry(private val iso: String) { fun getCountryIso() = iso }
+    class FixtureCountryDetector(private val iso: String) { fun detectCountry() = FixtureCountry(iso) }
+    @Test fun providerNormalizedNationalPhonesUseDetectedCountryAndKeepDifferentValues() = fixture(countryDetector = FixtureCountryDetector("US")) {
+        val number = ContentValues().apply {
+            put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "(415) 555-0123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            put(Phone.NORMALIZED_NUMBER, "+14155550123")
+        }
+        val first = nativeImported(null, number); sync(); nativeImported(null, number); sync()
+        assertEquals(1, api.creates); assertEquals(listOf(first), provider.rawIds)
+        val different = nativeImported(null, ContentValues(number).apply { put(Phone.NORMALIZED_NUMBER, "+442079460000") })
+        assertEquals(1, sync().unverifiedImports); assertNull(raw(different, RawContacts.SYNC4))
+        provider.query(Data.CONTENT_URI, arrayOf(Phone.NORMALIZED_NUMBER), "${Data.RAW_CONTACT_ID}=? AND ${Phone.NUMBER}=?",
+            arrayOf(different.toString(), "(415) 555-0123"), null).use {
+            assertTrue(it.moveToFirst()); assertEquals("+442079460000", it.getString(0))
+        }
+    }
+    @Test fun detectorFailureDoesNotInventACountryForPhoneReconstruction() = fixture(countryDetector = Any()) {
+        val id = nativeImported(null, ContentValues().apply {
+            put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "(415) 555-0123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            put(Phone.NORMALIZED_NUMBER, "+14155550123")
+        })
+        assertEquals(1, sync().unverifiedImports); assertNull(raw(id, RawContacts.SYNC4)); assertEquals(0, api.creates)
+    }
+    @Test fun providerPhotoFileReferencesDoNotBlockContentVerifiedImports() = fixture {
+        fun photo(file: Long) = ContentValues().apply {
+            put(Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+            put(ContactsContract.CommonDataKinds.Photo.PHOTO_FILE_ID, file)
+            put(ContactsContract.CommonDataKinds.Photo.PHOTO, byteArrayOf(1, 2, 3))
+        }
+        val first = nativeImported(null, photo(7)); sync()
+        nativeImported(null, photo(8)); sync()
+        assertEquals(1, api.creates); assertEquals(listOf(first), provider.rawIds)
     }
 }

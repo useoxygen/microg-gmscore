@@ -8,11 +8,13 @@ import android.content.ContentProviderResult
 import android.content.ContentUris
 import android.content.ContentValues
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.provider.ContactsContract
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.RawContacts
+import android.provider.ContactsContract.CommonDataKinds.StructuredName
 import org.microg.gms.people.sync.Person
 
 /** Synthetic host fixture: real SQL selections and provider batches, not the device ContactsProvider. */
@@ -55,6 +57,9 @@ internal class ImportContactsProvider : ContentProvider() {
     /** Runs outside the batch transaction so a simulated concurrent edit survives rollback. */
     var beforeBatch: (() -> Unit)? = null
     val rawIds: List<Long> get() = ids("raw_contacts", null, null)
+    var completeNameAvailable = true
+    var completeNameResponse: ((Map<String, String>) -> ContentValues)? = null
+    val nameInputs = mutableListOf<Map<String, String>>()
 
     override fun onCreate() = true
     override fun getType(uri: Uri): String? = null
@@ -68,8 +73,52 @@ internal class ImportContactsProvider : ContentProvider() {
     private fun syncAdapter(uri: Uri) = uri.getQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER) == "true"
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
-        selectionArgs: Array<out String>?, sortOrder: String?): Cursor = database.query(
-        table(uri), projection, selection(uri, selection), selectionArgs, null, null, sortOrder)
+        selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
+        if (uri.pathSegments.firstOrNull() == "complete_name") {
+            require(uri.pathSegments == listOf("complete_name") && uri.fragment == null)
+            require(selection == null && selectionArgs == null && sortOrder == null)
+            val allowed = (1..9).map { "data$it" }.toSet()
+            require(uri.queryParameterNames.all { it in allowed }) { "Only reconstructed name inputs are allowed" }
+            val input = uri.queryParameterNames.associateWith { key -> uri.getQueryParameters(key).single() }
+            nameInputs.add(input.toMap())
+            if (!completeNameAvailable) throw IllegalArgumentException("unsupported URI")
+            val values = completeNameResponse?.invoke(input) ?: simpleWesternName(input)
+            val columns = projection ?: (1..11).map { "data$it" }.toTypedArray()
+            return MatrixCursor(columns).apply { addRow(columns.map { values.get(it) }) }
+        }
+        return database.query(table(uri), projection, selection(uri, selection), selectionArgs, null, null, sortOrder)
+    }
+
+    /** Small deterministic fixture; non-Western/phonetic cases supply literal provider responses. */
+    private fun simpleWesternName(input: Map<String, String>): ContentValues = ContentValues().apply {
+        input.forEach { (column, value) -> put(column, value) }
+        val structured = listOf(StructuredName.PREFIX, StructuredName.GIVEN_NAME, StructuredName.MIDDLE_NAME,
+            StructuredName.FAMILY_NAME, StructuredName.SUFFIX)
+        val phonetic = listOf(StructuredName.PHONETIC_GIVEN_NAME, StructuredName.PHONETIC_MIDDLE_NAME,
+            StructuredName.PHONETIC_FAMILY_NAME)
+        require(phonetic.all { input[it].isNullOrEmpty() }) { "Phonetic fixtures need an explicit provider response" }
+        val hasStructured = structured.any { !input[it].isNullOrEmpty() }
+        val display = input[StructuredName.DISPLAY_NAME]
+        if (!hasStructured && !display.isNullOrEmpty()) {
+            require(display.none { it.isWhitespace() }) { "Complex display-only fixtures need an explicit provider response" }
+            put(StructuredName.GIVEN_NAME, display)
+        } else if (display.isNullOrEmpty() && hasStructured) {
+            val parts = structured.dropLast(1).mapNotNull { input[it]?.trim()?.takeIf(String::isNotEmpty) }
+            val suffix = input[StructuredName.SUFFIX]?.trim()?.takeIf(String::isNotEmpty)?.let {
+                if (it.equals("Jr", true) || it.equals("Sr", true)) "$it." else it
+            }
+            val joined = parts.joinToString(" ")
+            put(StructuredName.DISPLAY_NAME, when {
+                suffix == null -> joined
+                joined.isEmpty() -> suffix
+                else -> "$joined, $suffix"
+            })
+        }
+        val western = listOf(StructuredName.GIVEN_NAME, StructuredName.FAMILY_NAME)
+            .any { getAsString(it)?.any(Char::isLetter) == true }
+        put(Data.DATA10, if (western) 1 else 0)
+        put(StructuredName.PHONETIC_NAME_STYLE, 0)
+    }
 
     private fun ids(table: String, where: String?, args: Array<out String>?): List<Long> =
         database.query(table, arrayOf("_id"), where, args, null, null, "_id ASC").use { cursor ->

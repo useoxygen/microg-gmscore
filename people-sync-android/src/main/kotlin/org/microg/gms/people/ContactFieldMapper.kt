@@ -77,11 +77,17 @@ object ContactFieldMapper {
     }
 
     /** Import ownership/deletion requires every populated native value to survive projection. */
-    fun losslessImport(row: ContentValues): Boolean {
+    fun losslessImport(row: ContentValues, normalize: (String?, ContentValues) -> ContentValues? = { _, _ -> null }): Boolean {
         val mime = row.getAsString(Data.MIMETYPE)
-        val projected = when (mime) {
+        val reconstructed = when (mime) {
             Photo.CONTENT_ITEM_TYPE -> ContentValues().apply {
                 put(Photo.PHOTO, row.getAsByteArray(Photo.PHOTO)); put(Data.IS_PRIMARY, 1)
+                // DATA14 is the provider's photo-file reference. Its content is
+                // already verified separately by photoToken/photoBytes.
+                row.getAsString(Photo.PHOTO_FILE_ID)?.let {
+                    val id = it.toLongOrNull()?.takeIf { it > 0 } ?: return false
+                    put(Photo.PHOTO_FILE_ID, id)
+                }
             }
             GroupMembership.CONTENT_ITEM_TYPE -> ContentValues().apply {
                 put(GroupMembership.GROUP_ROW_ID, row.getAsString(GroupMembership.GROUP_ROW_ID))
@@ -97,6 +103,7 @@ object ContactFieldMapper {
                 fromJson(spec, toJson(spec, row))
             }
         }
+        val projected = ContentValues(reconstructed).apply { normalize(mime, reconstructed)?.let(::putAll) }
         val undefinedStyles = when (mime) {
             // Full-name style is data10; its named constant is public only from API 21.
             StructuredName.CONTENT_ITEM_TYPE -> setOf(Data.DATA10, StructuredName.PHONETIC_NAME_STYLE)
