@@ -45,13 +45,14 @@ both codes for each subsequent delivery, and update the tag/allocation when
 rebasing to a new upstream release. The product activation gate also requires
 both codes to exceed the versions in the existing signed APK lock.
 
-The current normal delivery reserves GmsCore `254132100` and Companion/FakeStore
-`84022700`, above the owner-reported installed `254132096` / `84022699` baseline.
+The next normal delivery reserves GmsCore `254132101` and Companion/FakeStore
+`84022701`. The immutable published `254132100` / `84022700` pair cannot be reused;
+both allocations also exceed the owner-reported installed `254132096` / `84022699` baseline.
 The first FakeStore allocation block is exhausted, so `version.gradle` permits
 the next 100 delivery codes while retaining upstream vending compatibility
 version `40.2.26`. Revisit that range when changing the upstream vending version.
-`testVersionAllocation` checks both installed-version floors and rejects equality
-or rollback independently for each APK; its result is separate from signing,
+`testVersionAllocation` checks the published and installed baselines and rejects
+equality or rollback independently for each APK; its result is separate from signing,
 installation and device acceptance.
 
 This source change requires a new product source pin, rebuilt/signed APKs, and
