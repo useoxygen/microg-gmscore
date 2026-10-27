@@ -110,7 +110,11 @@ SHA-256 signer metadata. It does not fabricate telephony payloads or generate
 destination-signature metadata for arbitrary Android app archives. When a telephony
 archive exists, tx7 then acquires Transfer Phone's temporary backup-transport lease
 before acknowledging success. The protected `content://ai.cyclon.migration.restore`
-provider must return `success=true`; an unavailable/refused lease fails tx7. The
+provider is used only when it resolves to the system `ai.cyclon.migration` package.
+Older images without that provider retain the existing transfer path; no lease is
+acquired and SMS/MMS restore still depends on their selected transport. A genuine
+system companion provider must return `success=true`; refusal, missing response or
+IPC failure fails tx7. Untrusted providers are never called. The
 provider owns the previous transport journal and scheduled crash recovery; microG does not
 change the selected transport directly. Tx6 opens an explicit local-cache
 BackupManager restore session, obtains the actual restore set and calls restoreAll;

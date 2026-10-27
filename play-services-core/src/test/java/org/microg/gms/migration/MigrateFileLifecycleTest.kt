@@ -96,6 +96,13 @@ class MigrateFileLifecycleTest {
         val staged = Callback()
         call(helper, 4, staged) { writeString(telephony.packageName) }
         assertTrue(staged.done.await(6, TimeUnit.SECONDS)); assertEquals(1, staged.result)
+        // A runtime microG update can arrive before the image supplies the companion provider.
+        val legacy = Callback()
+        call(helper, 7, legacy) {}
+        assertTrue(legacy.done.await(6, TimeUnit.SECONDS)); assertEquals(1, legacy.result)
+        assertEquals(listOf("scan_volume" to null), provider.calls)
+        provider.calls.clear()
+        installRestoreTransportOwner(context)
         val ready = Callback()
         call(helper, 7, ready) {}
         assertTrue(ready.done.await(6, TimeUnit.SECONDS)); assertEquals(1, ready.result)
