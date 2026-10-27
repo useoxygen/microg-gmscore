@@ -684,6 +684,14 @@
             android:name=".auth.GetToken"
             android:exported="true" />
 
+        <service
+            android:name="org.microg.gms.auth.aang.GoogleAuthAangService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.auth.aang.events.services.START" />
+            </intent-filter>
+        </service>
+
         <activity
             android:name=".auth.TokenActivity"
             android:exported="true"

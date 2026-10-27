@@ -27,6 +27,7 @@ data class CapabilityState(
 }
 
 object CapabilityStore {
+    private const val STRICT_CACHE_FORMAT = "2"
 
     /** Decode a server response into the enabled/disabled/pending-set form. */
     fun decode(caps: Capabilities, now: Long = System.currentTimeMillis()): CapabilityState {
@@ -46,29 +47,38 @@ object CapabilityStore {
             }
 
             when (c.status) {
+                CapabilityStatus.STATUS_ALLOWED -> {
+                    enabled += name; times[name] = now
+                }
                 CapabilityStatus.STATUS_DENIED -> {
                     disabled += name; times[name] = now
                 }
                 CapabilityStatus.STATUS_PENDING -> {
                     pending += name
                 }
-                // Treat ALLOWED and UNKNOWN the same — default to enabled.
-                else -> {
-                    enabled += name; times[name] = now
-                }
+                // Unknown/absent status is not an entitlement. Do not mark it pending either:
+                // writeMerged deliberately retains prior known state for genuine STATUS_PENDING.
+                else -> Unit
             }
         }
         return CapabilityState(enabled, disabled, pending, vis, times)
     }
 
     /** Read the current cached state from AccountManager user-data. */
-    fun read(am: AccountManager, acc: Account): CapabilityState = CapabilityState(
-        enabled = readSet(am, acc, UserDataKeys.ENABLED_CAPS),
-        disabled = readSet(am, acc, UserDataKeys.DISABLED_CAPS),
-        pending = readSet(am, acc, UserDataKeys.FAILED_CAPS),
-        visibilityByCap = decodeVisMap(am.getUserData(acc, UserDataKeys.PACKAGE_VISIBILITY)),
-        syncTimeByCap = decodeSyncMap(am.getUserData(acc, UserDataKeys.SYNC_TIME)),
-    )
+    @Synchronized
+    fun read(am: AccountManager, acc: Account): CapabilityState {
+        // Earlier caches folded unknown statuses into enabled. They cannot establish a grant.
+        if (am.getUserData(acc, UserDataKeys.CACHE_FORMAT) != STRICT_CACHE_FORMAT) {
+            return CapabilityState(emptySet(), emptySet(), emptySet(), emptyMap(), emptyMap())
+        }
+        return CapabilityState(
+            enabled = readSet(am, acc, UserDataKeys.ENABLED_CAPS),
+            disabled = readSet(am, acc, UserDataKeys.DISABLED_CAPS),
+            pending = readSet(am, acc, UserDataKeys.FAILED_CAPS),
+            visibilityByCap = decodeVisMap(am.getUserData(acc, UserDataKeys.PACKAGE_VISIBILITY)),
+            syncTimeByCap = decodeSyncMap(am.getUserData(acc, UserDataKeys.SYNC_TIME)),
+        )
+    }
 
     /**
      * Merge a freshly decoded server state with prior local state and write
@@ -76,6 +86,7 @@ object CapabilityStore {
      *
      * Returns true when an ACCOUNT_CAPABILITIES_CHANGED broadcast should fire.
      */
+    @Synchronized
     fun writeMerged(
         am: AccountManager,
         acc: Account,
@@ -93,6 +104,8 @@ object CapabilityStore {
             else -> realPending += cap
         }
 
+        // Publish the provenance marker last, after both grants and their visibility restrictions.
+        am.setUserData(acc, UserDataKeys.CACHE_FORMAT, null)
         am.setUserData(acc, UserDataKeys.ENABLED_CAPS, enabled.joinToString(","))
         am.setUserData(acc, UserDataKeys.DISABLED_CAPS, disabled.joinToString(","))
         am.setUserData(acc, UserDataKeys.FAILED_CAPS, realPending.joinToString(","))
@@ -116,6 +129,7 @@ object CapabilityStore {
         if (services.isNotEmpty()) {
             am.setUserData(acc, UserDataKeys.SERVICES, services.joinToString(","))
         }
+        am.setUserData(acc, UserDataKeys.CACHE_FORMAT, STRICT_CACHE_FORMAT)
 
         return old.enabled != enabled ||
                 old.disabled != disabled ||

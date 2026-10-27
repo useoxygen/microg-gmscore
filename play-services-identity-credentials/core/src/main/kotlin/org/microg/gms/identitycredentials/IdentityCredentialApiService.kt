@@ -33,7 +33,6 @@ import com.google.android.gms.identitycredentials.CreateCredentialRequest
 import com.google.android.gms.identitycredentials.CredentialInformation
 import com.google.android.gms.identitycredentials.CredentialInformationRequest
 import com.google.android.gms.identitycredentials.CredentialInformationResponse
-import com.google.android.gms.identitycredentials.CredentialTransferCapabilities
 import com.google.android.gms.identitycredentials.ExportCredentialsToDeviceSetupRequest
 import com.google.android.gms.identitycredentials.GetCredentialRequest
 import com.google.android.gms.identitycredentials.GetCredentialTransferCapabilitiesRequest
@@ -75,9 +74,8 @@ private val FEATURES = arrayOf(
     Feature("IMPORT_CREDENTIALS", 1),
     Feature("SIGNAL_CREDENTIAL_STATE", 1),
     Feature("CLEAR_EXPORT", 1),
-    Feature("IMPORT_CREDENTIALS_FOR_DEVICE_SETUP", 3),
-    Feature("EXPORT_CREDENTIALS_TO_DEVICE_SETUP", 3),
-    Feature("GET_CREDENTIAL_TRANSFER_CAPABILITIES", 3),
+    // Device-setup transfer needs a protected credential destination/source. Until it
+    // exists, do not offer import/export or claim to know the transferable inventory.
 )
 
 class IdentityCredentialApiService : BaseService(TAG, GmsService.IDENTITY_CREDENTIALS) {
@@ -183,8 +181,8 @@ class IdentityCredentialApiServiceImpl(
     }
 
     override fun getCredentialTransferCapabilities(callback: IIdentityCredentialCallbacks, request: GetCredentialTransferCapabilitiesRequest, apiMetadata: ApiMetadata) {
-        Log.d(TAG, "getCredentialTransferCapabilities pkg=$clientPackageName")
-        callback.onGetCredentialTransferCapabilities(Status.SUCCESS, CredentialTransferCapabilities(Bundle.EMPTY), ApiMetadata.SKIP)
+        Log.d(TAG, "getCredentialTransferCapabilities: not implemented")
+        callback.onGetCredentialTransferCapabilities(Status(CommonStatusCodes.API_NOT_CONNECTED), null, ApiMetadata.SKIP)
     }
 
     override fun clearCreationOptions(callback: IIdentityCredentialCallbacks, request: ClearCreationOptionsRequest, apiMetadata: ApiMetadata) {

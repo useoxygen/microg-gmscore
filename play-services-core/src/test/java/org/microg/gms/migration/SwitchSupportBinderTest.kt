@@ -8,6 +8,7 @@ import android.os.IBinder
 import android.os.Parcel
 import com.google.android.gms.common.api.Status
 import com.google.android.gms.common.internal.safeparcel.SafeParcelWriter
+import org.microg.gms.common.GmsService
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,6 +18,13 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [35])
 class SwitchSupportBinderTest {
+    @Test fun managedAccountSetupVersionTwoIsAdvertisedOnlyOnTarget76() {
+        val features = switchSupportFeatures(GmsService.SMARTDEVICE_D2D_TARGET_DEVICE)
+        assertEquals(2L, features.single { it.name == "managed_account_setup" }.version)
+        assertFalse(switchSupportFeatures(GmsService.SMARTDEVICE_POST_SETUP).any { it.name == "managed_account_setup" })
+        assertTrue(switchSupportFeatures(GmsService.SMARTDEVICE_TARGET_DIRECT_TRANSFER).isEmpty())
+    }
+
     private fun call(binder: IBinder, descriptor: String, code: Int, write: Parcel.() -> Unit): Parcel {
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
