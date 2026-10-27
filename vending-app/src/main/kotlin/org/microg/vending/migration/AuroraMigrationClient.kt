@@ -35,10 +35,17 @@ internal class AuroraMigrationClient(private val context: Context) : Closeable {
         }
         check(binder.interfaceDescriptor == DESCRIPTOR) { "Wrong Aurora migration bridge" }
     }
-    fun call(operation: Int, name: String): Bundle {
+    fun call(operation: Int, name: String, options: Bundle? = null): Bundle = transact(operation) { data ->
+        data.writeString(name)
+        if (options != null) { data.writeInt(1); options.writeToParcel(data, 0) }
+    }
+    fun control(operation: Int, options: Bundle): Bundle = transact(operation) { data ->
+        data.writeInt(1); options.writeToParcel(data, 0)
+    }
+    private fun transact(operation: Int, write: (Parcel) -> Unit): Bundle {
         val data = Parcel.obtain(); val reply = Parcel.obtain()
         try {
-            data.writeInterfaceToken(DESCRIPTOR); data.writeString(name)
+            data.writeInterfaceToken(DESCRIPTOR); write(data)
             check(binder.transact(operation, data, reply, 0)) { "Aurora migration operation unavailable" }
             reply.readException()
             check(reply.readInt() == 1)

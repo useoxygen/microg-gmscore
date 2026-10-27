@@ -59,4 +59,129 @@ class MigrationInstallQueueTest {
         val result = restarted.summary().getParcelableArray("cyclon_app_results")!!.single() as Bundle
         assertEquals("not_found", result.getString("error")); assertFalse(result.getBoolean("installed"))
     }
+    @Test fun catalogChunksAndSetupChunksStayInOneSessionButNewTransferIsSeparate() {
+        val queue = MigrationInstallQueue(context) { _, _ -> state("failed") }
+        val first = queue.catalogSession()
+        assertEquals(first, queue.catalogSession())
+        queue.select(selected())
+        val other = Bundle().apply { putString("package_name", "org.example.second"); putLong("version_code", 2) }
+        queue.select(listOf(other))
+        assertEquals(setOf("org.example.app", "org.example.second"), queue.selected(first))
+        val second = queue.catalogSession()
+        assertNotEquals(first, second)
+        assertTrue(queue.selected(second).isEmpty())
+        assertEquals(2, queue.sessions().size)
+    }
+    @Test fun retriesOnlySessionFailuresAndNeverPreviouslyInstalledApps() {
+        val queue = MigrationInstallQueue(context) { _, _ -> state("failed") }
+        val first = queue.beginTransfer()
+        queue.select(selected())
+        queue.save("org.example.app", state("failed"), true, first)
+        assertEquals(1, queue.retryDocuments(first).size)
+        val second = queue.beginTransfer()
+        queue.select(selected())
+        queue.save("org.example.app", state("installed", true, 12), true, second)
+        queue.save("org.example.app", state("removed"), true, second)
+        assertTrue(queue.retryDocuments(second).isEmpty())
+        queue.retry(first)
+        assertEquals(setOf("org.example.app"), queue.pending(first))
+        assertTrue(queue.pending(second).isEmpty())
+    }
+    @Test fun completedReceiptsDoNotFollowLaterSessionsAuroraRows() {
+        var status = state("failed").apply { putString("error", "not_found") }
+        val queue = MigrationInstallQueue(context) { _, _ -> Bundle(status) }
+        val first = queue.beginTransfer(); queue.select(selected()); queue.dispatch("org.example.app", first)
+        assertTrue(queue.summary(first).getBoolean("complete"))
+        val second = queue.beginTransfer(); queue.select(selected())
+        status = state("downloading")
+        val old = queue.summary(first).getParcelableArray("cyclon_app_results")!!.single() as Bundle
+        assertEquals("failed", old.getString("status"))
+        assertFalse(queue.summary(second).getBoolean("complete"))
+    }
+    @Test fun excludedReasonsAndCatalogMetadataSurviveRestartAndChunks() {
+        val queue = MigrationInstallQueue(context) { _, _ -> state("none") }
+        val id = queue.catalogSession()
+        queue.recordCatalog(listOf(MigrationInstallQueue.unavailable("org.example.excluded", "paid_app")))
+        queue.recordCatalog(selected().map { Bundle(it).apply { putInt("availability", 1); putString("title", "Example"); putString("icon_url", "https://example.org/icon") } })
+        queue.select(selected())
+        val docs = MigrationInstallQueue(context) { _, _ -> state("none") }.summary(id).getParcelableArray("cyclon_app_results")!!.map { it as Bundle }
+        assertEquals("paid_app", docs.single { it.getString("package_name") == "org.example.excluded" }.getString("error"))
+        assertEquals("Example", docs.single { it.getString("package_name") == "org.example.app" }.getString("title"))
+    }
+    @Test fun removedFinishedAuroraRowNeverEnqueuesAgainAndBecomesTerminal() {
+        var installs = 0
+        val queue = MigrationInstallQueue(context) { operation, _ ->
+            if (operation == 2) installs++
+            state("installed").apply { putBoolean("package_present", false) }
+        }
+        queue.select(selected()); queue.dispatch("org.example.app")
+        assertTrue(queue.summary().getBoolean("complete"))
+        assertEquals(0, installs)
+        assertTrue(queue.retryDocuments().isEmpty())
+    }
+    @Test fun pauseMovesToNewTransferAndResumeStopsRenewal() {
+        val calls = mutableListOf<Pair<Int, String?>>()
+        val queue = MigrationInstallQueue(context, storeCall = { _, _ -> state("queued") }, controlCall = { operation, options ->
+            calls += operation to options.getString("session_id")
+            Bundle().apply { putBoolean("success", true) }
+        })
+        val first = queue.catalogSession(); queue.pause(first); queue.select(selected())
+        val next = queue.catalogSession(); queue.renewPause(first); queue.renewPause(next)
+        assertEquals(listOf(4 to first, 5 to first, 4 to next, 4 to next), calls)
+        queue.resume(next); calls.clear(); queue.renewPause(next); assertTrue(calls.isEmpty())
+    }
+
+    @Test fun legacyAmbiguousRequestsBecomeReviewableReceiptsWithoutAutomaticReplay() {
+        context.getSharedPreferences("migration-installs", 0).edit()
+            .putStringSet("packages", setOf("org.example.app")).putStringSet("pending", setOf("org.example.app"))
+            .putLong("org.example.app:expectedVersion", 12).commit()
+        var installs = 0
+        val queue = MigrationInstallQueue(context) { _, _ -> installs++; state("none") }
+        assertEquals("previous-transfer", queue.currentSessionId())
+        assertTrue(queue.pending().isEmpty())
+        val receipt = queue.summary().getParcelableArray("cyclon_app_results")!!.single() as Bundle
+        assertEquals("previous_transfer_requires_review", receipt.getString("error"))
+        assertEquals(0, installs)
+        assertEquals(1, queue.retryDocuments().size)
+    }
+
+    @Test fun uncertainReplyAndMissingReceiptRequireOwnerApprovalBeforeAnotherEnqueue() {
+        var installs = 0
+        val first = MigrationInstallQueue(context) { operation, name ->
+            if (operation == 2) { installs++; MigrationInstallQueue.unavailable(name, "store_unavailable") } else state("none")
+        }
+        first.select(selected()); assertFalse(first.dispatch("org.example.app"))
+        val restarted = MigrationInstallQueue(context) { operation, _ ->
+            if (operation == 2) installs++
+            state("none")
+        }
+        assertTrue(restarted.dispatch("org.example.app"))
+        val receipt = restarted.summary().getParcelableArray("cyclon_app_results")!!.single() as Bundle
+        assertEquals("installation_requires_review", receipt.getString("error"))
+        assertEquals(1, installs)
+        restarted.retry(restarted.currentSessionId()!!)
+        restarted.dispatch("org.example.app")
+        assertEquals(2, installs)
+    }
+    @Test fun oldFinishedDownloadDoesNotBlockSelectedNewVersionOrBecomeOwnerRemoval() {
+        val calls = mutableListOf<Int>()
+        val queue = MigrationInstallQueue(context) { operation, _ ->
+            calls += operation
+            if (operation == 3) state("installed", true, 11).apply { putBoolean("package_present", true) } else state("queued")
+        }
+        queue.select(selected()); assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(3, 2), calls)
+        assertFalse(queue.summary().getBoolean("complete"))
+        assertTrue(queue.retryDocuments().isEmpty())
+    }
+    @Test fun pauseStartsNewSessionEvenAfterPreviousTransferWasCancelledBeforeSelection() {
+        val queue = MigrationInstallQueue(context) { _, _ -> state("none") }
+        val first = queue.startPausedTransfer()
+        queue.recordCatalog(listOf(MigrationInstallQueue.unavailable("org.example.old", "not_found")))
+        val next = queue.startPausedTransfer()
+        assertNotEquals(first, next)
+        assertEquals(next, queue.catalogSession())
+        assertTrue(queue.summary(next).getParcelableArray("cyclon_app_results")!!.isEmpty())
+    }
+
 }
