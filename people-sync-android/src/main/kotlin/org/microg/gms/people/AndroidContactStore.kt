@@ -118,9 +118,14 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         if (isEmpty() && backendOwner == OWNER) add(groupStore?.myContactsResource ?: MY_CONTACTS) // The public API requires at least one contact-group membership.
     }
 
-    override fun contacts(): List<LocalContact> = provider.query(RawContacts.CONTENT_URI, null,
-        "$scope AND (${RawContacts.SYNC4}=? OR (${RawContacts.SYNC4} IS NULL AND ${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>? AND ${RawContacts.DIRTY}=1))",
-        args + arrayOf(backendOwner, (if (!prefs.uploadNewContacts) Long.MAX_VALUE else if (privateBackend) prefs.privateAdoptionFloor else prefs.adoptionFloor).toString()), "${RawContacts._ID} ASC")!!.use { cursor ->
+    private val importFloor get() = if (privateBackend) prefs.privateAdoptionFloor else prefs.adoptionFloor
+    private val importScope get() = "$scope AND ${RawContacts.SYNC4} IS NULL AND ${RawContacts.SYNC2} IS NULL AND ${RawContacts.SYNC3} IS NULL AND ${RawContacts._ID}>?"
+    private val importArgs get() = args + importFloor.toString()
+    override fun contacts(): List<LocalContact> = readContacts("$scope AND ${RawContacts.SYNC4}=?", args + backendOwner)
+    private fun imports(): List<LocalContact> = if (prefs.mode == SyncMode.OFF || !prefs.uploadNewContacts) emptyList() else
+        readContacts("$importScope AND (${RawContacts.SOURCE_ID} IS NOT NULL OR ${RawContacts.DIRTY}=1)", importArgs, imported = true)
+    private fun readContacts(selection: String, selectionArgs: Array<String>, imported: Boolean = false): List<LocalContact> =
+        provider.query(RawContacts.CONTENT_URI, null, selection, selectionArgs, "${RawContacts._ID} ASC")!!.use { cursor ->
         buildList {
             while (cursor.moveToNext()) {
                 fun text(column: String) = cursor.getString(cursor.getColumnIndexOrThrow(column))
@@ -130,7 +135,7 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
                     .use { ContactFieldMapper.readRows(it) }
                 val membership = if (groupStore != null) localMemberships(rows, number(RawContacts.STARRED) != 0L) else emptySet()
                 val oldBaseline = text(RawContacts.SYNC2)?.let(::JSONObject) ?: JSONObject()
-                val legacyMemberships = groupStore != null && text(RawContacts.SOURCE_ID) != null && !oldBaseline.has("memberships")
+                val legacyMemberships = !imported && groupStore != null && text(RawContacts.SOURCE_ID) != null && !oldBaseline.has("memberships")
                 val legacyNeedsReview = legacyMemberships && (number(RawContacts.DIRTY) != 0L || number(RawContacts.STARRED) != 0L ||
                     rows.any { it.getAsString(Data.MIMETYPE) == GroupMembership.CONTENT_ITEM_TYPE })
                 var unreadablePhoto = false
@@ -147,12 +152,154 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     }
     private fun assertVersion(existing: LocalContact) = ContentProviderOperation.newAssertQuery(syncUri(RawContacts.CONTENT_URI))
         .withSelection(rawScope(existing.id) + " AND ${RawContacts.VERSION}=?" +
-            " AND (${RawContacts.SYNC4}=? OR (${RawContacts.SYNC4} IS NULL AND ${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>?))",
-            args + arrayOf(existing.version.toString(), backendOwner, (if (privateBackend) prefs.privateAdoptionFloor else prefs.adoptionFloor).toString()))
+            " AND ${RawContacts.SYNC4}=?", args + arrayOf(existing.version.toString(), backendOwner))
         .withExpectedCount(1).build()
+    private fun assertImport(existing: LocalContact) = ContentProviderOperation.newAssertQuery(syncUri(RawContacts.CONTENT_URI))
+        .withSelection("$importScope AND ${RawContacts._ID}=? AND ${RawContacts.VERSION}=? AND " +
+            if (existing.resource == null) "${RawContacts.SOURCE_ID} IS NULL" else "${RawContacts.SOURCE_ID}=?",
+            importArgs + arrayOf(existing.id.toString(), existing.version.toString()) + listOfNotNull(existing.resource))
+        .withExpectedCount(1).build()
+    private fun importFields(fields: Fields) = ContactPhotos.hash(canonical(ContactsSync.fieldsJson(fields, PeopleApi.EDITABLE_FIELDS - "memberships")).toByteArray(Charsets.UTF_8))
+    private fun starred(id: Long) = provider.query(RawContacts.CONTENT_URI, arrayOf(RawContacts.STARRED), rawScope(id), args, null)!!.use {
+        check(it.moveToFirst()); it.getLong(0) != 0L
+    }
+    private fun importSignature(row: LocalContact): String {
+        val photo = if (!row.hasPhoto) ContactPhotos.NONE else ContactPhotos.hash(photoBytes(PhotoContact(row, photoToken(row.id), null, null)) ?: throw UnreadableContact())
+        return importFields(row.fields) + ":" + photo + ":" + starred(row.id) + ":" +
+            ContactPhotos.hash((row.fields["memberships"] ?: "[]").toByteArray(Charsets.UTF_8))
+    }
+    private fun importSignatures(json: JSONObject): Set<String> = json.optJSONArray("_imports")?.let { values ->
+        (0 until values.length()).map { values.getString(it) }.toSet()
+    }.orEmpty()
+    override fun hasImportCandidates(): Boolean {
+        val checked = prefs.importChecks(backendOwner)
+        return imports().any { checked[it.id] != it.version }
+    }
+    override fun reconcileImports(people: List<Person>, full: Boolean): Int {
+        check(prefs.mode != SyncMode.OFF)
+        val candidates = imports()
+        if (candidates.isEmpty()) return 0
+        val candidateIds = candidates.map { it.id }.toSet()
+        val checked = prefs.importChecks(backendOwner).filterKeys { it in candidateIds }.toMutableMap()
+        val owned = contacts().associateBy { it.id }.toMutableMap()
+        val resources = mutableMapOf<String, MutableSet<Long>>()
+        val byFields = mutableMapOf<String, MutableSet<Long>>()
+        fun index(row: LocalContact) {
+            row.resource?.let { resources.getOrPut(it) { mutableSetOf() }.add(row.id) }
+            val fields = setOf(importFields(row.fields)) + importSignatures(state(row.id)).map { it.substringBefore(':') }
+            for (key in fields) byFields.getOrPut(key) { mutableSetOf() }.add(row.id)
+        }
+        owned.values.forEach(::index)
+        val remoteBySource = people.filter { !it.deleted }.flatMap { person ->
+            // Switch copies sourceid verbatim and transfers no etag/baseline
+            // (hmg.java:1059-1069, eif.java:14). Never guess decimal/hex aliases.
+            (setOf(person.resource) + listOfNotNull(person.source?.optString("id")?.takeIf { it.isNotEmpty() }))
+                .map { it to person }
+        }.groupBy({ it.first }, { it.second })
+        val remoteByFields = people.filter { !it.deleted }.groupBy { importFields(project(it)) }
+        var unverified = 0
+        for (candidate in candidates) try {
+            if (!full && candidate.resource.isNullOrEmpty()) { unverified++; continue }
+            val key = importFields(candidate.fields)
+            val emptyText = candidate.fields.filterKeys { it != "memberships" }.values.all { it == "[]" }
+            val remoteMatches = if (!candidate.resource.isNullOrEmpty()) remoteBySource[candidate.resource].orEmpty().distinctBy { it.resource }
+                else if (emptyText) emptyList() else remoteByFields[key].orEmpty()
+            if (remoteMatches.size > 1 || !candidate.resource.isNullOrEmpty() && remoteMatches.isEmpty()) {
+                if (full) checked[candidate.id] = candidate.version
+                unverified++; continue
+            }
+            val remote = remoteMatches.singleOrNull()
+            val matches = if (remote != null) resources[remote.resource].orEmpty().toList()
+                else if (emptyText) {
+                    val signature = importSignature(candidate)
+                    byFields[key].orEmpty().filter { id -> signature in importSignatures(state(id)) || signature == importSignature(owned.getValue(id)) }
+                } else byFields[key].orEmpty().toList()
+            if (matches.size > 1) { checked[candidate.id] = candidate.version; unverified++; continue }
+            val keeper = matches.singleOrNull()?.let(owned::get)
+            if (keeper != null) {
+                if (!collapseImport(candidate, keeper)) { checked[candidate.id] = candidate.version; unverified++; continue }
+                checked.remove(candidate.id)
+                val current = readContacts("${rawScope(keeper.id)} AND ${RawContacts.SYNC4}=?", args + backendOwner).single()
+                owned[current.id] = current; index(current)
+            } else {
+                // A source-less row is new only after ruling out a unique full
+                // field match in this account. Never use content to relink an unknown source ID.
+                if (candidate.resource.isNullOrEmpty() && emptyText && !candidate.hasPhoto) { checked[candidate.id] = candidate.version; unverified++; continue }
+                val json = remote?.let { JSONObject(baseline(it, null)) } ?: JSONObject()
+                val remoteFields = remote?.let(::project)
+                val divergent = remoteFields != null && candidate.dirty && (candidate.deleted || PeopleApi.EDITABLE_FIELDS.any {
+                    it != "memberships" && (candidate.fields[it] ?: "[]") != "[]" && (candidate.fields[it] ?: "[]") != (remoteFields[it] ?: "[]")
+                })
+                if (remote != null && candidate.dirty && !candidate.deleted) {
+                    // Transfers have no original baseline. Omitted cloud fields
+                    // are not evidence of a local deletion; leave them out of the update mask.
+                    for (field in PeopleApi.EDITABLE_FIELDS) if ((candidate.fields[field] ?: "[]") == "[]") json.put(field, org.json.JSONArray())
+                }
+                json.put("_imports", org.json.JSONArray().put(importSignature(candidate)))
+                val values = ContentValues().apply {
+                    put(RawContacts.SOURCE_ID, remote?.resource); put(RawContacts.SYNC1, remote?.etag)
+                    put(RawContacts.SYNC2, json.toString()); put(RawContacts.SYNC4, backendOwner)
+                    // DIRTY is set by Switch's insert itself. Without an original
+                    // etag/baseline a differing value could be an edit or stale
+                    // source data; retain it as a conflict, never overwrite Google.
+                    if (divergent) put(RawContacts.SYNC3, JSONObject().put("kind", "conflict").put("reason", "unverified_import").toString())
+                    put(RawContacts.RAW_CONTACT_IS_READ_ONLY, if (prefs.mode == SyncMode.TWO_WAY) 0 else 1)
+                }
+                provider.applyBatch(arrayListOf(assertImport(candidate), ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI))
+                    .withSelection(rawScope(candidate.id), args).withValues(values).withExpectedCount(1).build()))
+                val current = readContacts("${rawScope(candidate.id)} AND ${RawContacts.SYNC4}=?", args + backendOwner).single()
+                owned[current.id] = current; index(current)
+                checked.remove(candidate.id)
+            }
+        } catch (error: UnreadableContact) { checked[candidate.id] = candidate.version; unverified++ }
+        prefs.importChecks(backendOwner, checked)
+        return unverified
+    }
+    private fun collapseImport(candidate: LocalContact, keeper: LocalContact): Boolean {
+        if (candidate.unsupported || candidate.deleted) return false
+        val json = state(keeper.id)
+        val signature = importSignature(candidate)
+        val signatures = importSignatures(json)
+        val sameFields = importFields(candidate.fields) in setOf(importFields(keeper.fields), importFields(keeper.baseline))
+        if (signature !in signatures && (!sameFields || candidate.hasPhoto && signature.split(':')[1] != importSignature(keeper).split(':')[1])) return false
+        val operations = arrayListOf(assertImport(candidate), assertVersion(keeper))
+        if (signature in signatures) {
+            // The entire import (including photo, favorite and memberships) was
+            // accounted for already. Keep subsequent edits and pending journals.
+            operations.add(ContentProviderOperation.newDelete(syncUri(RawContacts.CONTENT_URI))
+                .withSelection(rawScope(candidate.id), args).withExpectedCount(1).build())
+            provider.applyBatch(operations)
+            return true
+        }
+        if (keeper.pending != null) return false
+        // Memberships identify labels, not people. Retain any new imported label
+        // when removing a repeated copy of the same complete contact data.
+        fun groupIds(id: Long) = provider.query(Data.CONTENT_URI, arrayOf(GroupMembership.GROUP_ROW_ID),
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), GroupMembership.CONTENT_ITEM_TYPE), null)!!.use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getLong(0)) }
+        }
+        val groups = groupIds(candidate.id) - groupIds(keeper.id)
+        val newStarred = starred(candidate.id) && !starred(keeper.id)
+        for (id in groups) operations.add(ContentProviderOperation.newInsert(syncUri(Data.CONTENT_URI))
+            .withValue(Data.RAW_CONTACT_ID, keeper.id).withValue(Data.MIMETYPE, GroupMembership.CONTENT_ITEM_TYPE).withValue(GroupMembership.GROUP_ROW_ID, id).build())
+        json.put("_imports", org.json.JSONArray((signatures + signature).toList()))
+        val values = ContentValues().apply {
+            put(RawContacts.SYNC2, json.toString())
+            if (newStarred) put(RawContacts.STARRED, 1)
+            if (groups.isNotEmpty() || newStarred) put(RawContacts.DIRTY, 1)
+        }
+        operations.add(ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope(keeper.id), args).withValues(values).withExpectedCount(1).build())
+        operations.add(ContentProviderOperation.newDelete(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope(candidate.id), args).withExpectedCount(1).build())
+        provider.applyBatch(operations)
+        return true
+    }
     private fun baseline(person: Person, existing: LocalContact?): String = JSONObject().apply {
         for ((key, value) in project(person)) put(key, org.json.JSONArray(value))
-        existing?.let { state(it.id).optJSONObject("_photo")?.let { put("_photo", it) } }
+        existing?.let {
+            val previous = state(it.id)
+            previous.optJSONObject("_photo")?.let { put("_photo", it) }
+            previous.optJSONArray("_imports")?.let { put("_imports", it) }
+        }
         put("_photoRemote", ContactPhotos.reference(person) ?: JSONObject.NULL)
         put("_photoRevision", ContactPhotos.revision(person))
     }.toString()

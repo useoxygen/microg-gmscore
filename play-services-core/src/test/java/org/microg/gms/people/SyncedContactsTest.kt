@@ -75,7 +75,7 @@ class SyncedContactsTest {
             contact(2, legacy)                                // older sync: removed
             contact(3, null)                                  // existed before sync was enabled: kept
             contact(15, null, dirty = true)                   // between the legacy and private floors: not the engine's, kept
-            contact(21, null, dirty = true)                   // created here after enabling, not uploaded yet: removed, unsynced
+            contact(21, null, dirty = true)                   // not reconciled/adopted yet: kept
             contact(22, null)                                 // clean unowned row above the floor: the engine never adopts it, kept
             contact(23, null, sourceId = "other-adapter")     // another sync adapter's contact: kept
             contact(13, private, dataSet = "plugin")          // other data set: kept
@@ -97,13 +97,13 @@ class SyncedContactsTest {
         val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
         val synced = SyncedContacts(client, account, prefs)
 
-        assertEquals(3, synced.unsyncedChanges())
-        assertEquals(4, synced.count())
+        assertEquals(2, synced.unsyncedChanges())
+        assertEquals(3, synced.count())
         assertThrows(IllegalStateException::class.java) { synced.remove() } // Never while sync can still write.
 
         prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
         synced.remove()
-        assertEquals(setOf(3L, 13L, 14L, 15L, 22L, 23L), provider.ids("raw_contacts"))
+        assertEquals(setOf(3L, 13L, 14L, 15L, 21L, 22L, 23L), provider.ids("raw_contacts"))
         assertEquals(setOf(3L, 4L, 25L), provider.ids("groups"))
         assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
         assertNull(prefs.privateGroupCheckpoint("binding"))

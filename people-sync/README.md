@@ -108,9 +108,28 @@ Private rows/groups retain `SYNC4=microg-people-fsa2-read-v1` as a stable owners
 marker (the name is historical). Queries and mutations are scoped by account,
 type, dataset, owner and row version. Imports are read-only in Download only and
 editable in Two-way; system group metadata remains read-only. Separate durable
-private adoption floors exclude pre-existing unowned rows. Only new source-less
-rows for the enabled account above its floor can be adopted. Device/app rows
-remain separate. On the first private sync, clean legacy public-owned contacts and
+private adoption floors can exclude pre-existing unowned rows in developer fixture
+mode; customer defaults adopt the account's own imports. Before a new import can
+upload or a download can insert another raw row, a complete account snapshot
+reconciles it. An imported source ID must exactly match the verified remote
+CONTACT source ID or resource name. Numeric aliases are never guessed, and an
+unknown source ID never falls back to content matching. Source-less contacts can
+match one complete mapped-field projection, or become a new contact. Device/app,
+other-account, dataset and other-adapter rows remain separate.
+
+Adoption records ownership and the remote etag without replacing native data.
+Switch transfers no original etag or baseline: divergent populated fields and
+pre-adoption deletions are retained as conflicts rather than overwriting cloud
+changes. Omitted cloud fields are excluded from upload masks. Repeated complete
+imports are removed with version-checked batches only when their data is already
+accounted for; hashed import history preserves newer edits, photos, favorites and
+label choices across subsequent transfers. Ambiguous copies stay unowned for
+review. Unverified rows have a separate status and row/version cache; they do not
+prevent other contacts' checkpoints, deletions or photo sync. Turning sync off
+keeps unverified copies. Migration holds and Download only still gate every cloud
+mutation. See [Switch contact acceptance](../cyclon/switch-contacts-acceptance.md).
+
+On the first private sync, clean legacy public-owned contacts and
 groups are removed atomically as the sync adapter, and cursors reset for a full
 private download. Any dirty/pending legacy row pauses import with **needs review**;
 no old edits or journals are discarded. Concurrent edits or group members outside

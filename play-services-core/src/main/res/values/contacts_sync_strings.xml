@@ -32,6 +32,7 @@
     <string name="contacts_sync_conflict">Some contacts were changed both here and in Google Contacts. Your changes on this phone are kept and weren\'t uploaded.</string>
     <string name="contacts_sync_uncertain">Checking whether your last change reached Google. It won\'t be uploaded twice.</string>
     <string name="contacts_sync_needs_review">Paused: Google contacts on this phone have unsynced changes from an older version of sync. They\'re kept as they are.</string>
+    <string name="contacts_sync_import_review">Some copied contacts couldn\'t be linked to Google. They\'re kept on this phone. Other contacts can still sync.</string>
     <string name="contacts_sync_needs_update">Google stopped accepting sync requests from this version. Update Cyclon Services, then tap Try again.</string>
     <string name="contacts_sync_two_way_unavailable">Uploading changes isn\'t available yet. Contacts are only downloaded.</string>
 

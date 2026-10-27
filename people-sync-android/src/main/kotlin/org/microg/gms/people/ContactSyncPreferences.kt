@@ -37,6 +37,17 @@ class ContactSyncPreferences(private val context: Context, val account: Account)
         check(edit.commit())
     }
     val privateLegacyCleanupComplete: Boolean get() = prefs.getBoolean(prefix + "privateLegacyCleanupComplete", false)
+    // Unverified imports remain unowned. Cache only row/version pairs so an
+    // unchanged foreign source ID does not force a full account read every hour.
+    fun importChecks(backend: String): Map<Long, Long> = runCatching {
+        val json = org.json.JSONObject(prefs.getString(prefix + "importChecks:" + backend, "{}")!!)
+        json.keys().asSequence().associate { it.toLong() to json.getLong(it) }
+    }.getOrDefault(emptyMap())
+    fun importChecks(backend: String, rows: Map<Long, Long>) {
+        val json = org.json.JSONObject()
+        rows.forEach { (id, version) -> json.put(id.toString(), version) }
+        check(prefs.edit().putString(prefix + "importChecks:" + backend, json.toString()).commit())
+    }
     fun completePrivateLegacyCleanup() {
         check(prefs.edit().putBoolean(prefix + "privateLegacyCleanupComplete", true)
             .remove(prefix + "privateGroupBinding").remove(prefix + "privateGroupCheckpoint").commit())

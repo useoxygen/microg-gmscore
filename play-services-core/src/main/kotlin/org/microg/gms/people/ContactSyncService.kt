@@ -77,6 +77,7 @@ class ContactSyncService : Service() {
                         report.skipped > 0 -> "partial"
                         report.uncertain > 0 -> "uncertain"
                         report.conflicts > 0 -> "conflict"
+                        report.unverifiedImports > 0 -> "import_review"
                         else -> "success"
                     }
                     if (report.conflicts == 0 && report.uncertain == 0 && report.skipped == 0 && currentMode() != SyncMode.OFF) {
