@@ -354,6 +354,8 @@ internal class MigrationInstallQueue(private val context: Context,
             // Play keeps refusing: show the owner a failure they can retry.
             result = Bundle(result).apply { putString("status", "unavailable"); putBoolean("terminal", true) }
         }
+        // Aurora refused before enqueuing. Freeze that reason; a status refresh would show an older download row's error.
+        if (requestedInstall && result.getString("status") == "unavailable") result = Bundle(result).apply { putBoolean("terminal", true) }
         if (requestedInstall && result.getString("status") == "installed" && !satisfies(name, result, id) &&
             (result.getBoolean("package_present") || result.getBoolean("installed"))) {
             // Legacy Aurora cannot enforce the selected minimum. Its settled lower offer needs review,

@@ -106,6 +106,24 @@ class MigrationInstallQueueTest {
         queue.dispatch("org.example.app")
         assertEquals(false, installs.last())
     }
+    @Test fun theGoogleAccountErrorIsNotReplacedByAnOlderFailedDownload() {
+        val installs = mutableListOf<Boolean>()
+        val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, name ->
+            when {
+                operation == 3 -> state("failed").apply { putString("error", "rate_limited") } // an earlier attempt's row
+                installs.last() -> MigrationInstallQueue.unavailable(name, "no_google_account")
+                else -> MigrationInstallQueue.unavailable(name, "not_found")
+            }
+        }.apply { sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") } }
+        queue.select(selected())
+        assertFalse(queue.dispatch("org.example.app"))
+        queue.dispatch("org.example.app")
+        assertEquals(listOf(false, true), installs)
+        repeat(2) {
+            val receipt = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+            assertEquals("no_google_account", receipt.getString("error")); assertTrue(receipt.getBoolean("terminal"))
+        }
+    }
     @Test fun queueNeverReportsDownloadingOrOldInstalledVersionAsComplete() {
         val queue = MigrationInstallQueue(context) { _, _ -> state("downloading", false, 11) }
         queue.select(selected()); assertFalse(queue.summary().getBoolean("all_installed"))
