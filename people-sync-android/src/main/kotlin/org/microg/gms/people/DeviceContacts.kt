@@ -19,10 +19,10 @@ import android.provider.ContactsContract.RawContacts
  * a Google account like Google's "Also sync device contacts". Each move is one provider transaction:
  * the Google copy is created and the device copy deleted together, so a contact is never lost or
  * duplicated. The copy is a new, unsynced contact of the account, so the next sync uploads it.
- * SIM contacts and other accounts (e.g. Exchange) are never touched. The same transfer brings never-uploaded
- * contacts back to the phone when sync is turned off ([keepOnPhone]).
+ * SIM contacts and other accounts (e.g. Exchange) are never touched.
  */
-class DeviceContacts(private val provider: ContentProviderClient) {
+class DeviceContacts(private val provider: ContentProviderClient, context: android.content.Context) {
+    private val normalization = ContactProviderNormalization(provider, context)
     /** [supported] is false when the contact has details Google sync can't upload; such a contact stays on the phone. */
     data class Entry(val id: Long, val name: String?, val supported: Boolean)
     data class MoveResult(val moved: Int, val unsupported: Int)
@@ -56,8 +56,9 @@ class DeviceContacts(private val provider: ContentProviderClient) {
 
     // Device groups don't exist in the Google account; the photo is copied in full size separately.
     private fun copied(row: ContentValues) = row.getAsString(Data.MIMETYPE) !in setOf(GroupMembership.CONTENT_ITEM_TYPE, Photo.CONTENT_ITEM_TYPE)
-    // The same rule the sync uses: a contact with any other row would never be uploaded.
-    private fun uploadable(row: ContentValues) = !copied(row) || ContactFieldMapper.supported(row)
+    // The same rule the sync applies to new, never-synced rows (imports): every value must survive the upload,
+    // else the contact would never be uploaded. Such contacts stay on the phone.
+    private fun uploadable(row: ContentValues) = !copied(row) || ContactFieldMapper.losslessImport(row, normalization::reconstruct)
 
     private fun rows(id: Long): List<ContentValues> =
         provider.query(Data.CONTENT_URI, DATA_COLUMNS, "${Data.RAW_CONTACT_ID}=?", arrayOf(id.toString()), null)?.use { c ->
@@ -72,12 +73,6 @@ class DeviceContacts(private val provider: ContentProviderClient) {
         return if (moved) Outcome.MOVED else if (unsupported) Outcome.UNSUPPORTED else Outcome.SKIPPED
     }
 
-    /**
-     * Turning sync off: a contact created on this phone that never reached Google is kept as a device contact
-     * instead of being deleted with the synced ones. [selection] and [args] must identify it in its account.
-     */
-    fun keepOnPhone(id: Long, selection: String, args: Array<String>): Boolean =
-        transfer(id, selection, args, null, null, deleteAsSyncAdapter = true) { true }
 
     /**
      * One transaction: assert the source is unchanged, insert the copy (target null = device), delete the source.

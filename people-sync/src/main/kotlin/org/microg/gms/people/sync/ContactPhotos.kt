@@ -174,4 +174,4 @@ class PhotosSync(private val api: ContactsApi, private val photos: PhotosApi,
 }
 
 operator fun SyncReport.plus(other: SyncReport) = SyncReport(downloaded + other.downloaded, uploaded + other.uploaded,
-    conflicts + other.conflicts, uncertain + other.uncertain, skipped + other.skipped)
+    conflicts + other.conflicts, uncertain + other.uncertain, skipped + other.skipped, unverifiedImports + other.unverifiedImports)

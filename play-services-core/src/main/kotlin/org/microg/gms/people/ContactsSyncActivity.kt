@@ -99,7 +99,7 @@ class ContactsSyncActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         savedInstanceState?.getString("turnOffAccount")?.let { name ->
-            turnOff = TurnOff(Account(name, "com.google"), savedInstanceState.getInt("turnOffUnsynced"), savedInstanceState.getInt("turnOffKept"))
+            turnOff = TurnOff(Account(name, "com.google"), savedInstanceState.getInt("turnOffUnsynced"))
         }
         if (savedInstanceState?.getBoolean("waitingForPermission") == true) {
             val name = savedInstanceState.getString("pendingAccount")
@@ -442,7 +442,7 @@ class ContactsSyncActivity : ComponentActivity() {
             dismissButton = { CyclonTextButton(onClick = { newContactsConfirmation = null }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
     }
 
-    private data class TurnOff(val account: Account, val unsynced: Int, val kept: Int = 0)
+    private data class TurnOff(val account: Account, val unsynced: Int)
     private var turnOff by mutableStateOf<TurnOff?>(null)
     private val hasContactsPermission get() = arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)
         .all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
@@ -572,6 +572,7 @@ class ContactsSyncActivity : ComponentActivity() {
         "network" -> R.string.contacts_sync_network
         "local" -> R.string.contacts_sync_local
         "needs_review" -> R.string.contacts_sync_needs_review
+        "import_review" -> R.string.contacts_sync_import_review
         "needs_update" -> R.string.contacts_sync_needs_update
         "two_way_unavailable" -> R.string.contacts_sync_two_way_unavailable
         else -> null
@@ -629,8 +630,6 @@ class ContactsSyncActivity : ComponentActivity() {
                         if (ContactSyncPreferences(this@ContactsSyncActivity, request.account).mode == SyncMode.TWO_WAY) R.plurals.contacts_sync_turn_off_unsynced
                         else R.plurals.contacts_sync_turn_off_unsynced_download, request.unsynced, request.unsynced),
                         color = MaterialTheme.colorScheme.error)
-                    if (request.kept > 0) Text(pluralStringResource(R.plurals.contacts_sync_turn_off_kept, request.kept, request.kept),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = { CyclonTextButton(onClick = { turnOff = null; turnOffSync(request.account) }) {
@@ -641,10 +640,10 @@ class ContactsSyncActivity : ComponentActivity() {
 
     private fun confirmTurnOff(account: Account) {
         lifecycleScope.launch {
-            val (unsynced, kept) = withContext(Dispatchers.IO) {
-                runCatching { withSyncedContacts(account) { it.unsyncedChanges() to it.keptOnPhone() } }.getOrDefault(0 to 0)
+            val unsynced = withContext(Dispatchers.IO) {
+                runCatching { withSyncedContacts(account) { it.unsyncedChanges() } }.getOrDefault(0)
             }
-            turnOff = TurnOff(account, unsynced, kept)
+            turnOff = TurnOff(account, unsynced)
         }
     }
 
@@ -677,7 +676,7 @@ class ContactsSyncActivity : ComponentActivity() {
     private fun <T> withDeviceContacts(block: (DeviceContacts) -> T): T {
         val client = contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)
             ?: throw IllegalStateException("Contacts provider unavailable")
-        try { return block(DeviceContacts(client)) }
+        try { return block(DeviceContacts(client, this)) }
         finally { @Suppress("DEPRECATION") client.release() }
     }
 
@@ -697,7 +696,7 @@ class ContactsSyncActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        turnOff?.let { outState.putString("turnOffAccount", it.account.name); outState.putInt("turnOffUnsynced", it.unsynced); outState.putInt("turnOffKept", it.kept) }
+        turnOff?.let { outState.putString("turnOffAccount", it.account.name); outState.putInt("turnOffUnsynced", it.unsynced) }
         if (waitingForPermission) pending?.let { (account, mode) ->
             outState.putBoolean("waitingForPermission", true)
             outState.putString("pendingAccount", account.name)

@@ -176,7 +176,7 @@ private val CONFIGURATION_OPTIONS = mapOf(
 )
 
 class PhenotypeServiceImpl(val packageName: String?, private val context: Context? = null) : IPhenotypeService.Stub() {
-    private fun localFolsomFlags(namespace: String?): Array<Flag>? = context?.let { FolsomPhenotypeConfiguration.flags(it, namespace) }
+    private fun localFolsomFlags(namespace: String?): Array<Flag>? = context?.let { FolsomPhenotypeConfiguration.flags(it, namespace) } ?: SwitchContactRestoreFlags.flags(namespace)
     override fun register(callbacks: IPhenotypeCallbacks, packageName: String?, version: Int, p3: Array<out String>?, p4: ByteArray?) {
         Log.d(TAG, "register($packageName, $version, $p3, $p4)")
         callbacks.onRegistered(if (version != 0) Status.SUCCESS else Status.CANCELED)

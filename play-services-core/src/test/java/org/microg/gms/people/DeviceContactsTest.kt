@@ -43,6 +43,7 @@ class DeviceContactsTest {
         }
         var onDataRead: (() -> Unit)? = null
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor {
+            if (table(uri) == "complete_name") throw UnsupportedOperationException() // like a provider without name completion
             if (table(uri) == "data") onDataRead?.invoke()
             return db.query(table(uri), projection, where(uri, selection), args, null, null, sort?.replace(" COLLATE LOCALIZED", ""))
         }
@@ -74,7 +75,7 @@ class DeviceContactsTest {
         val context = RuntimeEnvironment.getApplication()
         val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }) }
         ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
-        return provider to DeviceContacts(context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!)
+        return provider to DeviceContacts(context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!, context)
     }
 
     @Test fun listsOnlyContactsSavedOnThePhone() {
