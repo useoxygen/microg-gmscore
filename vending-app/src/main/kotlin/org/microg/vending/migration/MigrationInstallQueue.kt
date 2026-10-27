@@ -122,6 +122,25 @@ internal class MigrationInstallQueue(private val context: Context,
             changed(id); schedule()
         }
     }
+    /** A trusted companion's wizard return closes input; it does not certify any app installation. */
+    fun transferEnded(outcome: String, expectedSessionId: String? = null): Bundle = synchronized(LOCK) {
+        require(outcome in setOf("success", "cancelled")) { "Invalid transfer outcome" }
+        val id = currentSessionId()
+        if (id == null) return Bundle().apply { putBoolean("accepted", false); putString("error", "no_active_session") }
+        if (expectedSessionId != null && expectedSessionId != id) return Bundle().apply {
+            putBoolean("accepted", false); putString("error", "stale_session"); putString("session_id", id)
+        }
+        val alreadyClosed = prefs.getBoolean("$id:selection_closed", false)
+        val edit = prefs.edit().putBoolean("$id:selected", true).putBoolean("$id:selection_closed", true)
+        if (!prefs.contains("$id:transfer_outcome")) edit.putString("$id:transfer_outcome", outcome)
+        check(edit.commit())
+        changed(id); schedule()
+        Bundle().apply {
+            putBoolean("accepted", true); putString("session_id", id); putBoolean("selection_closed", true)
+            putBoolean("already_closed", alreadyClosed)
+            putString("transfer_outcome", prefs.getString("$id:transfer_outcome", null))
+        }
+    }
     fun selected(id: String = currentSessionId().orEmpty()): Set<String> = prefs.getStringSet("$id:packages", emptySet()).orEmpty().toSet()
     fun pending(id: String = currentSessionId().orEmpty()): Set<String> = prefs.getStringSet("$id:pending", emptySet()).orEmpty().toSet()
     fun save(name: String, result: Bundle, dispatched: Boolean = false, id: String = session()) = synchronized(LOCK) {
@@ -235,6 +254,7 @@ internal class MigrationInstallQueue(private val context: Context,
         }
         Bundle().apply {
             putString("session_id", id); putParcelableArray("cyclon_app_results", results.toTypedArray())
+            putString("transfer_outcome", prefs.getString("$id:transfer_outcome", null))
             putBoolean("all_installed", results.all { it.getBoolean("installed") })
             putBoolean("selection_closed", prefs.getBoolean("$id:selection_closed", false))
             putBoolean("installs_settled", pending(id).isEmpty() && results.all { it.getBoolean("terminal") })
@@ -269,7 +289,10 @@ internal class MigrationInstallQueue(private val context: Context,
         } else if (ownerRetry && current.getString("status") == "awaiting_install" && !control(7, Bundle()).getBoolean("owner_approved_retry")) {
             ownerReview(current, "installation_confirmation_required") // Legacy Aurora: use its owner-facing install UI.
         } else if (needsEnqueue(name, current, id) || (ownerRetry && current.getString("status") == "awaiting_install")) {
-            check(prefs.edit().putBoolean("$id:$name:uncertain", true).commit())
+            // Consume this single owner approval atomically before IPC. A lost reply must
+            // return to review; the captured ownerRetry value applies only to this request.
+            check(prefs.edit().putBoolean("$id:$name:uncertain", true)
+                .putBoolean("$id:$name:owner_retry", false).commit())
             requestedInstall = true
             bridge(2, name, options(id).apply {
                 putLong("minimum_version_code", prefs.getLong("$id:$name:expectedVersion", 0))
@@ -333,6 +356,7 @@ class MigrationInstallJob : JobService() {
                         }
                         val state = queue.summary(id)
                         queue.changed(id)
+                        MigrationNotifications.selectionOpen(this, id, state)
                         if (state.getBoolean("complete")) {
                             queue.releaseCompletedPause(id)
                             MigrationNotifications.completed(this, id, state)

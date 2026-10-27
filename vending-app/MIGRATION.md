@@ -161,3 +161,91 @@ string-only installs remain valid, but modern Switch's unsupported hold is shown
 as an update-required error before apps are selected. Delay the final setup chunk:
 no hold release/terminal callback/summary notification until tx9 or explicit owner
 closure. Exercise a cable flow with final hold disabled and the owner closure UI.
+
+## Review round 2: wizard return and crash recovery
+
+An owner Retry is now consumed in the **same durable commit** that sets the
+uncertain-attempt marker, before enqueue IPC. Its captured value is sent with that
+one request's options. A lost/throwing reply followed by a missing receipt returns
+to owner review after restart; it cannot reuse the prior approval to reinstall an
+app the owner removed. A Retry waiting behind an older active download remains
+unconsumed until an enqueue is actually attempted.
+
+### Protected Transfer Phone completion contract
+
+Switch commonly skips finalhold9 in cable and apps-only flows. Transfer Phone must
+call this endpoint after its launched Switch wizard returns, for success **or**
+cancel, including a crash reported as a cancelled Activity result. This is an
+explicit lifecycle signal, not a timeout. This PR provides the FakeStore endpoint;
+the companion call site is wired by the parent workstream.
+
+- URI/authority: `content://com.android.vending.migration`.
+- Transport: `ContentResolver.call(uri, method, null, extras)` on an IO thread.
+- Method `getCurrentSession`: no extras (or an empty Bundle); reply `session_id`
+  String or null. This does not create a session. Query it **when the wizard
+  returns**, since Switch creates its session while the wizard is running.
+- Method `transferEnded`: extras `outcome` String, required and equal to `success`
+  or `cancelled`; `session_id` String, optional but recommended from the query.
+  Omitting the ID closes the current session. A supplied stale ID is rejected and
+  must not be retried by silently dropping the ID.
+- Accepted reply: `accepted=true`, `session_id`, `selection_closed=true`,
+  `already_closed` Boolean, and `transfer_outcome`. Duplicate returns are safe;
+  the first recorded outcome wins. It is a closure acknowledgement and contains
+  no `all_installed` or installation-success claim.
+- No session: `accepted=false`, `error=no_active_session`; no session is created.
+  A stale ID returns `accepted=false`, `error=stale_session`, current `session_id`.
+  Invalid methods/arguments/outcomes throw `IllegalArgumentException`.
+- Every method verifies the original Binder caller before clearing identity:
+  `ai.cyclon.migration` must be installed as a system/updated-system app, its UID
+  must equal the caller UID, and it must match Android's platform signature or
+  use `Process.SYSTEM_UID`. Other callers get `SecurityException`. A package name
+  in extras or a granted permission cannot authorize the call. No URI grants,
+  query, insert, update or delete operations are supported.
+
+The companion should declare this query if its package-visibility configuration
+does not already cover the provider:
+
+```xml
+<queries>
+    <provider android:authorities="com.android.vending.migration" />
+</queries>
+```
+
+The return handler can use the following Kotlin on an IO dispatcher (imports
+`android.net.Uri` and `android.os.Bundle`). If `session_id` is null, there is no
+app session to close; do not fabricate one or infer installation success.
+
+```kotlin
+val uri = Uri.parse("content://com.android.vending.migration")
+val resolver = context.contentResolver
+val sessionId = resolver.call(uri, "getCurrentSession", null, null)
+    ?.getString("session_id")
+if (sessionId != null) {
+    val reply = resolver.call(uri, "transferEnded", null, Bundle().apply {
+        putString("session_id", sessionId)
+        putString("outcome", if (wizardSucceeded) "success" else "cancelled")
+    })
+    // Check reply.accepted/error; installed-app results remain in APP_RESULTS.
+}
+```
+
+Closing selection persists the outcome, schedules reconciliation and lets existing
+per-app receipts decide completion. It does not cancel already selected installs
+or mark them installed. Neither inactivity nor resume14 closes a selection.
+
+While installs have settled but selection remains open, the job posts a
+**Finish app selection** notification. It opens that session's APP_RESULTS and
+lets the owner explicitly review/finish; clicking the notification alone does
+not close anything. It has its own durable receipt and cannot consume the final
+summary notification. A new chunk clears the prompt while installs run; terminal
+completion replaces it in the same notification slot. Permission/channel delivery
+requirements still apply.
+
+Parent device checks: leave cable finalhold disabled, return from the wizard and
+call the companion contract for success and cancel; verify closure and exactly one
+final summary after actual install attempts settle. Withhold the companion call,
+restart FakeStore after installs settle, and verify the non-terminal review prompt
+opens the right session without a terminal callback until explicit closure. Call
+from a non-companion/non-platform app and verify denial/no mutation. Finally lose
+an accepted owner-Retry reply, remove the app and its Aurora receipt, restart, and
+verify another enqueue requires a **new** Retry.
