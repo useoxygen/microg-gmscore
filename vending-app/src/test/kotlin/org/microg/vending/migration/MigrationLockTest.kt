@@ -92,6 +92,31 @@ class MigrationLockTest {
         assertTrue(queue.pending(newer).isEmpty())
     }
 
+    @Test fun aRefusalSurvivesWhenARateLimitEndsTheRoundMidSession() {
+        var aInstalls = 0
+        val queue = MigrationInstallQueue(context) { operation, name ->
+            fun state(status: String) = Bundle().apply {
+                putString("package_name", name); putString("status", status); putLong("version_code", 12)
+            }
+            when {
+                operation == 3 -> state(if (name == "a.example.app" && aInstalls >= 2) "queued" else "none")
+                name == "z.example.app" -> MigrationInstallQueue.unavailable(name, "rate_limited")
+                ++aInstalls == 1 -> MigrationInstallQueue.unavailable(name, "selected_version_unavailable")
+                else -> state("queued")
+            }
+        }
+        fun doc(name: String, version: Long) = Bundle().apply { putString("package_name", name); putLong("version_code", version) }
+        val older = queue.beginTransfer(); queue.select(listOf(doc("a.example.app", 12)))
+        val newer = queue.beginTransfer(); queue.select(listOf(doc("a.example.app", 13), doc("z.example.app", 1)))
+        assertFalse(queue.dispatchRound()) // Refusal for a, then 429 for z ends the round inside the newer session.
+        assertFalse(queue.dispatchRound()) // The older session's a now queues before z is tried again.
+        val receipt = queue.summary(newer).getParcelableArray("cyclon_app_results")!!.map { it as Bundle }
+            .single { it.getString("package_name") == "a.example.app" }
+        assertEquals("selected_version_unavailable", receipt.getString("error"))
+        assertFalse("a.example.app" in queue.pending(newer))
+        assertTrue(queue.pending(older).isEmpty())
+    }
+
     @Test fun auroraBridgeConnectsWithoutTheMainThread() {
         shadowOf(context.packageManager).installPackage(PackageInfo().apply {
             packageName = "com.aurora.store"

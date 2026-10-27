@@ -274,16 +274,23 @@ internal class MigrationInstallQueue(private val context: Context,
     fun dispatchRound(cancelled: () -> Boolean = { false }): Boolean {
         throttled = false
         var settled = true
-        val order = dispatchOrder()
-        for ((index, entry) in order.withIndex()) {
-            val (id, name) = entry
-            if (cancelled()) return false
-            if (!dispatch(name, id)) settled = false
-            if (throttled) return false // Play limits the store, not one session: pause every install.
-            // Freeze this session's receipts before another session can touch the same Aurora row.
-            if (order.getOrNull(index + 1)?.first != id) summary(id)
+        var unfrozen: String? = null
+        try {
+            val order = dispatchOrder()
+            for ((index, entry) in order.withIndex()) {
+                val (id, name) = entry
+                if (cancelled()) return false
+                unfrozen = id
+                if (!dispatch(name, id)) settled = false
+                if (throttled) return false // Play limits the store, not one session: pause every install.
+                // Freeze this session's receipts before another session can touch the same Aurora row.
+                if (order.getOrNull(index + 1)?.first != id) { summary(id); unfrozen = null }
+            }
+            return settled
+        } finally {
+            // A stop or 429 can end the round mid-session; the next round may start with another session.
+            unfrozen?.let { summary(it) }
         }
-        return settled
     }
     fun dispatch(name: String, id: String = session()): Boolean = synchronized(LOCK) {
         if (name !in pending(id)) return true
