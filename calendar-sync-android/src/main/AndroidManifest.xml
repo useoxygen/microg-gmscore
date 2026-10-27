@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <application>
+        <provider android:name="org.microg.gms.calendar.CalendarTransferProvider"
+            android:authorities="org.microg.gms.migration.calendar" android:exported="true"
+            android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <receiver android:name="org.microg.gms.calendar.CalendarAccountRemovedReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.accounts.action.ACCOUNT_REMOVED" />
