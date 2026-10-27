@@ -34,6 +34,15 @@ internal const val PAIR_CALLBACK = "com.google.android.gms.smartdevice.postsetup
 internal const val TARGET_DESCRIPTOR = "com.google.android.gms.smartdevice.d2d.internal.ITargetDeviceService"
 internal const val POST_DESCRIPTOR = "com.google.android.gms.smartdevice.postsetup.internal.IPostSetupService"
 
+internal fun switchSupportFeatures(service: GmsService): Array<Feature> = when (service) {
+    GmsService.SMARTDEVICE_D2D_TARGET_DEVICE -> arrayOf(
+        Feature("post_setup_restore_api", 1L), Feature("post_setup_pair", 4L),
+        Feature("post_setup_clean_restore_api", 1L), Feature("managed_account_setup", 2L)
+    )
+    GmsService.SMARTDEVICE_POST_SETUP -> arrayOf(Feature("post_setup_3p_restore_api", 1L), Feature("post_setup_api", 1L))
+    else -> emptyArray()
+}
+
 /** Signature-bound Switch target contracts. No Android paired state or account result is manufactured. */
 class SwitchSupportService : LifecycleService() {
     private val targets = mutableListOf<AndroidTargetDeviceBinder>()
@@ -50,8 +59,7 @@ class SwitchSupportService : LifecycleService() {
             }
             val direct = service == GmsService.SMARTDEVICE_TARGET_DIRECT_TRANSFER
             val target = service == GmsService.SMARTDEVICE_D2D_TARGET_DEVICE || direct
-            val features = if (direct) emptyArray() else if (target) arrayOf(Feature("post_setup_restore_api", 1L), Feature("post_setup_pair", 4L), Feature("post_setup_clean_restore_api", 1L))
-                else arrayOf(Feature("post_setup_3p_restore_api", 1L), Feature("post_setup_api", 1L))
+            val features = switchSupportFeatures(service)
             val uid = Binder.getCallingUid()
             val sessions = AndroidSessionStore(java.io.File(noBackupFilesDir, "migration-android"))
             val binder = if (target) AndroidTargetDeviceBinder(uid,

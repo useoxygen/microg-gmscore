@@ -1,11 +1,13 @@
 # Cyclon app compatibility, geofencing and Calendar sync
 
 This round adds per-app troubleshooting, explicit failed callbacks for unsupported
-location APIs, app-scoped geofencing, and opt-in Google Calendar downloads. Calendar
-sync uses the native account consent flow and the `calendar.readonly` OAuth scope.
-Only GET requests are issued; local edits are never uploaded. Downloaded calendars
-are read-only. Existing dirty event rows are preserved and reported as conflicts.
-Turning sync off cancels scheduling and retains downloaded data.
+location APIs, app-scoped geofencing, and opt-in Google Calendar sync. Download-only
+mode uses the native account consent flow and the `calendar.readonly` OAuth scope.
+An explicit two-way option authorizes the full `calendar` scope and uploads local
+event changes only in selected writable calendars. Conflicting changes are held
+for an owner choice. Turning sync off cancels scheduling and retains downloaded
+data. See [two-way Calendar sync](calendar-two-way.md) for the upload safety design,
+Transfer Phone contract, and additional acceptance scenarios.
 
 Calendar sync keeps recurring masters, moved/cancelled exceptions, timezones,
 all-day dates and popup reminders in Android's Calendar Provider. Every page is
@@ -18,7 +20,7 @@ full snapshot. Account removal withdraws its saved opt-in and status. Individual
 calendar sync choices are retained, including through removal/restoration; disabled
 calendars refresh their metadata without downloading or reconciling events.
 Response pages are bounded to 16 MiB, calendar lists to 200 entries, and a single
-calendar snapshot to 10,000 events/16 MiB of event text. Exceeding a bound fails
+calendar snapshot to 10,000 events/16 MiB of event data. Exceeding a bound fails
 without pruning or committing a new token; exceptionally large calendars need a
 staging implementation before those limits can be raised safely.
 
@@ -93,7 +95,9 @@ offline emulator evidence:
   its Google sign-in flow. Repeat network changes, paused push, permission denial,
   disabled/suspended app, and account authorization loss. Troubleshooting must
   report configuration/observations without claiming actual success.
-- Calendar authorization succeeds with the readonly scope. Verify pagination,
+- Calendar authorization succeeds with the readonly scope, and full scope only
+  after selecting two-way sync. Verify local create/edit/delete in Google Calendar
+  web and web changes in Etar, with no duplicates on a second sync. Verify pagination,
   all-day/DST events, moved/cancelled occurrences, reminders, remote changes and
   deletions, two accounts with identical remote event IDs, expired token recovery,
   permission loss, paused Android sync, offline retry and opt-out during a sync.

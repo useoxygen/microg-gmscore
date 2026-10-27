@@ -12,14 +12,29 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
     private val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
     private val prefix = "${account.type}:${account.name}:"
     val enabled get() = prefs.getBoolean(prefix + "enabled", false)
+    /** Absence is different from an owner's saved off choice. Transfers must never overwrite either choice. */
+    val hasSavedChoice get() = prefs.contains(prefix + "enabled")
+    val twoWay get() = prefs.getBoolean(prefix + "twoWay", false)
+    val uploadsHeld get() = prefs.getBoolean(prefix + "uploadsHeld", false)
+    val uploadsAllowed get() = enabled && twoWay && !uploadsHeld
+    val conflictResolutionGeneration get() = prefs.getLong(prefix + "conflictResolutionGeneration", 0)
+    val conflictKeepLocal get() = prefs.getBoolean(prefix + "conflictKeepLocal", false)
+    fun resolveConflicts(keepLocal: Boolean) {
+        check(prefs.edit().putLong(prefix + "conflictResolutionGeneration", conflictResolutionGeneration + 1)
+            .putBoolean(prefix + "conflictKeepLocal", keepLocal).commit())
+        refresh()
+    }
+    fun beginMigration() { check(prefs.edit().putBoolean(prefix + "uploadsHeld", true).commit()) }
+    /** Only the owner-facing settings screen releases a migration hold. */
+    fun ownerResumeUploads() { check(prefs.edit().putBoolean(prefix + "uploadsHeld", false).commit()); refresh() }
     var status: String
         get() = prefs.getString(prefix + "status", "")!!
         set(value) { prefs.edit().putString(prefix + "status", value).apply() }
     var lastSuccess: Long
         get() = prefs.getLong(prefix + "lastSuccess", 0)
         set(value) { prefs.edit().putLong(prefix + "lastSuccess", value).apply() }
-    fun configure(value: Boolean) {
-        check(prefs.edit().putBoolean(prefix + "enabled", value).commit())
+    fun configure(value: Boolean, twoWay: Boolean = this.twoWay) {
+        check(prefs.edit().putBoolean(prefix + "enabled", value).putBoolean(prefix + "twoWay", twoWay).commit())
         ContentResolver.setIsSyncable(account, AUTHORITY, if (value) 1 else 0)
         ContentResolver.setSyncAutomatically(account, AUTHORITY, value)
         if (value) {
@@ -36,6 +51,11 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
             putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
         })
     }
+    /** Transfer completion follows automatic sync settings; it does not simulate an owner pressing Refresh. */
+    fun refreshAfterTransfer() {
+        if (enabled && ContentResolver.getMasterSyncAutomatically() && ContentResolver.getSyncAutomatically(account, AUTHORITY))
+            ContentResolver.requestSync(account, AUTHORITY, Bundle.EMPTY)
+    }
     companion object {
         const val AUTHORITY = "com.android.calendar"
         /** Removal must withdraw the old opt-in, even if the same account is added again later. */
@@ -43,8 +63,8 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
             val accounts = AccountManager.get(context).accounts.toSet()
             val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
             val keys = prefs.all.keys
-            val removedPrefixes = keys.filter { it.endsWith(":enabled") }.mapNotNull { key ->
-                val identity = key.removeSuffix(":enabled")
+            val removedPrefixes = keys.filter { it.endsWith(":enabled") || it.endsWith(":uploadsHeld") }.mapNotNull { key ->
+                val identity = key.substringBeforeLast(':')
                 val separator = identity.indexOf(':')
                 if (separator <= 0 || separator == identity.lastIndex) null else {
                     val account = Account(identity.substring(separator + 1), identity.substring(0, separator))

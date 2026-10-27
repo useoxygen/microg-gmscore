@@ -20,14 +20,40 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -90,31 +116,33 @@ class ContactsSyncActivity : ComponentActivity() {
                 LaunchedEffect(Unit) { while (true) { delay(3000); revision++ } }
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         CyclonTextButton(onClick = { finish() }) { Text(stringResource(R.string.cyclon_back)) }
-                        Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineSmall)
-                        Text(stringResource(R.string.contacts_sync_header), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        CyclonOutlinedButton(onClick = { openUrl("https://contacts.google.com") }) {
-                            Text(stringResource(R.string.contacts_sync_open_google_contacts))
-                        }
-                        MigrationHold()
-                        failure?.let { ActivationProblem(it) }
-                        if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Header()
                         @Suppress("UNUSED_EXPRESSION")
                         revision
                         val accounts = AccountManager.get(this@ContactsSyncActivity).getAccountsByType("com.google")
-                        if (accounts.isEmpty()) {
-                            Text(stringResource(R.string.contacts_sync_no_accounts))
+                        // Platform settings aren't observable: read them here, on every revision tick, and pass them down.
+                        val privacy = ContactMigrationPrivacy(this@ContactsSyncActivity)
+                        if (com.google.android.gms.BuildConfig.DEBUG) DeveloperControls(privacy.developerControlsEnabled)
+                        if (!ContentResolver.getMasterSyncAutomatically() &&
+                            accounts.any { ContactSyncPreferences(this@ContactsSyncActivity, it).mode != SyncMode.OFF }) AutoSyncOff()
+                        if (privacy.held) MigrationHold()
+                        failure?.let { ActivationProblem(it) }
+                        if (accounts.isEmpty()) Notice(stringResource(R.string.contacts_sync_no_accounts)) {
                             CyclonOutlinedButton(onClick = {
                                 startActivity(Intent(Settings.ACTION_ADD_ACCOUNT).putExtra(Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google")))
                             }) { Text(stringResource(R.string.contacts_sync_add_account)) }
                         }
-                        for (account in accounts) AccountCard(account)
+                        // Keyed: each card keeps its own state (e.g. the photo) when accounts are added or removed.
+                        for (account in accounts) key(account.name) { AccountCard(account) }
+                        MoreOptions()
                     }
                 }
                 turnOff?.let { TurnOffDialog(it) }
                 if (resumeUploads) ResumeUploadsDialog()
                 newContactsConfirmation?.let { NewContactsDialog(it) }
+                if (autoSyncConfirmation) AutoSyncDialog()
             }
         }
     }
@@ -123,15 +151,118 @@ class ContactsSyncActivity : ComponentActivity() {
     private var newContactsConfirmation by mutableStateOf<Account?>(null)
 
     @Composable
-    private fun MigrationHold() {
-        val privacy = ContactMigrationPrivacy(this)
-        if (com.google.android.gms.BuildConfig.DEBUG) Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.contacts_sync_developer_controls), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            Switch(checked = privacy.developerControlsEnabled, onCheckedChange = { privacy.developerControlsEnabled = it; revision++ })
+    private fun Header() {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(56.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                Icon(painterResource(R.drawable.ic_contacts_sync_hero), contentDescription = null, modifier = Modifier.size(28.dp))
+            }
+            Text(stringResource(R.string.contacts_sync_title), style = MaterialTheme.typography.headlineMedium)
+            val link = stringResource(R.string.contacts_sync_header_link)
+            val full = stringResource(R.string.contacts_sync_header, link)
+            val start = full.indexOf(link)
+            val linkColor = MaterialTheme.colorScheme.onSurface
+            val text = remember(full, linkColor) {
+                buildAnnotatedString {
+                    append(full)
+                    if (start >= 0) {
+                        addStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline), start, start + link.length)
+                    }
+                }
+            }
+            // The whole sentence opens the link: focusable, Enter/Space and TalkBack come with clickable.
+            Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.clickable(onClickLabel = link) { openUrl(GOOGLE_CONTACTS) })
+            Text(stringResource(R.string.contacts_sync_header_note), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (privacy.held) {
-            Text(stringResource(R.string.contacts_sync_migration_held), color = MaterialTheme.colorScheme.error)
+    }
+
+    /** A tinted message block, optionally with actions below the text. */
+    @Composable
+    private fun Notice(text: String, title: String? = null, error: Boolean = false, actions: (@Composable RowScope.() -> Unit)? = null) {
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(if (error) Icons.Filled.Warning else Icons.Filled.Info, contentDescription = null, modifier = Modifier.size(20.dp),
+                    tint = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    title?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
+                    Text(text, style = MaterialTheme.typography.bodyMedium)
+                    actions?.let { Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), content = it) }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun DeveloperControls(enabled: Boolean) {
+        SwitchRow(stringResource(R.string.contacts_sync_developer_controls), null, enabled) {
+            ContactMigrationPrivacy(this).developerControlsEnabled = it; revision++
+        }
+    }
+
+    @Composable
+    private fun MigrationHold() {
+        Notice(stringResource(R.string.contacts_sync_migration_held), title = stringResource(R.string.contacts_sync_migration_held_title)) {
             CyclonOutlinedButton(onClick = { resumeUploads = true }) { Text(stringResource(R.string.contacts_sync_resume_uploads)) }
+        }
+    }
+
+    // Like Google's screen: account sync data is only refreshed automatically while Android's auto-sync is on.
+    @Composable
+    private fun AutoSyncOff() {
+        Notice(stringResource(R.string.contacts_sync_auto_sync_off)) {
+            CyclonOutlinedButton(onClick = { autoSyncConfirmation = true }) { Text(stringResource(R.string.contacts_sync_turn_on_auto_sync)) }
+        }
+    }
+
+    private var autoSyncConfirmation by mutableStateOf(false)
+
+    @Composable
+    private fun AutoSyncDialog() {
+        AlertDialog(onDismissRequest = { autoSyncConfirmation = false }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(stringResource(R.string.contacts_sync_auto_sync_dialog_title)) },
+            text = { Text(stringResource(R.string.contacts_sync_auto_sync_dialog_body)) },
+            confirmButton = { CyclonTextButton(onClick = {
+                runCatching { ContentResolver.setMasterSyncAutomatically(true) }
+                autoSyncConfirmation = false; revision++
+            }) { Text(stringResource(R.string.contacts_sync_turn_on)) } },
+            dismissButton = { CyclonTextButton(onClick = { autoSyncConfirmation = false }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
+    }
+
+    @Composable
+    private fun MoreOptions() {
+        Column {
+            Text(stringResource(R.string.contacts_sync_more_title), style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+            LinkRow(stringResource(R.string.contacts_sync_open_google_contacts), stringResource(R.string.contacts_sync_open_google_contacts_summary)) {
+                openUrl(GOOGLE_CONTACTS)
+            }
+            LinkRow(stringResource(R.string.contacts_sync_account_settings), stringResource(R.string.contacts_sync_account_settings_summary)) {
+                runCatching { startActivity(Intent(Settings.ACTION_SYNC_SETTINGS)) }
+            }
+        }
+    }
+
+    @Composable
+    private fun LinkRow(title: String, summary: String, onClick: () -> Unit) {
+        Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                Text(summary, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    @Composable
+    private fun SwitchRow(title: String, summary: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+        Row(Modifier.fillMaxWidth().toggleable(value = checked, enabled = !busy, role = Role.Switch, onValueChange = onChange)
+            .padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                summary?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            Switch(checked = checked, onCheckedChange = null, enabled = !busy)
         }
     }
 
@@ -167,7 +298,9 @@ class ContactsSyncActivity : ComponentActivity() {
 
     @Composable
     private fun ActivationProblem(reason: ActivationFailure) {
-        Text(stringResource(when (reason) {
+        val retry = retryChoice
+        val hasAction = reason == ActivationFailure.PERMISSION || retry != null
+        Notice(stringResource(when (reason) {
             ActivationFailure.PERMISSION -> R.string.contacts_sync_enable_permission
             ActivationFailure.CANCELLED -> R.string.contacts_sync_enable_cancelled
             ActivationFailure.AUTHORIZATION -> R.string.contacts_sync_enable_authorization
@@ -180,110 +313,159 @@ class ContactsSyncActivity : ComponentActivity() {
             ActivationFailure.ACCOUNT_REMOVED -> R.string.contacts_sync_enable_account_removed
             ActivationFailure.LOCAL -> R.string.contacts_sync_enable_local
             ActivationFailure.TIMEOUT -> R.string.contacts_sync_enable_timeout
-        }), color = MaterialTheme.colorScheme.error)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        }), error = true, actions = if (!hasAction) null else ({
             if (reason == ActivationFailure.PERMISSION) CyclonOutlinedButton(onClick = { openAppPermissions() }) {
                 Text(stringResource(R.string.contacts_sync_open_permissions))
             }
-            retryChoice?.let { choice ->
+            retry?.let { choice ->
                 CyclonOutlinedButton(onClick = { choose(choice.first, choice.second) }, enabled = !busy) {
                     Text(stringResource(R.string.contacts_sync_retry))
                 }
             }
-        }
+        }))
     }
 
     @Composable
     private fun AccountCard(account: Account) {
         val prefs = ContactSyncPreferences(this, account)
         val on = prefs.mode != SyncMode.OFF
+        val status = statusOf(account, prefs)
+        val toggleLabel = stringResource(R.string.contacts_sync_toggle_description, account.name)
         OutlinedCard(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(account.name, style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(if (on) R.string.contacts_sync_switch_on else R.string.contacts_sync_switch_off),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Avatar(account)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    // Like Google's card: the account's name above its email address, when microG knows the name.
+                    val name = remember(account.name) {
+                        runCatching { PeopleManager.getDisplayName(this@ContactsSyncActivity, account.name) }.getOrNull()?.takeIf { it.isNotBlank() }
                     }
-                    Switch(checked = on, enabled = !busy, onCheckedChange = { checked ->
-                        // Like Google's sync, turning it on keeps both sides in sync.
-                        if (checked) choose(account, SyncMode.TWO_WAY) else confirmTurnOff(account)
-                    })
+                    Text(name ?: account.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (name != null) Text(account.name, style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    StatusLine(status, prefs)
                 }
-                if (!on) return@Column
-                HorizontalDivider()
-                SyncStatus(account, prefs)
-                HorizontalDivider()
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.contacts_sync_upload_title))
-                        Text(stringResource(if (prefs.mode == SyncMode.TWO_WAY) R.string.contacts_sync_upload_on else R.string.contacts_sync_upload_off),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                    }
-                    Switch(checked = prefs.mode == SyncMode.TWO_WAY, enabled = !busy, onCheckedChange = { upload ->
-                        choose(account, if (upload) SyncMode.TWO_WAY else SyncMode.DOWNLOAD)
-                    })
-                }
+                Switch(checked = on, enabled = !busy, modifier = Modifier.semantics { contentDescription = toggleLabel }, onCheckedChange = { checked ->
+                    // Like Google's sync, turning it on keeps both sides in sync.
+                    if (checked) choose(account, SyncMode.TWO_WAY) else confirmTurnOff(account)
+                })
+            }
+            if (busy && (pending == null || pending?.first == account)) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (!on) return@OutlinedCard
+            problemOf(status)?.let { problem ->
+                Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) { ProblemNotice(account, prefs, status, problem) }
+            }
+            HorizontalDivider()
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(stringResource(R.string.contacts_sync_options_title), style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                SwitchRow(stringResource(R.string.contacts_sync_upload_title),
+                    stringResource(if (prefs.mode == SyncMode.TWO_WAY) R.string.contacts_sync_upload_on else R.string.contacts_sync_upload_off),
+                    prefs.mode == SyncMode.TWO_WAY) { upload -> choose(account, if (upload) SyncMode.TWO_WAY else SyncMode.DOWNLOAD) }
                 // Developer fixture control (main's Android Switch work); customers always upload new contacts.
                 if (prefs.mode == SyncMode.TWO_WAY && ContactMigrationPrivacy(this@ContactsSyncActivity).developerControlsEnabled) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(stringResource(R.string.contacts_sync_upload_new), Modifier.weight(1f))
-                        Switch(checked = prefs.uploadNewContacts, enabled = !busy, onCheckedChange = { enabled ->
-                            if (enabled) newContactsConfirmation = account else { prefs.uploadNewContacts = false; revision++ }
-                        })
+                    SwitchRow(stringResource(R.string.contacts_sync_upload_new), null, prefs.uploadNewContacts) { enabled ->
+                        if (enabled) newContactsConfirmation = account else { prefs.uploadNewContacts = false; revision++ }
                     }
+                }
+            }
+            HorizontalDivider()
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.End) {
+                CyclonTextButton(onClick = { prefs.refresh(); revision++ }, enabled = !busy && status != "active") {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.contacts_sync_refresh))
                 }
             }
         }
     }
 
+    /** The account's Google profile photo (cached, else fetched once), like Google's card; the initial until then. */
     @Composable
-    private fun SyncStatus(account: Account, prefs: ContactSyncPreferences) {
-        val active = ContentResolver.isSyncActive(account, ContactSyncPreferences.AUTHORITY) ||
-            ContentResolver.isSyncPending(account, ContactSyncPreferences.AUTHORITY) && prefs.lastSuccess == 0L
-        val status = when {
+    private fun Avatar(account: Account) {
+        var photo by remember(account.name) { mutableStateOf<Bitmap?>(null) }
+        LaunchedEffect(account.name) {
+            photo = withContext(Dispatchers.IO) {
+                runCatching {
+                    PeopleManager.getOwnerAvatarBitmap(this@ContactsSyncActivity, account.name, false)
+                        ?: PeopleManager.getOwnerAvatarBitmap(this@ContactsSyncActivity, account.name, true)
+                }.getOrNull()
+            }
+        }
+        Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            val image = photo
+            if (image != null) Image(image.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else Text(account.name.take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+        }
+    }
+
+    private fun statusOf(account: Account, prefs: ContactSyncPreferences): String {
+        if (prefs.mode == SyncMode.OFF) return "off"
+        // Only a running sync is "in progress". Android keeps failed syncs queued for retry, so counting a
+        // queued one would hide a stored problem (e.g. sign-in needed) and disable Sync now indefinitely.
+        val active = ContentResolver.isSyncActive(account, ContactSyncPreferences.AUTHORITY)
+        return when {
             !hasContactsPermission -> "permission"
             active -> "active"
+            prefs.status.isNotEmpty() && prefs.status != "success" -> prefs.status
+            !ContentResolver.getMasterSyncAutomatically() -> "auto_off"
             else -> prefs.status
         }
+    }
+
+    private fun problemOf(status: String): Int? = when (status) {
+        "permission" -> R.string.contacts_sync_permission_needed
+        "partial" -> R.string.contacts_sync_partial
+        "conflict" -> R.string.contacts_sync_conflict
+        "uncertain" -> R.string.contacts_sync_uncertain
+        "authorization" -> R.string.contacts_sync_authorization
+        "network" -> R.string.contacts_sync_network
+        "local" -> R.string.contacts_sync_local
+        "needs_review" -> R.string.contacts_sync_needs_review
+        "import_review" -> R.string.contacts_sync_import_review
+        "needs_update" -> R.string.contacts_sync_needs_update
+        "two_way_unavailable" -> R.string.contacts_sync_two_way_unavailable
+        else -> null
+    }
+
+    // Informational states: the sync works, some contacts just need a look.
+    private fun isWarning(status: String) = problemOf(status) != null && status !in listOf("partial", "uncertain", "conflict")
+
+    /** Google's one-line status under the account: "Sync on • Last sync 5 minutes ago". */
+    @Composable
+    private fun StatusLine(status: String, prefs: ContactSyncPreferences) {
         val lastSync = if (prefs.lastSuccess <= 0) null
             else if (System.currentTimeMillis() - prefs.lastSuccess < DateUtils.MINUTE_IN_MILLIS) stringResource(R.string.contacts_sync_last_sync_just_now)
             else stringResource(R.string.contacts_sync_last_sync, DateUtils.getRelativeTimeSpanString(prefs.lastSuccess,
                 System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString())
-        val problem = when (status) {
-            "permission" -> R.string.contacts_sync_permission_needed
-            "partial" -> R.string.contacts_sync_partial
-            "conflict" -> R.string.contacts_sync_conflict
-            "uncertain" -> R.string.contacts_sync_uncertain
-            "authorization" -> R.string.contacts_sync_authorization
-            "network" -> R.string.contacts_sync_network
-            "local" -> R.string.contacts_sync_local
-            "needs_review" -> R.string.contacts_sync_needs_review
-            "import_review" -> R.string.contacts_sync_import_review
-            "needs_update" -> R.string.contacts_sync_needs_update
-            "two_way_unavailable" -> R.string.contacts_sync_two_way_unavailable
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        val (icon: Painter?, tint: Color, label: String) = when {
+            status == "off" -> Triple(null, muted, stringResource(R.string.contacts_sync_switch_off))
+            status == "active" -> Triple(painterResource(R.drawable.ic_contacts_sync_progress), MaterialTheme.colorScheme.primary,
+                stringResource(R.string.contacts_sync_in_progress))
+            status == "permission" -> Triple(rememberVectorPainter(Icons.Filled.Warning), MaterialTheme.colorScheme.error,
+                stringResource(R.string.contacts_sync_status_permission))
+            isWarning(status) -> Triple(rememberVectorPainter(Icons.Filled.Warning), MaterialTheme.colorScheme.error,
+                stringResource(R.string.contacts_sync_status_trouble))
+            status == "auto_off" -> Triple(rememberVectorPainter(Icons.Filled.Info), muted, stringResource(R.string.contacts_sync_auto_sync_off_status))
+            else -> Triple(rememberVectorPainter(Icons.Filled.CheckCircle), MaterialTheme.colorScheme.primary, stringResource(R.string.contacts_sync_switch_on))
+        }
+        val detail = if (status == "active" || status == "off") null else lastSync ?: stringResource(R.string.contacts_sync_ready).takeIf { status != "permission" && !isWarning(status) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            icon?.let { Icon(it, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp)) }
+            Text(if (detail == null) label else stringResource(R.string.contacts_sync_status_bullet, label, detail),
+                style = MaterialTheme.typography.bodyMedium, color = muted)
+        }
+    }
+
+    @Composable
+    private fun ProblemNotice(account: Account, prefs: ContactSyncPreferences, status: String, problem: Int) {
+        val action: (@Composable RowScope.() -> Unit)? = when (status) {
+            "permission" -> ({ CyclonOutlinedButton(onClick = { openAppPermissions() }) { Text(stringResource(R.string.contacts_sync_open_permissions)) } })
+            "authorization" -> ({ CyclonOutlinedButton(onClick = { choose(account, prefs.mode) }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_reconnect)) } })
+            "needs_update" -> ({ CyclonOutlinedButton(onClick = { prefs.refresh(); revision++ }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_retry)) } })
             else -> null
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(when {
-                    status == "active" -> stringResource(R.string.contacts_sync_in_progress)
-                    problem == null -> lastSync ?: stringResource(R.string.contacts_sync_ready)
-                    else -> stringResource(problem)
-                }, color = if (problem != null && status !in listOf("partial", "uncertain")) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurface)
-                if (problem != null && lastSync != null) Text(lastSync, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium)
-            }
-            CyclonTextButton(onClick = { prefs.refresh(); revision++ }, enabled = !busy && status != "active") {
-                Text(stringResource(R.string.contacts_sync_refresh))
-            }
-        }
-        when (status) {
-            "permission" -> CyclonOutlinedButton(onClick = { openAppPermissions() }) { Text(stringResource(R.string.contacts_sync_open_permissions)) }
-            "authorization" -> CyclonOutlinedButton(onClick = { choose(account, prefs.mode) }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_reconnect)) }
-            "needs_update" -> CyclonOutlinedButton(onClick = { prefs.refresh(); revision++ }, enabled = !busy) { Text(stringResource(R.string.contacts_sync_retry)) }
-        }
+        Notice(stringResource(problem), error = isWarning(status) || status == "permission", actions = action)
     }
 
     @Composable
@@ -349,6 +531,8 @@ class ContactsSyncActivity : ComponentActivity() {
 
     private fun openAppPermissions() =
         startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+
+    private companion object { const val GOOGLE_CONTACTS = "https://contacts.google.com" }
 
     private fun openUrl(url: String) = runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 

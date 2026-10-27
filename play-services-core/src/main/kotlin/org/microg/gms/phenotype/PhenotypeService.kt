@@ -25,6 +25,8 @@ private const val TAG = "PhenotypeService"
 class PhenotypeService : BaseService(TAG, GmsService.PHENOTYPE) {
     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest?, service: GmsService?) {
         val packageName = PackageUtils.getAndCheckCallingPackage(this, request?.packageName)
+        // get_storage_info_api@1 (tx27) requires persistent CE/DE secrets and the
+        // matching phenotype_shared file protocol, not an empty storage-info blob.
         callback.onPostInitComplete(0, PhenotypeServiceImpl(packageName, this).asBinder(), null)
     }
 }

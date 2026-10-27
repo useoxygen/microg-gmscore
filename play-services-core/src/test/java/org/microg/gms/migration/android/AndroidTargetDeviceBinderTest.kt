@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
 import com.google.android.gms.common.api.Status
+import com.google.android.gms.common.internal.safeparcel.SafeParcelReader
+import com.google.android.gms.common.internal.safeparcel.SafeParcelWriter
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +26,55 @@ class AndroidTargetDeviceBinderTest {
             data.writeInterfaceToken(descriptor); data.write()
             assertTrue(binder.transact(code, data, reply, 0)); reply.readException()
         } finally { data.recycle(); reply.recycle() }
+    }
+    @Test fun managedAccountQueryReturnsTheRealEmptyPersistedSourceState() {
+        var calls = 0
+        val callback = object : Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                data.enforceInterface(AndroidTargetDeviceBinder.TARGET_CALLBACK)
+                assertEquals(7, code); assertEquals(IBinder.FLAG_ONEWAY, flags)
+                assertEquals(1, data.readInt())
+                val status = Status.CREATOR.createFromParcel(data)
+                assertEquals(0, status.statusCode); assertNull(status.resolution)
+                assertEquals(1, data.readInt()) // SUCCESS/null crashes Switch's ejn consumer.
+                val end = SafeParcelReader.readObjectHeader(data)
+                var mode: Int? = null
+                while (data.dataPosition() < end) {
+                    val header = SafeParcelReader.readHeader(data)
+                    // Switch jvz fields1/3 are nullable strings, omitted by Google's writer.
+                    assertEquals(2, header and 0xffff)
+                    mode = SafeParcelReader.readInt(data, header)
+                }
+                assertEquals(end, data.dataPosition()); assertEquals(0, mode)
+                data.requireEnd(); calls++; return true
+            }
+        }
+        AndroidTargetDeviceBinder(Binder.getCallingUid()).use { target ->
+            // Switch uses one-way target tx16 and prefixes SafeParcel ApiMetadata with magic.
+            val data = Parcel.obtain()
+            try {
+                data.writeInterfaceToken(TARGET_DESCRIPTOR); data.writeStrongBinder(callback)
+                data.writeInt(1); data.writeInt(-204102970)
+                val start = SafeParcelWriter.writeObjectHeader(data)
+                SafeParcelWriter.write(data, 2, false)
+                SafeParcelWriter.finishObjectHeader(data, start)
+                assertTrue(target.transact(16, data, null, IBinder.FLAG_ONEWAY))
+            } finally { data.recycle() }
+        }
+        assertEquals(1, calls)
+    }
+
+    @Test fun malformedManagedAccountQueryCannotEmitASuccessCallback() {
+        var called = false
+        val callback = object : Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                called = true; return true
+            }
+        }
+        AndroidTargetDeviceBinder(Binder.getCallingUid()).use { target ->
+            assertThrows(Exception::class.java) { call(target, 16) { writeStrongBinder(callback); writeInt(0); writeInt(77) } }
+        }
+        assertFalse(called)
     }
     @Test fun startServiceOnSourceFailsThroughTheConfirmedCallbackWithoutStartingAnything() {
         var called = false
