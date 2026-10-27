@@ -25,7 +25,10 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
 
     // Unverified imports are not sync-owned, even source-less rows above the
     // adoption floor. Turning sync off must retain those copies and their edits.
-    private val rawScope get() = "$accountScope AND ${RawContacts.SYNC4} IN (?,?)"
+    private val rawScope get() = "$accountScope AND ${RawContacts.SYNC4} IN (?,?)" +
+        // Adopted but never sent (no Google ID, nothing in flight): Google has no copy, and a sync may adopt a row
+        // after the warning was counted. Keep it; turning sync back on uploads it.
+        " AND NOT (${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts.SYNC3} IS NULL)"
     // Groups sync created (labels and imported system groups), plus new labels it would adopt (AndroidGroupStore.groups()).
     private val groupScope get() = "$accountScope AND (${Groups.SYNC4} IN (?,?) OR (${Groups.SYNC4} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND " +
         "${Groups.SOURCE_ID} IS NULL AND ${Groups._ID}>${prefs.privateGroupAdoptionFloor} AND ${Groups.DIRTY}=1))"

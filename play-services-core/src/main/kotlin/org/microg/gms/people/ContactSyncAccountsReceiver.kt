@@ -14,7 +14,12 @@ class ContactSyncAccountsReceiver : BroadcastReceiver() {
         if (intent.action !in setOf("android.accounts.LOGIN_ACCOUNTS_CHANGED", Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED)) return
         val pending = goAsync()
         worker.execute {
-            try { AccountManager.get(context).getAccountsByType("com.google").forEach { ContactSyncPreferences(context, it).ensureDefaults() } }
+            try {
+                val accounts = AccountManager.get(context).getAccountsByType("com.google")
+                accounts.forEach { ContactSyncPreferences(context, it).ensureDefaults() }
+                // The automatic device-contacts opt-in belongs to one account; it ends when that account is removed.
+                DeviceContacts.autoAccount(context)?.let { name -> if (accounts.none { it.name == name }) DeviceContacts.setAutoAccount(context, null) }
+            }
             finally { pending.finish() }
         }
     }
