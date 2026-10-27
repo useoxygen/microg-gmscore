@@ -11,12 +11,35 @@ tasks.register('testVersionAllocation') {
     doLast {
         def release = new JsonSlurper().parse(file('../version.json'))
         def allocated = cyclonValidateVersion(release, 40226)
-        // Every shipped APK must be replaceable: 252432075/84022675 is the last 25.24 delivery.
-        assert allocated.gmsVersionCode > 252432075
-        assert allocated.vendingVersionCode > 84022675
+        // Owner-reported installed baseline for this delivery; source checks do
+        // not establish signing, installation or device acceptance.
+        def installed = [gmsVersionCode: 254132096, vendingVersionCode: 84022699]
+        def assertUpgradeFromInstalled = { Map candidate ->
+            installed.each { name, code ->
+                assert candidate[name] > code : "${name} must advance installed ${code}"
+            }
+        }
+        assertUpgradeFromInstalled(allocated)
+        // These are valid allocations but cannot replace the installed APKs.
+        // Exercise each floor independently, including equality (no upgrade).
+        installed.each { name, code ->
+            [code - 1, code].each { staleCode ->
+                def stale = cyclonValidateVersion(release + [(name): staleCode], 40226)
+                boolean rejected = false
+                try {
+                    assertUpgradeFromInstalled(stale)
+                } catch (AssertionError expected) {
+                    rejected = true
+                }
+                assert rejected : "The installed-version floor accepted ${name}=${staleCode}"
+            }
+        }
         assert allocated.gmsCode == Integer.parseInt(release.reportedGmsVersion.replaceAll('\\.', ''))
         // Stay below Cloud Messaging's 26.12 gate until microG implements that service.
         assert allocated.gmsCode < 261200
+        // First delivery after the exhausted FakeStore block is valid; neither
+        // its compatibility version nor the reported GMS API version must rise.
+        assert cyclonValidateVersion(release + [vendingVersionCode: 84022700], 40226).vendingVersionCode == 84022700
         [
             [format: 1],
             [reportedGmsVersion: '25.41'],
@@ -24,7 +47,7 @@ tasks.register('testVersionAllocation') {
             [gmsVersionCode: 252432076],
             [gmsVersionCode: (allocated.gmsCode * 1000 + 1000)],
             [vendingVersionCode: 84022634],
-            [vendingVersionCode: 84022700],
+            [vendingVersionCode: 84022800],
             [gmsVersionCode: "${allocated.gmsVersionCode}"],
             [upstreamTag: 'v0.3.17']
         ].each { change ->
