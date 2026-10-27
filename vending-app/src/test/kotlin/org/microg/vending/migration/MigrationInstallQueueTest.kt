@@ -64,6 +64,33 @@ class MigrationInstallQueueTest {
         assertTrue(queue.pending().isEmpty())
         assertEquals(listOf(3, 2, 3, 3, 2), calls)
     }
+    @Test fun playKeepsRefusingThenTheOwnerApprovesTheirGoogleAccount() {
+        val installs = mutableListOf<Boolean>()
+        var limited = true
+        val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, name ->
+            when {
+                operation == 3 -> state("none")
+                limited -> MigrationInstallQueue.unavailable(name, "rate_limited")
+                else -> state("queued")
+            }
+        }
+        queue.sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") }
+        queue.select(selected())
+        repeat(3) { queue.dispatch("org.example.app") }
+        // Three refusals: a visible failure the owner can retry, no longer silently pending.
+        assertTrue(queue.pending().isEmpty())
+        val failed = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertEquals("rate_limited", failed.getString("error")); assertTrue(failed.getBoolean("terminal"))
+        assertEquals(listOf("org.example.app"), queue.retryDocuments().map { it.getString("package_name") })
+        assertTrue(queue.ownerAccountSupported())
+        limited = false
+        queue.retry(queue.currentSessionId()!!, ownerAccount = true)
+        assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(false, false, false, true), installs)
+        // A plain retry afterwards is anonymous again.
+        queue.retry(queue.currentSessionId()!!)
+        assertEquals(emptyList<Bundle>(), queue.retryDocuments())
+    }
     @Test fun queueNeverReportsDownloadingOrOldInstalledVersionAsComplete() {
         val queue = MigrationInstallQueue(context) { _, _ -> state("downloading", false, 11) }
         queue.select(selected()); assertFalse(queue.summary().getBoolean("all_installed"))

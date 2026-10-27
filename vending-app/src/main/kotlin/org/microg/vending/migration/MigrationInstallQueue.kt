@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class MigrationInstallQueue(private val context: Context,
     private val controlCall: ((Int, Bundle) -> Bundle)? = null,
     private val storeCall: ((Int, String) -> Bundle)? = null) {
+    /** Tests: the options each faked [storeCall] request would carry to Aurora. */
+    internal var sentOptions: ((Int, Bundle?) -> Unit)? = null
     private val prefs get() = context.getSharedPreferences("migration-installs", Context.MODE_PRIVATE)
     /** Play answered 429 since the job last cleared this; stop the round and wait before asking again. */
     @Volatile var throttled = false
@@ -166,13 +168,17 @@ internal class MigrationInstallQueue(private val context: Context,
         prefs.getString("$id:$name:status", null) in setOf("failed", "cancelled", "unavailable", "owner_action_required") &&
             !prefs.getBoolean("$id:$name:ever_installed", false)
     }.map { name -> document(id, name) }
-    fun retry(id: String, packageName: String? = null) = synchronized(LOCK) {
+    /** Whether Aurora can install with the phone's Google account once the owner approves it. */
+    fun ownerAccountSupported(): Boolean = control(7, Bundle()).getBoolean("owner_account_fallback")
+    /** [ownerAccount]: the owner approved their Google account for these apps, the fallback after anonymous tries. */
+    fun retry(id: String, packageName: String? = null, ownerAccount: Boolean = false) = synchronized(LOCK) {
         require(id in sessions())
         val names = retryDocuments(id).map { it.getString("package_name")!! }.filter { packageName == null || it == packageName }
-        if (names.isNotEmpty()) control(6, options(id).apply { putBoolean("force_refresh", true) })
+        if (names.isNotEmpty() && !ownerAccount) control(6, options(id).apply { putBoolean("force_refresh", true) })
         val edit = prefs.edit().putStringSet("$id:pending", pending(id) + names)
         for (name in names) edit.putBoolean("$id:$name:terminal", false).putBoolean("$id:$name:uncertain", false)
-            .putBoolean("$id:$name:owner_retry", true)
+            .putBoolean("$id:$name:owner_retry", true).putBoolean("$id:$name:owner_account", ownerAccount)
+            .putInt("$id:$name:throttle_count", 0)
         check(edit.commit())
         changed(id); schedule()
     }
@@ -326,15 +332,19 @@ internal class MigrationInstallQueue(private val context: Context,
             bridge(2, name, options(id).apply {
                 putLong("minimum_version_code", prefs.getLong("$id:$name:expectedVersion", 0))
                 putBoolean("owner_approved_retry", ownerRetry)
+                putBoolean("owner_account_approved", prefs.getBoolean("$id:$name:owner_account", false))
             })
         } else current
         if (result.getString("error") == "store_unavailable") return false
         if (requestedInstall && result.getString("error") == RATE_LIMITED) {
             // Aurora refused before enqueuing, so this is no uncertain install. Keep it pending, and keep the owner's retry.
             throttled = true
+            val refusals = prefs.getInt("$id:$name:throttle_count", 0) + 1
             check(prefs.edit().putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:owner_retry", ownerRetry)
-                .putLong("$id:$name:throttled_at", System.currentTimeMillis()).commit())
-            return false
+                .putLong("$id:$name:throttled_at", System.currentTimeMillis()).putInt("$id:$name:throttle_count", refusals).commit())
+            if (refusals < MAX_RATE_LIMITED) return false
+            // Play keeps refusing: show the owner a failure they can retry, or install with their Google account.
+            result = Bundle(result).apply { putString("status", "unavailable"); putBoolean("terminal", true) }
         }
         if (requestedInstall && result.getString("status") == "installed" && !satisfies(name, result, id) &&
             (result.getBoolean("package_present") || result.getBoolean("installed"))) {
@@ -349,7 +359,8 @@ internal class MigrationInstallQueue(private val context: Context,
         !retainTarget
     }
     fun bridge(operation: Int, name: String, options: Bundle? = null): Bundle = try {
-        storeCall?.invoke(operation, name) ?: AuroraMigrationClient(context).use { it.call(operation, name, options) }
+        storeCall?.let { sentOptions?.invoke(operation, options); it(operation, name) }
+            ?: AuroraMigrationClient(context).use { it.call(operation, name, options) }
     } catch (_: Exception) { unavailable(name, "store_unavailable") }
     fun control(operation: Int, options: Bundle = options(session())): Bundle = try {
         controlCall?.invoke(operation, options) ?: AuroraMigrationClient(context).use { it.control(operation, options) }
@@ -365,6 +376,7 @@ internal class MigrationInstallQueue(private val context: Context,
         internal val LOCK = Any()
         private const val JOB = 700714
         private const val RATE_LIMITED = "rate_limited"
+        private const val MAX_RATE_LIMITED = 3
         private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
         private val TERMINAL = setOf("failed", "cancelled", "unavailable", "removed", "owner_action_required")
         fun unavailable(name: String, reason: String) = Bundle().apply {

@@ -55,6 +55,13 @@ When Play answers 429, Aurora refuses before enqueuing. The app stays pending,
 not failed. The job stops dispatching in every session, waits 30 s, and then
 tries the most recently refused apps last.
 
+After three refusals, the app becomes a visible failure. Besides Retry, the
+results screen then offers "Use Google account" (only if Aurora reports
+`owner_account_fallback`). After the owner confirms, those failed apps are
+installed with the phone's Google account through Aurora's existing consented
+owner path; paid apps are never bought. Each approval covers one retry of the
+selected apps. A plain Retry is anonymous again.
+
 Before enqueue IPC, FakeStore persists an uncertain-attempt marker. A later
 Aurora status reconciles a queued/running/finished request without reenqueuing.
 If its reply was lost and Aurora no longer has a receipt, another install requires

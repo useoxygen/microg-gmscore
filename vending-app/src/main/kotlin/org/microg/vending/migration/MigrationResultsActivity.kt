@@ -33,6 +33,8 @@ class MigrationResultsActivity : ComponentActivity() {
             var sessionId by remember { mutableStateOf(intent.getStringExtra("session_id")) }
             var results by remember { mutableStateOf(emptyList<Bundle>()) }
             var retryable by remember { mutableStateOf(emptySet<String>()) }
+            var ownerAccountSupported by remember { mutableStateOf(false) }
+            var confirmOwnerAccount by remember { mutableStateOf(false) }
             var complete by remember { mutableStateOf(false) }
             var selectionClosed by remember { mutableStateOf(false) }
             var refresh by remember { mutableStateOf(0) }
@@ -58,14 +60,22 @@ class MigrationResultsActivity : ComponentActivity() {
                 retryable = receipt.second?.let { id ->
                     withContext(Dispatchers.IO) { queue.retryDocuments(id).mapNotNull { it.getString("package_name") }.toSet() }
                 }.orEmpty()
+                if (retryable.isNotEmpty()) ownerAccountSupported = withContext(Dispatchers.IO) { queue.ownerAccountSupported() }
             }
-            fun retry(packageName: String? = null) {
+            fun retry(packageName: String? = null, ownerAccount: Boolean = false) {
                 val id = sessionId ?: return
                 scope.launch {
-                    withContext(Dispatchers.IO) { queue.retry(id, packageName) }
+                    withContext(Dispatchers.IO) { queue.retry(id, packageName, ownerAccount) }
                     refresh++
                 }
             }
+            if (confirmOwnerAccount) AlertDialog(
+                onDismissRequest = { confirmOwnerAccount = false },
+                title = { Text("Use your Google account?") },
+                text = { Text(MigrationResultText.ownerAccountConsent(retryable.size)) },
+                confirmButton = { TextButton(onClick = { confirmOwnerAccount = false; retry(ownerAccount = true) }) { Text("Install") } },
+                dismissButton = { TextButton(onClick = { confirmOwnerAccount = false }) { Text("Cancel") } },
+            )
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.padding(20.dp).systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -84,7 +94,10 @@ class MigrationResultsActivity : ComponentActivity() {
                             }
                         }
                         if (results.isEmpty()) Text("No apps were selected for this transfer.")
-                        if (retryable.isNotEmpty()) Button(onClick = { retry() }) { Text("Retry failed apps") }
+                        if (retryable.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { retry() }) { Text("Retry failed apps") }
+                            if (ownerAccountSupported) OutlinedButton(onClick = { confirmOwnerAccount = true }) { Text("Use Google account") }
+                        }
                         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             items(results, key = { it.getString("package_name").orEmpty() }) { result ->
                                 val name = result.getString("package_name").orEmpty()
@@ -123,12 +136,18 @@ class MigrationResultsActivity : ComponentActivity() {
 }
 
 internal object MigrationResultText {
+    fun ownerAccountConsent(count: Int) = (if (count == 1) "App Store will install the app that failed" else "App Store will install the $count apps that failed") +
+        " with the Google account on this phone. They are added to your Google Play library, as on a new Pixel. Paid apps are not bought."
     fun description(result: Bundle): String {
         if (result.getBoolean("installed")) return "Installed and verified"
         return when (result.getString("error") ?: result.getString("errorCode")) {
             "anonymous_sign_in_required", "not_signed_in", "session_expired" -> "App Store could not start an anonymous session. Retry when it is available."
             "store_unavailable", "unavailable", "lookup_timeout", "network_error", "network" -> "App Store is unavailable. Check your connection and retry."
-            "rate_limited" -> "App Store is busy. Try again later."
+            "rate_limited" -> "App Store is busy. Retry later, or install with your Google account."
+            "no_google_account" -> "Sign in to a Google account on this phone to install this app with it."
+            "several_google_accounts" -> "This phone has more than one Google account. Install this app from App Store."
+            "google_sign_in_needed" -> "Sign in to your Google account again, then retry."
+            "google_approval_needed" -> "Allow App Store to use your Google account in its notification, then retry."
             "not_found" -> "This app is not available in App Store."
             "paid", "paid_app", "purchase_required", "account_required" -> "This app requires an account or purchase and cannot be copied anonymously."
             "incompatible", "incompatible_device" -> "This app is not compatible with this phone."
