@@ -95,15 +95,25 @@ Evidence in the supplied Switch and real-GMS decompiles:
 ## Credential transfer and Phenotype gaps
 
 Device-setup credential import/export and inventory discovery are unsupported.
-Their three features are withheld; direct identitycredential transactions
-12/13/14 each return `API_NOT_CONNECTED`, null response, and `ApiMetadata.SKIP`
-through callback 12/13/14. An empty successful inventory is not evidence that no
-passwords or passkeys exist. The protected destination remains tracked by
+Their three wire features remain advertised at version 3 so Switch can reach
+the immediate failures: identitycredential transactions 12/13/14 each return
+`API_NOT_CONNECTED`, null response, and `ApiMetadata.SKIP` through callback
+12/13/14. An empty successful inventory is not evidence that no passwords or
+passkeys exist. The protected destination remains tracked by
 [CYC-716](https://linear.app/cyclon/issue/CYC-716).
 
 Switch `jed.java:24-46`, `ijq.java:160-193`, and `jdw.java:79-103` establish the
-credential feature gates and wire codes. No credential URIs are opened and no
-credential records are imported/exported by these unsupported operations.
+credential feature gates and wire codes. Review round 1 caught that withholding
+these features prevents the error callbacks from running: `jdc.java:49-54`
+marks them fully rolled out and `iww.java:12-18` enables automatic missing-feature
+resolution. `ivv.java:173-196` then posts update UI and schedules five-second
+retries with a two-minute expiry. With the versions present, `ivv.java:152-155`
+dispatches immediately. The `jea/jeb/jec.java:15-17` callback adapters use
+`imp.java:316-328,545-546` to complete failed tasks with a plain API exception,
+without requesting resolution or scheduling a retry. Inventory indexing catches
+that failure (`gps.java:145-153`); it is not a successful empty inventory response.
+No credential URIs are opened and no credential records are imported/exported
+by these unsupported operations.
 
 Phenotype `get_storage_info_api@1` remains unadvertised and transaction 27 remains
 unsupported. Real GMS `fvnq.java:491-499,593-595`, `fvpn.java:34-40`, and

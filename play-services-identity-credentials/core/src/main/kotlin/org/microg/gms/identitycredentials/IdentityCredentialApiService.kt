@@ -74,8 +74,11 @@ private val FEATURES = arrayOf(
     Feature("IMPORT_CREDENTIALS", 1),
     Feature("SIGNAL_CREDENTIAL_STATE", 1),
     Feature("CLEAR_EXPORT", 1),
-    // Device-setup transfer needs a protected credential destination/source. Until it
-    // exists, do not offer import/export or claim to know the transferable inventory.
+    // Switch auto-resolves missing versions with update UI and a two-minute wait.
+    // Keep these wire contracts reachable; unsupported operations fail in their callbacks.
+    Feature("IMPORT_CREDENTIALS_FOR_DEVICE_SETUP", 3),
+    Feature("EXPORT_CREDENTIALS_TO_DEVICE_SETUP", 3),
+    Feature("GET_CREDENTIAL_TRANSFER_CAPABILITIES", 3),
 )
 
 class IdentityCredentialApiService : BaseService(TAG, GmsService.IDENTITY_CREDENTIALS) {
