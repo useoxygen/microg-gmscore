@@ -108,7 +108,8 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
     @Override
     public Bundle getAuthToken(AccountAuthenticatorResponse response, Account account, String authTokenType, Bundle options) throws NetworkErrorException {
         options.keySet();
-        Log.d(TAG, "getAuthToken: " + account + ", " + authTokenType + ", " + options);
+        boolean contactsRequest = org.microg.gms.people.sync.ContactsDiagnostics.isContactsService(authTokenType);
+        if (!contactsRequest) Log.d(TAG, "getAuthToken: " + account + ", " + authTokenType + ", " + options);
         String app = options.getString(KEY_ANDROID_PACKAGE_NAME);
         app = PackageUtils.getAndCheckPackage(context, app, options.getInt(KEY_CALLER_UID), options.getInt(KEY_CALLER_PID));
         AuthManager authManager;
@@ -147,6 +148,7 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         authManager.setAccountType(account.type);
         try {
             AuthResponse res = requestAuthForAccountManager(authManager, account, true);
+            if (contactsRequest) Log.i("GmsContactSync", "stage=authorization token_present=" + (res.auth != null));
             if (res.auth != null) {
                 Bundle result = new Bundle();
                 result.putString(KEY_ACCOUNT_TYPE, account.type);
@@ -172,9 +174,14 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
                 return result;
             }
         } catch (ReauthenticationRequiredException e) {
-            Log.w(TAG, "Re-authentication required for account " + account.name, e);
+            if (contactsRequest) Log.w("GmsContactSync", "stage=authorization resolution=REAUTHENTICATE");
+            else Log.w(TAG, "Re-authentication required for account " + account.name, e);
             return createReAuthIntentResult(response, account, options);
         } catch (Exception e) {
+            if (contactsRequest) {
+                Log.w("GmsContactSync", "stage=authorization error=UNKNOWN");
+                throw new NetworkErrorException("Contacts authorization failed");
+            }
             Log.w(TAG, e);
             throw new NetworkErrorException(e);
         }
@@ -184,6 +191,14 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         try {
             return authManager.requestAuth(legacy);
         } catch (NotOkayException e) {
+            if (org.microg.gms.people.sync.ContactsDiagnostics.isContactsService(authManager.getService())) {
+                String safeError = org.microg.gms.people.sync.ContactsDiagnostics.authError(e.getMessage());
+                Log.w("GmsContactSync", "stage=authorization error=" + safeError + " http_status=" + e.getHttpStatus());
+                // The shared resolver logs its argument. Never hand it an auth
+                // body that may contain a browser challenge URL or credentials.
+                if ("UNKNOWN".equals(safeError)) throw new IOException("Contacts authorization failed");
+                e = new NotOkayException("Error=" + safeError, e.getHttpStatus());
+            }
             if (e.getMessage() != null) {
                 Resolution errorResolution = ErrorResolverKt.resolveAuthErrorMessage(context, e.getMessage());
                 if (errorResolution instanceof Reauthenticate) {

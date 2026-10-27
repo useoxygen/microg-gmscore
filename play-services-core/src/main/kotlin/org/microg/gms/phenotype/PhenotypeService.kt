@@ -25,6 +25,8 @@ private const val TAG = "PhenotypeService"
 class PhenotypeService : BaseService(TAG, GmsService.PHENOTYPE) {
     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest?, service: GmsService?) {
         val packageName = PackageUtils.getAndCheckCallingPackage(this, request?.packageName)
+        // get_storage_info_api@1 (tx27) requires persistent CE/DE secrets and the
+        // matching phenotype_shared file protocol, not an empty storage-info blob.
         callback.onPostInitComplete(0, PhenotypeServiceImpl(packageName, this).asBinder(), null)
     }
 }
@@ -174,7 +176,7 @@ private val CONFIGURATION_OPTIONS = mapOf(
 )
 
 class PhenotypeServiceImpl(val packageName: String?, private val context: Context? = null) : IPhenotypeService.Stub() {
-    private fun localFolsomFlags(namespace: String?): Array<Flag>? = context?.let { FolsomPhenotypeConfiguration.flags(it, namespace) }
+    private fun localFolsomFlags(namespace: String?): Array<Flag>? = context?.let { FolsomPhenotypeConfiguration.flags(it, namespace) } ?: SwitchContactRestoreFlags.flags(namespace)
     override fun register(callbacks: IPhenotypeCallbacks, packageName: String?, version: Int, p3: Array<out String>?, p4: ByteArray?) {
         Log.d(TAG, "register($packageName, $version, $p3, $p4)")
         callbacks.onRegistered(if (version != 0) Status.SUCCESS else Status.CANCELED)

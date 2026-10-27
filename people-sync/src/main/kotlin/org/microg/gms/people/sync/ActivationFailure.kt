@@ -5,7 +5,7 @@ import java.io.IOException
 
 enum class ActivationStage { AUTHORIZATION, API, LOCAL }
 enum class ActivationFailure {
-    PERMISSION, CANCELLED, AUTHORIZATION, NETWORK, API_DENIED, API_UNAVAILABLE,
+    PERMISSION, CANCELLED, AUTHORIZATION, NETWORK, API_DENIED, API_UNAVAILABLE, NEEDS_UPDATE, TWO_WAY_UNAVAILABLE,
     RETRY_LATER, ACCOUNT_REMOVED, LOCAL, TIMEOUT
 }
 
@@ -13,6 +13,8 @@ class ActivationAccountRemoved : IllegalStateException("Account removed during a
 
 // Classify without retaining exception text, tokens, account names or contact data.
 fun activationFailure(stage: ActivationStage, error: Exception): ActivationFailure = when (error) {
+    is PeopleClientUpdateRequired -> ActivationFailure.NEEDS_UPDATE
+    is ContactsTwoWayUnavailable -> ActivationFailure.TWO_WAY_UNAVAILABLE
     is ApiException -> when (error.status) {
         401 -> ActivationFailure.AUTHORIZATION
         403 -> ActivationFailure.API_DENIED

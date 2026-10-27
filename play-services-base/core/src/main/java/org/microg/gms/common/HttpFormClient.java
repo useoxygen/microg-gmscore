@@ -97,7 +97,7 @@ public class HttpFormClient {
             } catch (IOException e) {
                 // Ignore
             }
-            throw new NotOkayException(error);
+            throw new NotOkayException(error, connection.getResponseCode());
         }
 
         if (request.isSensitive() && connection.getResponseCode() >= 300 && connection.getResponseCode() < 400) {

@@ -106,6 +106,16 @@ internal class AndroidTargetDeviceBinder(
                 data.skipApiMetadata(); data.requireEnd()
                 sendCallback(callback, PAIR_CALLBACK, 6) { writeNullable(Status.SUCCESS); writeNullable(Bundle()) }
             }
+            16 -> {
+                data.skipApiMetadata(); data.requireEnd()
+                // GMS gesr.c reads persisted *source* WorkProfilePayload, defaulting to
+                // (null, 0, null). No source management metadata is imported here yet.
+                // Switch ejn dereferences successful results, so the parcel must be present.
+                sendCallback(callback, TARGET_CALLBACK, 7) {
+                    writeNullable(Status.SUCCESS)
+                    writeNullable(DctRecord(mapOf(2 to DctRecord.Kind.IntValue), mapOf(2 to 0)))
+                }
+            }
             22 -> {
                 data.skipApiMetadata(); data.requireEnd()
                 pair(callback, 7, 10590)
@@ -120,7 +130,6 @@ internal class AndroidTargetDeviceBinder(
                     3 -> { bootstrap?.close(); bootstrap = null; status(callback,3,0) }
                     5 -> status(callback,4,if(bootstrap?.pin==null)10552 else 0,textResult=true,textValue=bootstrap?.pin)
                     11 -> status(callback, 6, 10565)
-                    16 -> status(callback, 7, 10581, nullResult = true)
                     18 -> status(callback, 8, 10581, emptyList = true)
                     19 -> status(callback, 9, 10552, nullResult = true)
                 }

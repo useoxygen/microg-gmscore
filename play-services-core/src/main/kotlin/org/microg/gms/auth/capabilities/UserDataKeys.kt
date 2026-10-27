@@ -22,6 +22,8 @@ object UserDataKeys {
     const val SERVICES             = "services"
     const val PACKAGE_VISIBILITY   = "package_visibilities_for_capabilities"
     const val SYNC_TIME            = "capability_sync_time"
+    // Local provenance marker. Keep the interoperable CAPABILITIES_VERSION encoding at 1.
+    const val CACHE_FORMAT         = "cyclon_capabilities_cache_version"
 
     // Pseudo-capabilities that encode boolean account flags.
     const val CAP_HAS_PASSWORD = "geytglldmfya"

@@ -49,5 +49,7 @@ This source change requires a new product source pin, rebuilt/signed APKs, and
 normal delivery acceptance before it changes an installed Cyclon image.
 
 The [extension acceptance guide](extensions-acceptance.md) covers app troubleshooting,
-location API callbacks, geofencing and native Calendar downloads, including the
+location API callbacks, geofencing and native Calendar sync, including the
 repeatable emulator fixture runner and the signed-device acceptance still required.
+The [two-way Calendar guide](calendar-two-way.md) documents event uploads, consent,
+conflict resolution and the system Transfer Phone companion contract.

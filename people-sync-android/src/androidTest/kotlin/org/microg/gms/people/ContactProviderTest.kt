@@ -7,7 +7,6 @@ import android.accounts.AccountManager
 import android.content.pm.PackageManager
 import android.content.ContentUris
 import android.content.ContentValues
-import android.os.Build
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.ContactsContract.CommonDataKinds.StructuredName
@@ -23,7 +22,6 @@ import org.junit.runner.RunWith
 import org.junit.rules.ExternalResource
 import org.microg.gms.people.sync.*
 import java.util.UUID
-import java.io.File
 
 /** Real Contacts Provider, mock remote service; physical devices require explicit serial opt-in. */
 @RunWith(AndroidJUnit4::class)
@@ -73,28 +71,9 @@ class ContactProviderTest {
         }
         override fun delete(resource: String) { writes++; remote = null; afterWrite?.invoke() }
     }
-    private fun approvedDevice(): Boolean {
-        if (Build.HARDWARE in listOf("ranchu", "goldfish")) return true
-        // Default runs still refuse physical phones. The caller must supply the
-        // exact connected serial, and the phone must be a development build.
-        if (Build.TYPE !in listOf("userdebug", "eng") || Build.VERSION.SDK_INT < 29) return false
-        val arguments = InstrumentationRegistry.getArguments()
-        val expected = arguments.getString("physicalDeviceSerial")
-            ?.takeIf { it.isNotBlank() } ?: return false
-        val nonce = arguments.getString("physicalDeviceNonce")?.takeIf { it.isNotBlank() } ?: return false
-        // The serial-pinned host runner reads ro.serialno through ADB and writes
-        // a fresh, one-run proof into this debug APK's private storage. Avoid
-        // UiAutomation entirely so another agent can retain its screen connection.
-        return runCatching {
-            val proof = JSONObject(File(context.filesDir, "physical-device-authorization.json").readText())
-            val age = System.currentTimeMillis() - proof.getLong("createdAt")
-            proof.getString("serial") == expected && proof.getString("nonce") == nonce &&
-                proof.getString("fingerprint") == Build.FINGERPRINT && age in 0..300_000
-        }.getOrDefault(false)
-    }
     @Before fun setup() {
         ContactMigrationPrivacy(context).developerControlsEnabled = false
-        check(context.packageName == "org.microg.gms.people.sync.android.test" && approvedDevice()) {
+        check(context.packageName == "org.microg.gms.people.sync.android.test" && FixtureDeviceApproval.approved(context)) {
             "Fixture tests require an emulator or an explicitly selected development phone"
         }
         account = Account("fixture-" + UUID.randomUUID(), "org.microg.gms.contacts.fixture")
@@ -134,6 +113,113 @@ class ContactProviderTest {
             put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, fixtureMarker + name)
         })
         return id
+    }
+    @Test fun privateGroupsMembershipsStarredAndEncodedPhotoDownloadRoundTrip() {
+        val bitmap = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+        val out = java.io.ByteArrayOutputStream(); bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out); bitmap.recycle()
+        fun meta() = JSONObject().put("containerType", "CONTACT").put("encodedContainerId", "17")
+        val raw = JSONObject().put("personId", "c23").put("metadata", JSONObject().put("contactId", JSONArray().put("23"))
+            .put("identityInfo", JSONObject().put("sourceIds", JSONArray().put(JSONObject().put("containerType", "CONTACT").put("id", "17").put("sourceEtag", "fixture-private-etag")))))
+            .put("name", JSONArray().put(JSONObject().put("metadata", meta()).put("givenName", fixtureMarker + "Private")))
+            .put("photo", JSONArray().put(JSONObject().put("metadata", meta()).put("url", "https://lh3.googleusercontent.com/synthetic").put("photoToken", "synthetic")))
+            .put("contactGroupMembership", JSONArray().put(JSONObject().put("metadata", meta()).put("systemContactGroupId", "STARRED"))
+                .put(JSONObject().put("metadata", meta()).put("systemContactGroupId", "MY_CONTACTS"))
+                .put(JSONObject().put("metadata", meta()).put("contactGroupId", "42")))
+        fun group(id: String, system: Boolean) = JSONObject().put("result", JSONObject().put("id", JSONObject().put("id", id))
+            .put("name", JSONObject().put("value", id)).put("groupType", JSONObject().put("type", if (system) "SYSTEM_CONTACT_GROUP" else "CONTACT_GROUP")))
+        val api = PrivatePeopleApi(HttpTransport { method, url, _ ->
+            when {
+                url.contains("contactGroups/list") -> HttpReply(200, JSONObject().put("groups", JSONArray().put(group("starred", true)).put(group("myContacts", true)).put(group("42", false))).put("nextSyncToken", "fixture-group-cursor").toString())
+                url.contains("photosEncoded") -> HttpReply(200, JSONObject().put("format", "PNG").put("photoBytes", ContactPhotos.base64(out.toByteArray())).toString())
+                method == "POST" && url.contains("people:batchGet") -> HttpReply(200, JSONObject().put("personResponse", JSONArray().put(JSONObject().put("personId", "c23").put("status", "SUCCESS").put("person", raw))).toString())
+                else -> HttpReply(200, JSONObject().put("people", JSONArray().put(raw)).put("nextSyncToken", "fixture-contact-cursor").toString())
+            }
+        }, PrivatePeopleContext("25.24.32"))
+        resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
+            val groups = AndroidGroupStore(provider, account, prefs, PrivatePeopleApi.OWNER, api.context.binding)
+            groups.initialize(); GroupsSync(api, groups) { SyncMode.DOWNLOAD }.sync()
+            val store = AndroidContactStore(provider, account, prefs, groups, api, PrivatePeopleApi.OWNER, api.context.binding)
+            ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
+            PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
+            val local = store.contacts().single()
+            assertEquals(setOf("starred", "myContacts", "42").map(PrivatePeopleApi::groupResource).toSet(), Memberships.fromField(local.fields["memberships"]))
+            assertFalse(local.dirty); assertTrue(store.photoContacts().single().token.startsWith("sync:microg-photo:"))
+            assertEquals("fixture-group-cursor", groups.groupCheckpoint()); assertEquals("fixture-contact-cursor", store.checkpoint())
+            provider.query(ContactsContract.Groups.CONTENT_URI, arrayOf(ContactsContract.Groups.AUTO_ADD, ContactsContract.Groups.FAVORITES, ContactsContract.Groups.GROUP_IS_READ_ONLY),
+                "${ContactsContract.Groups._ID}=?", arrayOf(groups.id(PrivatePeopleApi.groupResource("myContacts")).toString()), null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0)); assertEquals(1, it.getInt(2))
+            }
+            // Even clean members must not be cascaded out from under the
+            // contact reader's stored baseline when a label is deleted.
+            try { groups.removeGroup(groups.groups().single { it.resource == PrivatePeopleApi.groupResource("42") }); fail("Member metadata must be updated first") }
+            catch (expected: GroupInUse) { }
+            assertEquals(3, Memberships.fromField(store.contacts().single().fields["memberships"]).size)
+        }
+    }
+    @Test fun privateBackendKeepsLegacyRowsAndCursorsSeparateAndForcesReadOnly() {
+        resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
+            val legacy = AndroidContactStore(provider, account, prefs)
+            legacy.apply(person("people/legacy"), null, true)
+            legacy.checkpoint("legacy-cursor")
+            val context = PrivatePeopleContext("25.24.32")
+            val privateStore = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER, checkpointBinding = context.binding)
+            assertNull(privateStore.checkpoint())
+            privateStore.apply(person("people/fsa_17").also { it.json.put("_privateStarred", true) }, null, false)
+            assertEquals(listOf("people/fsa_17"), privateStore.contacts().map { it.resource })
+            assertEquals(listOf("people/legacy"), legacy.contacts().map { it.resource })
+            val raw = privateStore.contacts().single()
+            provider.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, raw.id), arrayOf(RawContacts.RAW_CONTACT_IS_READ_ONLY, RawContacts.STARRED), null, null, null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0)); assertEquals(1, it.getInt(1))
+            }
+            privateStore.checkpoint("private-cursor")
+            assertNull(legacy.checkpoint())
+            assertEquals("private-cursor", privateStore.checkpoint())
+            val updatedContext = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
+                checkpointBinding = PrivatePeopleContext("26.41.31").binding)
+            assertNull(updatedContext.checkpoint()); assertEquals(1, updatedContext.contacts().size)
+            try { privateStore.remove(legacy.contacts().single()); fail("Must not delete a legacy backend row") }
+            catch (expected: android.content.OperationApplicationException) { }
+            assertEquals(1, legacy.contacts().size); assertEquals(1, privateStore.contacts().size)
+        }
+    }
+    @Test fun privateTwoWayMakesOwnedRowsEditableAndAdoptsOnlyNewRows() {
+        val old = insertLocal("Old unowned")
+        prefs.initializePrivateFloors(old, Long.MAX_VALUE)
+        prefs.configure(SyncMode.TWO_WAY, old)
+        val created = insertLocal("New private contact")
+        resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
+            val store = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
+                checkpointBinding = PrivatePeopleContext("25.24.32").binding)
+            assertTrue(store.contacts().isEmpty())
+            store.reconcileImports(emptyList(), full = true)
+            assertEquals(listOf(created), store.contacts().map { it.id })
+            val pending = JSONObject().put("kind", "create").put("local", JSONObject())
+            val journaled = store.begin(store.contacts().single(), pending)
+            assertEquals("create", store.contacts().single().pending!!.getString("kind"))
+            store.acknowledge(journaled, person("people/fsa_17"))
+            provider.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, created), arrayOf(RawContacts.RAW_CONTACT_IS_READ_ONLY,
+                RawContacts.SYNC4), null, null, null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0)); assertEquals(PrivatePeopleApi.OWNER, it.getString(1))
+            }
+            prefs.configure(SyncMode.DOWNLOAD, old); store.configureMode()
+            provider.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, created), arrayOf(RawContacts.RAW_CONTACT_IS_READ_ONLY), null, null, null)!!.use {
+                assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0))
+            }
+        }
+    }
+    @Test fun privateCursorsAreStagedUntilTheWholePassCommits() {
+        resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
+            val binding = PrivatePeopleContext("25.24.32").binding
+            val store = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
+                checkpointBinding = binding, deferCheckpoint = true)
+            val groups = AndroidGroupStore(provider, account, prefs, PrivatePeopleApi.OWNER, binding, deferCheckpoint = true)
+            store.checkpoint("contacts-next"); groups.groupCheckpoint("groups-next")
+            assertNull(store.checkpoint()); assertNull(groups.groupCheckpoint())
+            // A restarted store cannot see an uncommitted cursor after a failed photo/write.
+            assertNull(AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER, checkpointBinding = binding).checkpoint())
+            store.commitCheckpoint(); groups.commitCheckpoint()
+            assertEquals("contacts-next", store.checkpoint()); assertEquals("groups-next", groups.groupCheckpoint())
+        }
     }
     @Test fun downloadIsIdempotentAndDoesNotUploadDeviceRows() {
         val deviceId = insertLocal("Device contact", false)
@@ -224,6 +310,23 @@ class ContactProviderTest {
             .put("urls", JSONArray().put(JSONObject().put("value", "https://example.invalid").put("type", "work")))
         sync()
         store { assertEquals(it.project(api.remote!!), it.contacts().single().fields) }
+    }
+    @Test fun extendedFieldsRoundTripAndUploadThroughProvider() {
+        api.remote!!.json
+            .put("events", JSONArray().put(JSONObject().put("type", "anniversary")
+                .put("date", JSONObject().put("year", 0).put("month", 2).put("day", 29))))
+            .put("relations", JSONArray().put(JSONObject().put("person", "Synthetic friend").put("type", "friend")))
+            .put("imClients", JSONArray().put(JSONObject().put("username", "synthetic").put("protocol", "custom-protocol").put("type", "work")))
+            .put("sipAddresses", JSONArray().put(JSONObject().put("value", "sip:fixture@example.invalid").put("type", "home")))
+            .put("userDefined", JSONArray().put(JSONObject().put("key", "Fixture key").put("value", "Fixture value")))
+        prefs.configure(SyncMode.TWO_WAY, 0); sync()
+        store { assertEquals(it.project(api.remote!!), it.contacts().single().fields) }
+        val id = store { it.contacts().single().id }
+        assertEquals(1, resolver.update(Data.CONTENT_URI, ContentValues().apply { put(Data.DATA2, "Changed value") },
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), ContactFieldMapper.USER_DEFINED_MIME)))
+        assertEquals(1, sync().uploaded)
+        assertEquals("Changed value", api.remote!!.json.getJSONArray("userDefined").getJSONObject(0).getString("value"))
+        assertEquals(1, api.remote!!.json.getJSONArray("events").length())
     }
     @Test fun preferredNumberChangesUploadAsSourcePrimaryMetadata() {
         val first = JSONObject().put("value", "123").put("type", "mobile").put("metadata", JSONObject().put("sourcePrimary", true))

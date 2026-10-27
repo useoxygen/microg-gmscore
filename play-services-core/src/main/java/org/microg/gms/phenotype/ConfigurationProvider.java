@@ -43,6 +43,7 @@ public class ConfigurationProvider extends ContentProvider {
     public Cursor query(@NonNull Uri uri, @Nullable String[] projection, @Nullable String selection, @Nullable String[] selectionArgs, @Nullable String sortOrder) {
         MatrixCursor cursor = new MatrixCursor(new String[]{"key", "value"});
         Map<String, String> values = FolsomPhenotypeConfiguration.rows(getContext(), namespace(uri));
+        if (values == null) values = SwitchContactRestoreFlags.rows(namespace(uri));
         if (values != null) for (Map.Entry<String, String> entry : values.entrySet()) {
             cursor.addRow(new String[]{entry.getKey(), entry.getValue()});
         }

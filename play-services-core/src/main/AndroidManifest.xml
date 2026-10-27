@@ -18,6 +18,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <queries>
+        <provider android:authorities="ai.cyclon.migration.restore" />
+    </queries>
+
     <permission
         android:name="com.google.android.providers.gsf.permission.READ_GSERVICES"
         android:label="@string/perm_gsf_read_gservices_label"
@@ -490,7 +494,14 @@
 
         <!-- People -->
 
-        <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="false" />
+        <activity android:name="org.microg.gms.people.ContactsSyncActivity" android:exported="true"
+            android:theme="@style/Theme.Cyclon">
+            <intent-filter>
+                <action android:name="com.google.android.gms.people.sync.CONTACTS_SYNC_SETTINGS" />
+                <action android:name="com.google.android.gms.people.sync.CONTACTS_SYNC_SETTINGS_V3" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
         <receiver android:name="org.microg.gms.people.ContactSyncAccountsReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
@@ -509,6 +520,9 @@
             android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
+        <activity-alias android:name="org.microg.gms.calendar.CalendarSyncSettings"
+            android:targetActivity="org.microg.gms.calendar.CalendarSyncActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
             <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
             <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/calendar_syncadapter" />
@@ -677,6 +691,14 @@
         <service
             android:name=".auth.GetToken"
             android:exported="true" />
+
+        <service
+            android:name="org.microg.gms.auth.aang.GoogleAuthAangService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.auth.aang.events.services.START" />
+            </intent-filter>
+        </service>
 
         <activity
             android:name=".auth.TokenActivity"
