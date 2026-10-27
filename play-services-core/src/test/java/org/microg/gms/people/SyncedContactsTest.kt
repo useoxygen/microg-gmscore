@@ -57,10 +57,11 @@ class SyncedContactsTest {
         }
     }
 
-    private fun Provider.contact(id: Long, owner: String?, account: Account = this@SyncedContactsTest.account, sourceId: String? = null,
+    private fun Provider.contact(id: Long, owner: String?, account: Account = this@SyncedContactsTest.account, sourceId: String? = null, noSource: Boolean = false,
         dirty: Boolean = false, pending: String? = null, dataSet: String? = null) = db.insert("raw_contacts", null, ContentValues().apply {
         put("_id", id); put("account_name", account.name); put("account_type", account.type); put("data_set", dataSet)
-        put("sourceid", sourceId); put("sync3", pending); put("sync4", owner); put("dirty", if (dirty) 1 else 0)
+        // Rows sync owns came from Google (or went there), so they carry a Google ID unless one is given explicitly.
+        put("sourceid", if (noSource) null else sourceId ?: owner?.let { "c$id" }); put("sync3", pending); put("sync4", owner); put("dirty", if (dirty) 1 else 0)
     })
     private fun Provider.group(id: Long, owner: String?, systemId: String? = null, dirty: Boolean = false) = db.insert("groups", null, ContentValues().apply {
         put("_id", id); put("account_name", account.name); put("account_type", account.type)
@@ -81,6 +82,7 @@ class SyncedContactsTest {
             contact(13, private, dataSet = "plugin")          // other data set: kept
             contact(14, private, account = other)             // other account: kept
             contact(24, private, pending = "{\"kind\":\"update\"}") // upload in flight: removed, unsynced
+            contact(26, private, dirty = true, noSource = true)  // adopted, never sent (e.g. a moved device contact): kept
             group(1, private, systemId = "Contacts")          // system group sync imported: removed
             group(4, null, systemId = "Contacts")             // system group from elsewhere: kept
             group(2, private)                                 // synced label: removed
@@ -103,7 +105,7 @@ class SyncedContactsTest {
 
         prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
         synced.remove()
-        assertEquals(setOf(3L, 13L, 14L, 15L, 21L, 22L, 23L), provider.ids("raw_contacts"))
+        assertEquals(setOf(3L, 13L, 14L, 15L, 21L, 22L, 23L, 26L), provider.ids("raw_contacts"))
         assertEquals(setOf(3L, 4L, 25L), provider.ids("groups"))
         assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
         assertNull(prefs.privateGroupCheckpoint("binding"))

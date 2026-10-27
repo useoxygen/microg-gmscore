@@ -92,4 +92,37 @@
     <string name="contacts_sync_resume_uploads">Resume contact uploads</string>
     <string name="contacts_sync_resume_uploads_consent">Resume uploads using the account choices below. Changes to contacts already synced with Google, including changes made by the transfer, can be uploaded. New and imported contacts still require the separate account upload choice. Leave uploads paused to keep imported changes on this phone. Already uploaded contacts are not removed from Google.</string>
     <string name="contacts_sync_developer_controls">Developer test: pause uploads during migration and expose fixture upload controls (off by default)</string>
+
+    <!-- Device contacts (Google's "Also sync device contacts") -->
+    <string name="contacts_sync_device_title">Also sync device contacts</string>
+    <plurals name="contacts_sync_device_not_synced">
+        <item quantity="one">%d device contact isn\'t synced</item>
+        <item quantity="other">%d device contacts aren\'t synced</item>
+    </plurals>
+    <string name="contacts_sync_device_info">Contacts saved only on this phone are lost if the phone is lost. Save them as Google contacts to back them up and sync them with Google Contacts.</string>
+    <string name="contacts_sync_device_review">Review &amp; save to Google</string>
+    <string name="contacts_sync_device_auto">Automatically back up &amp; sync device contacts</string>
+    <string name="contacts_sync_device_auto_on">New device contacts are saved to %1$s</string>
+    <string name="contacts_sync_device_auto_paused">Paused: turn on Upload changes from this phone for %1$s</string>
+    <string name="contacts_sync_device_unsupported">Stays on this phone: has details Google Contacts can\'t store</string>
+    <plurals name="contacts_sync_device_kept">
+        <item quantity="one">%d contact stays on this phone because Google Contacts can\'t store some of its details</item>
+        <item quantity="other">%d contacts stay on this phone because Google Contacts can\'t store some of their details</item>
+    </plurals>
+    <string name="contacts_sync_device_exclusions">Doesn\'t apply to contacts on SIM or in accounts syncing with other services, like Exchange.</string>
+    <string name="contacts_sync_device_dialog_title">Save device contacts to Google</string>
+    <string name="contacts_sync_device_dialog_body">Selected contacts are saved to the Google account and synced with Google Contacts. Each one is removed from this phone\'s device storage only once its Google copy is saved.</string>
+    <string name="contacts_sync_device_select_all">Select all</string>
+    <string name="contacts_sync_device_no_name">(No name)</string>
+    <string name="contacts_sync_device_account">Save to</string>
+    <plurals name="contacts_sync_device_save">
+        <item quantity="one">Save %d contact</item>
+        <item quantity="other">Save %d contacts</item>
+    </plurals>
+    <plurals name="contacts_sync_device_saved">
+        <item quantity="one">%1$d contact saved to %2$s</item>
+        <item quantity="other">%1$d contacts saved to %2$s</item>
+    </plurals>
+    <string name="contacts_sync_device_auto_dialog_title">Back up &amp; sync device contacts?</string>
+    <string name="contacts_sync_device_auto_dialog_body">Contacts saved only on this phone, now and in the future, are automatically saved as Google contacts in the account below and synced with Google Contacts.</string>
 </resources>
