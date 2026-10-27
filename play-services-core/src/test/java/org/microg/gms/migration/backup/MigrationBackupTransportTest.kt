@@ -19,6 +19,48 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [35])
 class MigrationBackupTransportTest {
+    @Test fun iosTelephonySetUsesFullRestoreAndPreservesItsArchiveForRetry() {
+        val context = RuntimeEnvironment.getApplication()
+        val folder = File(context.noBackupFilesDir, "migration-staging").apply { mkdirs() }
+        File(folder, "restore_token_file").writeText("1")
+        File(folder, "@pm@").writeBytes(byteArrayOf(1, 2, 3))
+        val archive = ByteArray(70_001) { (it % 251).toByte() }
+        File(folder, "com.android.providers.telephony").writeBytes(archive)
+        val pm = PackageInfo().apply { packageName = "@pm@" }
+        val telephony = PackageInfo().apply {
+            packageName = "com.android.providers.telephony"
+            applicationInfo = ApplicationInfo().apply {
+                backupAgentName = "com.android.providers.telephony.TelephonyBackupAgent"
+                flags = ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_FULL_BACKUP_ONLY
+            }
+        }
+        MigrationBackupTransport(context).use { transport ->
+            assertEquals(1L, transport.availableRestoreSets.single().token)
+            assertEquals(-1000, transport.startRestore(2L, arrayOf(telephony, pm)))
+            assertEquals(0, transport.startRestore(1L, arrayOf(telephony, pm)))
+            assertEquals("@pm@", transport.nextRestorePackage().packageName)
+            val output = File(context.cacheDir, "ios-restore-output")
+            ParcelFileDescriptor.open(output, ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_READ_WRITE).use {
+                assertEquals(0, transport.getRestoreData(it))
+                val next = transport.nextRestorePackage()
+                assertEquals(telephony.packageName, next.packageName)
+                assertEquals(2, next.dataType)
+                var total = 0
+                while (true) {
+                    val count = transport.getNextFullRestoreDataChunk(it)
+                    if (count == -1) break
+                    assertTrue(count > 0); total += count
+                }
+                assertEquals(archive.size, total)
+            }
+            transport.finishRestore()
+            assertEquals(0, transport.startRestore(1L, arrayOf(telephony, pm)))
+            assertEquals("@pm@", transport.nextRestorePackage().packageName)
+            transport.finishRestore()
+        }
+        assertArrayEquals(archive, File(folder, telephony.packageName).readBytes())
+    }
+
     @Test fun localTransportApiShapesAndStreamCountsRejectBackupWrites() {
         val context = RuntimeEnvironment.getApplication()
         val folder = File(context.noBackupFilesDir, "migration-staging").apply { mkdirs() }
