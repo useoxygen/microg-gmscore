@@ -3,12 +3,19 @@
 <resources>
     <item name="cyclon_calendar_health_action" type="id" />
     <string name="cyclon_calendar_title">Calendar sync</string>
-    <string name="cyclon_calendar_description">Download Google calendars and events to Android Calendar. Recurring events, exceptions and popup reminders are included. This is opt-in and download-only: local event changes are never uploaded or overwritten. Turning it off keeps downloaded events.</string>
-    <string name="cyclon_calendar_download">Download calendars</string>
+    <string name="cyclon_calendar_description">Sync this account’s Google calendars with Android Calendar. Download only, or enable two-way sync to upload event changes in writable calendars selected for syncing. Recurring events, exceptions and reminders are included. Turning sync off keeps downloaded events. Choose calendars to sync in your Calendar app.</string>
+    <string name="cyclon_calendar_download">Sync calendars</string>
+    <string name="cyclon_calendar_two_way">Two-way event sync</string>
+    <string name="cyclon_calendar_upload_hold">Uploads are paused after a phone transfer. Downloaded events remain available. Resume when you are ready to upload your local event changes.</string>
+    <string name="cyclon_calendar_resume_uploads">Resume uploads</string>
+    <string name="cyclon_calendar_resolve_title">Resolve calendar conflicts</string>
+    <string name="cyclon_calendar_resolve_description">This applies to all event conflicts currently held for this account. Keep phone changes uploads your local edits, replacing conflicting fields in Google Calendar. Use Google changes discards those local edits and uses the current Google events. New conflicts will still need your choice.</string>
+    <string name="cyclon_calendar_keep_phone">Keep phone changes</string>
+    <string name="cyclon_calendar_use_google">Use Google changes</string>
     <string name="cyclon_calendar_enable_failed">Calendar access could not be enabled. Check calendar permissions and reconnect your account.</string>
     <string name="cyclon_calendar_success">Last sync completed</string>
     <string name="cyclon_calendar_partial">Last sync completed, but some events could not be read and were skipped.</string>
-    <string name="cyclon_calendar_conflict">Local event changes were preserved. Sync will retry after those changes are resolved.</string>
+    <string name="cyclon_calendar_conflict">Some local changes need review or could not be uploaded. Local changes and the Google version were preserved.</string>
     <string name="cyclon_calendar_local">Calendar data could not be applied. Local data was retained; try again.</string>
     <string name="cyclon_calendar_permissions">Calendar permission is missing. Review permissions in Calendar sync.</string>
 </resources>

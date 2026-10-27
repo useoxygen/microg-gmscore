@@ -515,6 +515,9 @@
             android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <activity android:name="org.microg.gms.calendar.CalendarSyncActivity" android:exported="false"
             android:theme="@style/Theme.Cyclon" />
+        <activity-alias android:name="org.microg.gms.calendar.CalendarSyncSettings"
+            android:targetActivity="org.microg.gms.calendar.CalendarSyncActivity"
+            android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
             <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
             <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/calendar_syncadapter" />

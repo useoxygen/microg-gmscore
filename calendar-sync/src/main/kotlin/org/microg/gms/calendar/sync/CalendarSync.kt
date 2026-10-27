@@ -2,28 +2,36 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.calendar.sync
 
-import java.io.IOException
 import org.json.JSONObject
-import org.microg.gms.people.sync.HttpTransport
-import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.text.ParsePosition
-import java.util.Locale
-import java.util.TimeZone
 
+data class CalendarReminder(val method: String, val minutes: Int)
 data class RemoteCalendar(val id: String, val title: String, val zone: String, val color: String,
-    val reminders: List<Int>, val deleted: Boolean = false)
+    val reminders: List<Int>, val deleted: Boolean = false, val accessRole: String = "reader",
+    val defaultReminders: List<CalendarReminder> = reminders.map { CalendarReminder("popup", it) }) {
+    val writable: Boolean get() = accessRole in setOf("owner", "writer")
+}
 data class EventTime(val millis: Long, val allDay: Boolean, val zone: String)
 data class RemoteEvent(val id: String, val etag: String, val title: String, val description: String,
     val location: String, val start: EventTime?, val end: EventTime?, val recurrence: List<String>,
-    val masterId: String?, val original: EventTime?, val cancelled: Boolean, val reminders: List<Int>)
+    val masterId: String?, val original: EventTime?, val cancelled: Boolean, val reminders: List<Int>,
+    val sequence: Int = 0, val useDefaultReminders: Boolean = false, val creationId: String? = null, val raw: String? = null,
+    val visibility: String = "default", val transparency: String = "opaque")
+/** A provider snapshot; fingerprints are opaque to the engine and must include all local writable fields. */
+data class LocalEvent(val id: Long, val event: RemoteEvent, val deleted: Boolean, val dirty: Boolean,
+    val base: RemoteEvent?, val pending: JSONObject? = null, val fingerprint: String, val unsupported: Boolean = false)
 data class CalendarPage(val calendars: List<RemoteCalendar>, val next: String?)
 /** [unreadable]: ids of events on this page that could not be read; they are skipped, and kept if already stored. */
 data class EventPage(val events: List<RemoteEvent>, val next: String?, val checkpoint: String?, val unreadable: List<String> = emptyList())
 interface CalendarApi {
     fun calendars(page: String?): CalendarPage
     fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?): EventPage
+    fun get(calendar: RemoteCalendar, id: String): RemoteEvent? = error("Calendar writes unavailable")
+    fun instance(calendar: RemoteCalendar, masterId: String, original: EventTime): RemoteEvent? = error("Calendar writes unavailable")
+    fun create(calendar: RemoteCalendar, id: String, payload: JSONObject): RemoteEvent = error("Calendar writes unavailable")
+    fun update(calendar: RemoteCalendar, id: String, etag: String, payload: JSONObject): RemoteEvent = error("Calendar writes unavailable")
+    fun delete(calendar: RemoteCalendar, id: String, etag: String) { error("Calendar writes unavailable") }
 }
+enum class CalendarConflictChoice { HOLD, LOCAL, REMOTE }
 interface CalendarStore {
     fun shouldSync(calendar: RemoteCalendar): Boolean = true
     fun calendar(calendar: RemoteCalendar)
@@ -33,24 +41,38 @@ interface CalendarStore {
     fun reconcile(calendar: RemoteCalendar, present: Set<String>): Int
     fun checkpoint(calendar: String, value: String)
     fun reconcileCalendars(present: Set<String>) {}
+    /** Only dirty rows or durable journals in this owned, selected calendar; missing rows are never deletions. */
+    fun localEvents(calendar: RemoteCalendar): List<LocalEvent> = emptyList()
+    fun uploadAllowed(calendar: RemoteCalendar): Boolean = false
+    fun conflictChoice(calendar: RemoteCalendar, existing: LocalEvent): CalendarConflictChoice = CalendarConflictChoice.HOLD
+    /** Legacy read-only rows may acquire a baseline only after direct GET proves their saved etag still current. */
+    fun hydrate(calendar: RemoteCalendar, existing: LocalEvent, remote: RemoteEvent): LocalEvent = existing.copy(base = remote)
+    /** Persist the complete journal before dispatch, without clearing dirty/deleted state. */
+    fun begin(calendar: RemoteCalendar, existing: LocalEvent, pending: JSONObject): LocalEvent = error("Calendar writes unavailable")
+    /** Update identity/baseline, but clear dirty only if the current fingerprint still equals the sent fingerprint. */
+    fun acknowledge(calendar: RemoteCalendar, existing: LocalEvent, remote: RemoteEvent?): Boolean = error("Calendar writes unavailable")
+    fun rejected(calendar: RemoteCalendar, existing: LocalEvent) { error("Calendar writes unavailable") }
+    fun removeLocal(calendar: RemoteCalendar, existing: LocalEvent) { error("Calendar writes unavailable") }
 }
 /**
  * [skipped]: events that could not be read; [failedCalendars]: calendars whose events could not be fetched or applied, and
  * [failure] the first of their errors (the others' counts still stand).
  */
 data class CalendarReport(val events: Int, val conflicts: Int, val skipped: Int = 0, val failedCalendars: Int = 0,
-    val failure: Exception? = null)
+    val failure: Exception? = null, val uploaded: Int = 0, val uncertain: Int = 0)
 
 /** The owner turned synchronization off, or the sync was cancelled: stops the whole run, never one calendar. */
 class SyncStopped : IllegalStateException("Calendar synchronization stopped")
 
 /**
- * All pages are admitted before applying a calendar or pruning missing owned rows. Never uploads.
+ * All pages are admitted before applying a calendar or pruning missing owned rows.
  * Each calendar stands alone: an event that cannot be read is skipped (a stored copy is kept) and a calendar that fails
  * leaves the others to sync, its error returned in the report. Authorization, rate limits and the owner's off switch still
  * stop the whole run (thrown).
  */
-class CalendarSync(private val api: CalendarApi, private val store: CalendarStore, private val enabled: () -> Boolean) {
+class CalendarSync(private val api: CalendarApi, private val store: CalendarStore, private val enabled: () -> Boolean,
+    private val uploadEnabled: () -> Boolean) {
+    constructor(api: CalendarApi, store: CalendarStore, enabled: () -> Boolean) : this(api, store, enabled, { false })
     fun sync(): CalendarReport {
         fun consent() { if (!enabled()) throw SyncStopped() }
         val calendars = mutableListOf<RemoteCalendar>()
@@ -67,6 +89,8 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
         var count = 0
         var conflicts = 0
         var skipped = 0
+        var uploaded = 0
+        var uncertain = 0
         var failedCalendars = 0
         var failure: Exception? = null
         for (calendar in calendars.distinctBy { it.id }.filterNot { it.deleted }) {
@@ -74,6 +98,7 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
             try {
                 val outcome = syncCalendar(calendar, ::consent)
                 count += outcome.events; conflicts += outcome.conflicts; skipped += outcome.skipped
+                uploaded += outcome.uploaded; uncertain += outcome.uncertain
             } catch (e: SyncStopped) { throw e
             } catch (e: InterruptedException) { throw e
             } catch (e: CalendarRequestException) {
@@ -83,7 +108,7 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
         }
         consent()
         store.reconcileCalendars(calendars.filterNot { it.deleted }.map { it.id }.toSet())
-        return CalendarReport(count, conflicts, skipped, failedCalendars, failure)
+        return CalendarReport(count, conflicts, skipped, failedCalendars, failure, uploaded, uncertain)
     }
 
     private fun syncCalendar(calendar: RemoteCalendar, consent: () -> Unit): CalendarReport {
@@ -109,7 +134,7 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
                     gathered += response.events
                     skippedIds += response.unreadable
                     check(gathered.size <= 10_000)
-                    check(gathered.sumOf { it.title.length.toLong() + it.description.length + it.location.length + it.recurrence.sumOf(String::length) } <= 16 * 1024 * 1024)
+                    check(gathered.sumOf { it.title.length.toLong() + it.description.length + it.location.length + it.recurrence.sumOf(String::length) + (it.raw?.length ?: 0) } <= 16 * 1024 * 1024)
                     page = response.next
                     check(page == null || pages.add(page))
                     if (page == null) finalCheckpoint = response.checkpoint
@@ -127,125 +152,30 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
         }
         consent()
         store.calendar(calendar)
+        val local = store.localEvents(calendar)
+        check(local.map { it.id }.distinct().size == local.size) { "Duplicate local calendar row" }
+        val dirtyIds = local.mapNotNull { it.event.id.takeIf(String::isNotBlank) ?: it.pending?.optString("id")?.takeIf(String::isNotBlank) }.toSet()
         var stored = 0
         var conflicts = 0
         for (event in events) {
             consent()
+            // Preserve local changes and ambiguous mutations until their journal is settled. A later checkpoint
+            // revisits any unhandled remote change; an acknowledged upload already includes the latest baseline.
+            if (event.id in dirtyIds) continue
             if (!store.event(calendar, event)) conflicts++ else stored++
         }
         if (checkpoint == null) {
             consent()
             // An unreadable event is not deleted: a copy stored before stays until it can be read again.
-            conflicts += store.reconcile(calendar, events.map { it.id }.toSet() + unreadable)
+            conflicts += store.reconcile(calendar, events.map { it.id }.toSet() + unreadable + dirtyIds)
         }
         consent()
+        val uploads = CalendarUploads(api, store, { enabled() && uploadEnabled() }).sync(calendar, unreadable)
+        conflicts += uploads.conflicts
         // A conflict must remain retrievable after the owner resolves a local change. A skipped event does not hold the
         // checkpoint (that would refetch the whole calendar on every sync): its stored copy stays, and Google returns it
         // again the next time it changes.
-        if (conflicts == 0) store.checkpoint(calendar.id, nextCheckpoint)
-        return CalendarReport(stored, conflicts, unreadable.size)
-    }
-}
-
-class CalendarRequestException(val status: Int, val retryAfterSeconds: Long = 0,
-    val rateLimited: Boolean = false) : IOException("Calendar API request failed ($status)")
-
-class GoogleCalendarApi(private val transport: HttpTransport) : CalendarApi {
-    private fun encode(value: String) = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
-    private fun get(path: String, params: Map<String, String?>): JSONObject {
-        val query = params.filterValues { it != null }.entries.joinToString("&") { encode(it.key) + "=" + encode(it.value!!) }
-        val reply = transport.request("GET", "https://www.googleapis.com/calendar/v3/$path?$query", null)
-        if (reply.status !in 200..299) {
-            val reasons = runCatching { JSONObject(reply.body).getJSONObject("error").getJSONArray("errors") }.getOrNull()
-            val limited = reply.status == 429 || reply.status == 403 && (0 until minOf(reasons?.length() ?: 0, 16)).any {
-                reasons!!.optJSONObject(it)?.optString("reason") in setOf("rateLimitExceeded", "userRateLimitExceeded")
-            }
-            throw CalendarRequestException(reply.status, reply.retryAfterSeconds.coerceIn(0, 86_400), limited)
-        }
-        return JSONObject(reply.body)
-    }
-    override fun calendars(page: String?): CalendarPage {
-        val body = get("users/me/calendarList", mapOf("maxResults" to "250", "minAccessRole" to "reader", "pageToken" to page))
-        val items = body.optJSONArray("items")
-        val calendars = (0 until (items?.length() ?: 0)).map { i ->
-            val row = items!!.getJSONObject(i)
-            RemoteCalendar(row.getString("id"), row.optString("summary"), row.optString("timeZone", "UTC"),
-                row.optString("backgroundColor", "#64748b"), reminders(row.optJSONArray("defaultReminders")), row.optBoolean("deleted"))
-        }
-        return CalendarPage(calendars, body.optString("nextPageToken").takeIf { it.isNotBlank() })
-    }
-    override fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?): EventPage {
-        val body = get("calendars/${encode(calendar.id)}/events", mapOf("maxResults" to "2500", "singleEvents" to "false",
-            "showDeleted" to "true", "syncToken" to checkpoint, "pageToken" to page))
-        val items = body.optJSONArray("items")
-        val events = mutableListOf<RemoteEvent>()
-        val unreadable = mutableListOf<String>()
-        for (i in 0 until (items?.length() ?: 0)) {
-            // An entry without an id cannot be kept out of reconciliation: the page is refused, nothing is deleted.
-            val row = checkNotNull(items!!.optJSONObject(i)) { "Calendar entry is not an object" }
-            try { events += parseEvent(row, calendar) }
-            catch (e: Exception) { unreadable += row.optString("id").takeIf { it.isNotBlank() } ?: throw e }
-        }
-        return EventPage(events, body.optString("nextPageToken").takeIf { it.isNotBlank() },
-            body.optString("nextSyncToken").takeIf { it.isNotBlank() }, unreadable)
-    }
-    companion object {
-        private val knownZones = TimeZone.getAvailableIDs().toSet()
-        /** Google writes some event zones as a fixed offset ("GMT-07:00"), which getAvailableIDs does not list. */
-        private val offsetZone = Regex("GMT[+-](\\d{1,2})(?::?(\\d{2}))?")
-        /** A named zone as is, a GMT offset as Java names it, else the calendar's zone, else UTC. */
-        fun zoneOf(zone: String, calendarZone: String): String = when {
-            zone in knownZones -> zone
-            offsetZone.matchEntire(zone)?.let { m -> m.groupValues[1].toInt() <= 18 && (m.groupValues[2].ifEmpty { "0" }).toInt() < 60 } == true ->
-                TimeZone.getTimeZone(zone).id
-            calendarZone in knownZones -> calendarZone
-            else -> "UTC"
-        }
-        fun parseEvent(row: JSONObject, calendar: RemoteCalendar): RemoteEvent {
-            val recurrence = row.optJSONArray("recurrence")
-            val reminder = row.optJSONObject("reminders")
-            return RemoteEvent(row.getString("id"), row.optString("etag"), row.optString("summary"), row.optString("description"),
-                row.optString("location"), row.optJSONObject("start")?.let { parseTime(it, calendar.zone) },
-                row.optJSONObject("end")?.let { parseTime(it, calendar.zone) },
-                (0 until (recurrence?.length() ?: 0)).map { normalizeRecurrence(recurrence!!.getString(it)) },
-                row.optString("recurringEventId").takeIf { it.isNotBlank() },
-                row.optJSONObject("originalStartTime")?.let { parseTime(it, calendar.zone) }, row.optString("status") == "cancelled",
-                if (reminder?.optBoolean("useDefault") != false) calendar.reminders else reminders(reminder.optJSONArray("overrides")))
-        }
-        fun parseTime(row: JSONObject, defaultZone: String): EventTime {
-            val allDay = row.has("date")
-            val raw = row.getString(if (allDay) "date" else "dateTime")
-            val zone = if (allDay) "UTC" else zoneOf(row.optString("timeZone", defaultZone), defaultZone)
-            val hasOffset = !allDay && Regex("(Z|[+-]\\d{2}:?\\d{2})$").containsMatchIn(raw)
-            // An explicit IANA zone also permits local dateTime values without a numeric offset.
-            require(allDay || hasOffset || row.has("timeZone"))
-            val normalized = if (allDay) raw else raw.replace(Regex("Z$"), "+0000")
-                .replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
-                .replace(Regex("\\.(\\d+)")) { "." + it.groupValues[1].padEnd(3, '0').take(3) }
-            val pattern = if (allDay) "yyyy-MM-dd" else "yyyy-MM-dd'T'HH:mm:ss" +
-                (if (raw.contains('.')) ".SSS" else "") + (if (hasOffset) "Z" else "")
-            val format = SimpleDateFormat(pattern, Locale.US)
-            format.isLenient = false
-            format.timeZone = TimeZone.getTimeZone(zone)
-            val position = ParsePosition(0)
-            val parsed = requireNotNull(format.parse(normalized, position))
-            require(position.index == normalized.length)
-            return EventTime(parsed.time, allDay, zone)
-        }
-        /** CalendarProvider date lists use "Zone;dates", whereas RFC5545 uses a TZID parameter. */
-        fun normalizeRecurrence(line: String): String {
-            val colon = line.indexOf(':'); require(colon > 0)
-            val property = line.substring(0, colon).split(';')
-            val kind = property.first()
-            require(kind in setOf("RRULE", "EXRULE", "RDATE", "EXDATE"))
-            val dates = line.substring(colon + 1)
-            if (kind == "RRULE" || kind == "EXRULE") { require(property.size == 1); return "$kind:$dates" }
-            require(property.drop(1).all { it.startsWith("TZID=") || it == "VALUE=DATE" || it == "VALUE=DATE-TIME" })
-            val zone = property.firstOrNull { it.startsWith("TZID=") }?.removePrefix("TZID=")
-            return "$kind:" + (zone?.let { "$it;" } ?: "") + dates
-        }
-        private fun reminders(rows: org.json.JSONArray?): List<Int> = (0 until (rows?.length() ?: 0)).mapNotNull {
-            rows!!.getJSONObject(it).takeIf { it.optString("method") == "popup" }?.optInt("minutes")?.takeIf { it in 0..40320 }
-        }.distinct().take(5)
+        if (conflicts == 0 && uploads.uncertain == 0) store.checkpoint(calendar.id, nextCheckpoint)
+        return CalendarReport(stored, conflicts, unreadable.size, uploaded = uploads.uploaded, uncertain = uploads.uncertain)
     }
 }
