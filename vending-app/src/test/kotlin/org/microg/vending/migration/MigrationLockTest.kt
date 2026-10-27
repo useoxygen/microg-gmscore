@@ -45,13 +45,15 @@ class MigrationLockTest {
         val held = CountDownLatch(1); val release = CountDownLatch(1)
         val job = Executors.newSingleThreadExecutor()
         job.execute { synchronized(MigrationInstallQueue.LOCK) { held.countDown(); release.await(10, TimeUnit.SECONDS) } }
+        // Destroy the service afterwards: its 2 s publisher would otherwise send callbacks into later tests.
+        val controller = Robolectric.buildService(PlaySetupService::class.java)
         try {
             assertTrue(held.await(5, TimeUnit.SECONDS))
-            val service = Robolectric.buildService(PlaySetupService::class.java).create().get()
+            val service = controller.create().get()
             val started = System.nanoTime()
             assertNotNull(service.onBind(Intent(PlaySetupService.DESCRIPTOR + ".BIND")))
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 1000)
-        } finally { release.countDown(); job.shutdown() }
+        } finally { release.countDown(); job.shutdown(); controller.destroy() }
     }
 
     @Test fun anAppPlayKeepsRefusingGoesBehindTheOthersAcrossSessions() {
