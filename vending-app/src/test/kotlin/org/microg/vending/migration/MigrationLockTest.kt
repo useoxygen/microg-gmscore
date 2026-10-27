@@ -69,6 +69,29 @@ class MigrationLockTest {
         assertEquals(first to "a.example.app", queue.dispatchOrder().last())
     }
 
+    @Test fun aSessionsRefusalSurvivesAnOlderSessionQueueingTheSameApp() {
+        var installs = 0
+        val queue = MigrationInstallQueue(context) { operation, name ->
+            fun queued() = Bundle().apply {
+                putString("package_name", name); putString("status", "queued"); putLong("version_code", 12)
+            }
+            when {
+                operation == 3 -> if (installs >= 2) queued() else Bundle().apply { putString("package_name", name); putString("status", "none") }
+                ++installs == 1 -> MigrationInstallQueue.unavailable(name, "selected_version_unavailable")
+                else -> queued()
+            }
+        }
+        fun doc(version: Long) = listOf(Bundle().apply { putString("package_name", "org.example.app"); putLong("version_code", version) })
+        val older = queue.beginTransfer(); queue.select(doc(12))
+        val newer = queue.beginTransfer(); queue.select(doc(13))
+        assertEquals(listOf(newer, older), queue.dispatchOrder().map { it.first })
+        queue.dispatchRound()
+        val receipt = queue.summary(newer).getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertEquals("selected_version_unavailable", receipt.getString("error"))
+        assertTrue(receipt.getBoolean("terminal"))
+        assertTrue(queue.pending(newer).isEmpty())
+    }
+
     @Test fun auroraBridgeConnectsWithoutTheMainThread() {
         shadowOf(context.packageManager).installPackage(PackageInfo().apply {
             packageName = "com.aurora.store"

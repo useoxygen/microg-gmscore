@@ -270,6 +270,21 @@ internal class MigrationInstallQueue(private val context: Context,
             putString("cyclon_hold_state", if (getBoolean("complete")) "complete" else "installing")
         }
     }
+    /** One pass over every pending install; false if any must be tried again. */
+    fun dispatchRound(cancelled: () -> Boolean = { false }): Boolean {
+        throttled = false
+        var settled = true
+        val order = dispatchOrder()
+        for ((index, entry) in order.withIndex()) {
+            val (id, name) = entry
+            if (cancelled()) return false
+            if (!dispatch(name, id)) settled = false
+            if (throttled) return false // Play limits the store, not one session: pause every install.
+            // Freeze this session's receipts before another session can touch the same Aurora row.
+            if (order.getOrNull(index + 1)?.first != id) summary(id)
+        }
+        return settled
+    }
     fun dispatch(name: String, id: String = session()): Boolean = synchronized(LOCK) {
         if (name !in pending(id)) return true
         val current = bridge(3, name)
@@ -364,12 +379,8 @@ class MigrationInstallJob : JobService() {
                 val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MINUTES.toNanos(8)
                 do {
                     retry = false
-                    queue.throttled = false
-                    for ((id, name) in queue.dispatchOrder()) {
-                        if (cancelled.get()) return@execute
-                        if (!queue.dispatch(name, id)) retry = true
-                        if (queue.throttled) break // Play limits the store, not one session: pause every install.
-                    }
+                    if (!queue.dispatchRound { cancelled.get() }) retry = true
+                    if (cancelled.get()) return@execute
                     for (id in queue.sessions()) {
                         val state = queue.summary(id)
                         queue.changed(id)
