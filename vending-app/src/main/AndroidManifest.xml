@@ -47,6 +47,8 @@
 
     <queries>
         <package android:name="com.aurora.store" />
+        <package android:name="ai.cyclon.migration" />
+        <package android:name="android" />
         <package android:name="com.google.android.apps.restore" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -358,6 +360,9 @@
             android:label="Transferred apps" android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
             <intent-filter><action android:name="ai.cyclon.migration.APP_RESULTS" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
         </activity>
+        <provider android:name="org.microg.vending.migration.TransferSessionProvider"
+            android:authorities="com.android.vending.migration" android:exported="true"
+            android:grantUriPermissions="false" />
         <service android:name="org.microg.vending.migration.MigrationInstallJob" android:exported="true"
             android:permission="android.permission.BIND_JOB_SERVICE" />
         <service android:name="org.microg.vending.migration.PlaySetupService" android:exported="true">
