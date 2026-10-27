@@ -33,7 +33,11 @@ class SyncedContactsTest {
     private class Provider : ContentProvider() {
         val db: SQLiteDatabase = SQLiteDatabase.create(null).apply {
             execSQL("CREATE TABLE raw_contacts (_id INTEGER PRIMARY KEY, account_name TEXT, account_type TEXT, data_set TEXT, " +
-                "sourceid TEXT, sync3 TEXT, sync4 TEXT, dirty INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0)")
+                "sourceid TEXT, sync3 TEXT, sync4 TEXT, dirty INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0, version INTEGER DEFAULT 1, " +
+                "starred INTEGER DEFAULT 0, custom_ringtone TEXT, send_to_voicemail INTEGER DEFAULT 0)")
+            execSQL("CREATE TABLE data (_id INTEGER PRIMARY KEY, raw_contact_id INTEGER, mimetype TEXT, is_primary INTEGER DEFAULT 0, " +
+                "is_super_primary INTEGER DEFAULT 0, data1 TEXT, data2 TEXT, data3 TEXT, data4 TEXT, data5 TEXT, data6 TEXT, data7 TEXT, " +
+                "data8 TEXT, data9 TEXT, data10 TEXT, data11 TEXT, data12 TEXT, data13 TEXT, data14 TEXT, data15 BLOB)")
             execSQL("CREATE TABLE groups (_id INTEGER PRIMARY KEY, account_name TEXT, account_type TEXT, data_set TEXT, " +
                 "sourceid TEXT, sync3 TEXT, sync4 TEXT, system_id TEXT, dirty INTEGER DEFAULT 0, deleted INTEGER DEFAULT 0)")
         }
@@ -41,16 +45,21 @@ class SyncedContactsTest {
         override fun onCreate() = true
         override fun getType(uri: Uri): String? = null
         private fun table(uri: Uri) = uri.pathSegments.first()
+        private fun where(uri: Uri, selection: String?): String? {
+            val id = uri.pathSegments.getOrNull(1) ?: return selection
+            return "_id=$id" + (selection?.let { " AND ($it)" } ?: "")
+        }
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor =
-            db.query(table(uri), projection, selection, args, null, null, sort)
+            db.query(table(uri), projection, where(uri, selection), args, null, null, sort)
         override fun insert(uri: Uri, values: ContentValues?): Uri {
-            assertEquals("syncstate", table(uri)); state = values!!.getAsByteArray(ContactsContract.SyncState.DATA)
+            if (table(uri) != "syncstate") return ContentUris.withAppendedId(uri, db.insert(table(uri), null, values))
+            state = values!!.getAsByteArray(ContactsContract.SyncState.DATA)
             return ContentUris.withAppendedId(uri, 1)
         }
         override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<out String>?): Int = error("Unexpected update")
         override fun delete(uri: Uri, selection: String?, args: Array<out String>?): Int {
             assertEquals("true", uri.getQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER))
-            return db.delete(table(uri), selection, args)
+            return db.delete(table(uri), where(uri, selection), args)
         }
         fun ids(table: String): Set<Long> = db.rawQuery("SELECT _id FROM $table", null).use { c ->
             buildSet { while (c.moveToNext()) add(c.getLong(0)) }
@@ -75,7 +84,7 @@ class SyncedContactsTest {
             contact(2, legacy)                                // older sync: removed
             contact(3, null)                                  // existed before sync was enabled: kept
             contact(15, null, dirty = true)                   // between the legacy and private floors: not the engine's, kept
-            contact(21, null, dirty = true)                   // created here after enabling, not uploaded yet: removed, unsynced
+            contact(21, null, dirty = true)                   // created here after enabling, never uploaded: kept as a device contact
             contact(22, null)                                 // clean unowned row above the floor: the engine never adopts it, kept
             contact(23, null, sourceId = "other-adapter")     // another sync adapter's contact: kept
             contact(13, private, dataSet = "plugin")          // other data set: kept
@@ -97,13 +106,17 @@ class SyncedContactsTest {
         val client = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!
         val synced = SyncedContacts(client, account, prefs)
 
-        assertEquals(3, synced.unsyncedChanges())
+        assertEquals(2, synced.unsyncedChanges())         // 24 (upload in flight) and label 31; 21 is kept, not lost
+        assertEquals(1, synced.keptOnPhone())
         assertEquals(4, synced.count())
         assertThrows(IllegalStateException::class.java) { synced.remove() } // Never while sync can still write.
 
         prefs.configure(SyncMode.OFF, Long.MAX_VALUE); prefs.pendingRemoval = true
         synced.remove()
-        assertEquals(setOf(3L, 13L, 14L, 15L, 22L, 23L), provider.ids("raw_contacts"))
+        assertEquals(setOf(3L, 13L, 14L, 15L, 22L, 23L, 25L), provider.ids("raw_contacts"))
+        provider.db.rawQuery("SELECT account_name, account_type FROM raw_contacts WHERE _id=25", null).use { c ->
+            assertTrue(c.moveToFirst()); assertTrue(c.isNull(0)); assertTrue(c.isNull(1)) // 21's copy, now on the device
+        }
         assertEquals(setOf(3L, 4L, 25L), provider.ids("groups"))
         assertEquals("{}", String(provider.state!!, Charsets.UTF_8))
         assertNull(prefs.privateGroupCheckpoint("binding"))

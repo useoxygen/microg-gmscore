@@ -79,6 +79,10 @@
         <item quantity="one">Important: %1$d change made on this phone hasn\'t been uploaded and will be lost. To keep it, cancel and turn on Upload changes from this phone first.</item>
         <item quantity="other">Important: %1$d changes made on this phone haven\'t been uploaded and will be lost. To keep them, cancel and turn on Upload changes from this phone first.</item>
     </plurals>
+    <plurals name="contacts_sync_turn_off_kept">
+        <item quantity="one">%d new contact that hasn\'t reached Google yet stays on this phone as a device contact.</item>
+        <item quantity="other">%d new contacts that haven\'t reached Google yet stay on this phone as device contacts.</item>
+    </plurals>
     <string name="contacts_sync_turn_off_confirm">Turn off</string>
     <string name="contacts_sync_cancel">Cancel</string>
     <string name="contacts_sync_allow">Allow</string>

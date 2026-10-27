@@ -55,7 +55,7 @@ class ContactSyncService : Service() {
                     val autoMove = { prefs.mode == SyncMode.TWO_WAY && DeviceContacts.autoAccount(this@ContactSyncService) == account.name &&
                         !ContactMigrationPrivacy(this@ContactSyncService).held }
                     if (mode == SyncMode.TWO_WAY && autoMove()) {
-                        val device = DeviceContacts(contentResolver)
+                        val device = DeviceContacts(provider)
                         val result = device.moveTo(account, device.list().filter { it.supported }.map { it.id }, autoMove)
                         if (result.moved > 0) Log.i("GmsContactSync", "stage=device_contacts moved=${result.moved}")
                     }

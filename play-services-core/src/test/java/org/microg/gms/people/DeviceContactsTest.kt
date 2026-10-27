@@ -71,7 +71,7 @@ class DeviceContactsTest {
         val context = RuntimeEnvironment.getApplication()
         val provider = Provider().apply { attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY }) }
         ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
-        return provider to DeviceContacts(context.contentResolver)
+        return provider to DeviceContacts(context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY_URI)!!)
     }
 
     @Test fun listsOnlyContactsSavedOnThePhone() {

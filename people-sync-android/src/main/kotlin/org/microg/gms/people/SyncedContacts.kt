@@ -25,15 +25,24 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
 
     // Exactly what the sync engine treats as its own: rows it owns, plus new rows it would adopt
     // (created in this account after enabling, never uploaded, still dirty). See AndroidContactStore.contacts().
+    private val adoptionFloor get() = if (prefs.uploadNewContacts) prefs.privateAdoptionFloor else Long.MAX_VALUE
     private val rawScope get() = "$accountScope AND (${RawContacts.SYNC4} IN (?,?) OR (${RawContacts.SYNC4} IS NULL AND " +
-        "${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>${if (prefs.uploadNewContacts) prefs.privateAdoptionFloor else Long.MAX_VALUE} AND ${RawContacts.DIRTY}=1))"
+        "${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>$adoptionFloor AND ${RawContacts.DIRTY}=1))"
+    // New contacts made on this phone (or moved here from device storage) that never reached Google, with nothing
+    // in flight: turning sync off keeps them as device contacts instead of deleting them.
+    private val keptScope get() = "$accountScope AND ${RawContacts.SYNC4} IS NULL AND ${RawContacts.SOURCE_ID} IS NULL AND " +
+        "${RawContacts.SYNC3} IS NULL AND ${RawContacts._ID}>$adoptionFloor AND ${RawContacts.DIRTY}=1 AND ${RawContacts.DELETED}=0"
+    private val accountArgs get() = arrayOf(account.name, account.type)
     // Groups sync created (labels and imported system groups), plus new labels it would adopt (AndroidGroupStore.groups()).
     private val groupScope get() = "$accountScope AND (${Groups.SYNC4} IN (?,?) OR (${Groups.SYNC4} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND " +
         "${Groups.SOURCE_ID} IS NULL AND ${Groups._ID}>${prefs.privateGroupAdoptionFloor} AND ${Groups.DIRTY}=1))"
 
-    /** Contacts or labels with edits that haven't reached Google yet; removing them loses those edits. */
+    /** Contacts or labels with edits that haven't reached Google yet and would be lost; kept new contacts excluded. */
     fun unsyncedChanges(): Int = count(RawContacts.CONTENT_URI, "$rawScope AND (${RawContacts.DIRTY}!=0 OR ${RawContacts.SYNC3} IS NOT NULL)") +
-        count(Groups.CONTENT_URI, "$groupScope AND (${Groups.DIRTY}!=0 OR ${Groups.SYNC3} IS NOT NULL)")
+        count(Groups.CONTENT_URI, "$groupScope AND (${Groups.DIRTY}!=0 OR ${Groups.SYNC3} IS NOT NULL)") - keptOnPhone()
+
+    /** New contacts that never reached Google; turning sync off keeps them on this phone. */
+    fun keptOnPhone(): Int = provider.query(RawContacts.CONTENT_URI, arrayOf("_id"), keptScope, accountArgs, null)?.use { it.count } ?: 0
 
     fun count(): Int = count(RawContacts.CONTENT_URI, "$rawScope AND ${RawContacts.DELETED}=0")
 
@@ -52,6 +61,13 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
     private fun removeLocked() {
         check(prefs.mode == org.microg.gms.people.sync.SyncMode.OFF)
         if (!prefs.pendingRemoval) return // Cancelled by turning sync back on.
+        // First keep never-uploaded contacts as device contacts, each in its own transaction, so nothing created
+        // or moved here is lost. If this stops halfway, the removal is retried and the rest are kept then.
+        val kept = provider.query(RawContacts.CONTENT_URI, arrayOf(RawContacts._ID), keptScope, accountArgs, null)?.use { c ->
+            buildList { while (c.moveToNext()) add(c.getLong(0)) }
+        }.orEmpty()
+        val device = DeviceContacts(provider)
+        for (id in kept) device.keepOnPhone(id, keptScope, accountArgs)
         provider.applyBatch(arrayListOf(
             ContentProviderOperation.newDelete(syncUri(RawContacts.CONTENT_URI)).withSelection(rawScope, args).build(),
             ContentProviderOperation.newDelete(syncUri(Groups.CONTENT_URI)).withSelection(groupScope, args).build(),
