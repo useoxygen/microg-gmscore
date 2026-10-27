@@ -382,8 +382,9 @@ class ContactsSyncActivity : ComponentActivity() {
     /** The account's Google profile photo (cached, else fetched once), like Google's card; the initial until then. */
     @Composable
     private fun Avatar(account: Account) {
-        val photo by produceState<Bitmap?>(null, account.name) {
-            value = withContext(Dispatchers.IO) {
+        var photo by remember(account.name) { mutableStateOf<Bitmap?>(null) }
+        LaunchedEffect(account.name) {
+            photo = withContext(Dispatchers.IO) {
                 runCatching {
                     PeopleManager.getOwnerAvatarBitmap(this@ContactsSyncActivity, account.name, false)
                         ?: PeopleManager.getOwnerAvatarBitmap(this@ContactsSyncActivity, account.name, true)
