@@ -76,6 +76,49 @@ object ContactFieldMapper {
         return mime in specs.map { it.mime }
     }
 
+    /** Import ownership/deletion requires every populated native value to survive projection. */
+    fun losslessImport(row: ContentValues): Boolean {
+        val mime = row.getAsString(Data.MIMETYPE)
+        val projected = when (mime) {
+            Photo.CONTENT_ITEM_TYPE -> ContentValues().apply {
+                put(Photo.PHOTO, row.getAsByteArray(Photo.PHOTO)); put(Data.IS_PRIMARY, 1)
+            }
+            GroupMembership.CONTENT_ITEM_TYPE -> ContentValues().apply {
+                put(GroupMembership.GROUP_ROW_ID, row.getAsString(GroupMembership.GROUP_ROW_ID))
+            }
+            Event.CONTENT_ITEM_TYPE -> {
+                if (!supported(row)) return false
+                val json = JSONObject()
+                fields(listOf(row)).forEach { (key, value) -> json.put(key, JSONArray(value)) }
+                rows(Person("", json)).singleOrNull() ?: return false
+            }
+            else -> {
+                val spec = specs.firstOrNull { it.mime == mime } ?: return false
+                fromJson(spec, toJson(spec, row))
+            }
+        }
+        val undefinedStyles = when (mime) {
+            StructuredName.CONTENT_ITEM_TYPE -> setOf(StructuredName.FULL_NAME_STYLE, StructuredName.PHONETIC_NAME_STYLE)
+            Organization.CONTENT_ITEM_TYPE -> setOf(Organization.PHONETIC_NAME_STYLE)
+            else -> emptySet()
+        }
+        val flags = setOf(Data.IS_PRIMARY, Data.IS_SUPER_PRIMARY, Data.IS_READ_ONLY)
+        val defaults = flags + undefinedStyles
+        val columns = (1..15).map { "data$it" } + flags + listOf(Data.SYNC1, Data.SYNC2, Data.SYNC3, Data.SYNC4)
+        return columns.all { column ->
+            val value = row.get(column)
+            when {
+                value == null || value == "" || value is ByteArray && value.isEmpty() -> true
+                // Switch writes undefined name styles (0); unset flags also carry no preference.
+                column in defaults && row.getAsString(column) == "0" -> true
+                // Permit only an exactly redundant normalized phone number, not guessed country/format equivalence.
+                mime == Phone.CONTENT_ITEM_TYPE && column == Phone.NORMALIZED_NUMBER && value is String && value == row.getAsString(Phone.NUMBER) -> true
+                value is ByteArray -> (projected.get(column) as? ByteArray)?.contentEquals(value) == true
+                else -> row.getAsString(column) == projected.getAsString(column)
+            }
+        }
+    }
+
     private fun fromJson(spec: Spec, json: JSONObject): ContentValues = ContentValues().apply {
         put(Data.MIMETYPE, spec.mime)
         for ((key, column) in spec.columns) if (json.has(key)) put(column, json.optString(key))
@@ -161,6 +204,8 @@ object ContactFieldMapper {
                 val index = cursor.getColumnIndex(name)
                 if (cursor.getType(index) == Cursor.FIELD_TYPE_INTEGER) put(name, cursor.getLong(index))
                 else if (cursor.getType(index) == Cursor.FIELD_TYPE_STRING) put(name, cursor.getString(index))
+                else if (cursor.getType(index) == Cursor.FIELD_TYPE_FLOAT) put(name, cursor.getDouble(index))
+                else if (cursor.getType(index) == Cursor.FIELD_TYPE_BLOB) put(name, cursor.getBlob(index))
             }
         })
     }

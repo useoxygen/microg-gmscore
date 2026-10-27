@@ -8,6 +8,13 @@ import android.content.ContentValues
 import android.content.pm.ProviderInfo
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.ContactsContract.CommonDataKinds.Organization
+import android.provider.ContactsContract.CommonDataKinds.StructuredName
+import android.provider.ContactsContract.CommonDataKinds.Email
+import android.provider.ContactsContract.CommonDataKinds.Event
+import android.provider.ContactsContract.CommonDataKinds.Im
+import android.provider.ContactsContract.CommonDataKinds.Nickname
+import android.provider.ContactsContract.CommonDataKinds.Website
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.RawContacts
 import org.json.JSONArray
@@ -73,6 +80,20 @@ class ImportedContactsSyncTest {
             provider.addRaw(rawAccount, source, owner, dirty, dataset, deleted).also { provider.addFields(it, data) }
         fun editPhone(id: Long, number: String) = provider.update(Data.CONTENT_URI, ContentValues().apply { put(Phone.NUMBER, number) },
             "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), Phone.CONTENT_ITEM_TYPE))
+        // Native Switch-shaped columns, deliberately independent of ContactFieldMapper.rows().
+        fun nativeImported(source: String?, extra: ContentValues? = null): Long = provider.addRaw(account, source).also { id ->
+            val rows = listOf(ContentValues().apply {
+                put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, "Synthetic")
+                put(StructuredName.FULL_NAME_STYLE, 0); put(StructuredName.PHONETIC_NAME_STYLE, 0)
+            }, ContentValues().apply {
+                put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            }) + listOfNotNull(extra)
+            for (row in rows) provider.insert(Data.CONTENT_URI, ContentValues(row).apply { put(Data.RAW_CONTACT_ID, id) })
+        }
+        fun data(id: Long, mime: String, column: String): String? = provider.query(Data.CONTENT_URI, arrayOf(column),
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), mime), null).use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
         fun raw(id: Long, column: String): String? = provider.query(RawContacts.CONTENT_URI, arrayOf(column), "_id=?", arrayOf(id.toString()), null).use {
             assertTrue(it.moveToFirst()); it.getString(0)
         }
@@ -330,5 +351,108 @@ class ImportedContactsSyncTest {
         assertEquals(1, api.updates); assertEquals(0, api.creates)
         assertNull(raw(unowned, RawContacts.SYNC4)); assertEquals(listOf(owned, unowned), provider.rawIds)
         assertEquals(store.project(api.remote.getValue(original.resource)), store.contacts().single().fields)
+    }
+    private fun nativeOrganization(office: String? = null) = ContentValues().apply {
+        put(Data.MIMETYPE, Organization.CONTENT_ITEM_TYPE); put(Organization.COMPANY, "Fixture Co")
+        put(Organization.TYPE, Organization.TYPE_WORK)
+        office?.let { put(Organization.OFFICE_LOCATION, it) }
+    }
+    private fun organizationPerson() = person().also { it.json.put("organizations", JSONArray()
+        .put(JSONObject().put("name", "Fixture Co").put("type", "work"))) }
+    private fun firstNativeOfficeImport(source: String?) = fixture {
+        val remote = organizationPerson(); api.remote[remote.resource] = remote
+        val id = nativeImported(source, nativeOrganization("Floor 4"))
+        val report = sync()
+        assertEquals("Floor 4", data(id, Organization.CONTENT_ITEM_TYPE, Organization.OFFICE_LOCATION))
+        assertNull(raw(id, RawContacts.SYNC4)); assertEquals(1, report.unverifiedImports)
+        assertEquals(0, api.creates + api.updates + api.deletes)
+        sync()
+        assertEquals("Floor 4", data(id, Organization.CONTENT_ITEM_TYPE, Organization.OFFICE_LOCATION))
+    }
+    @Test fun firstSourceIdImportKeepsNativeOfficeLocationUnowned() = firstNativeOfficeImport("17")
+    @Test fun firstSourceLessImportKeepsNativeOfficeLocationUnowned() = firstNativeOfficeImport(null)
+    private fun repeatedNativeOfficeImport(source: String?) = fixture {
+        val remote = organizationPerson(); api.remote[remote.resource] = remote
+        val first = nativeImported(source, nativeOrganization()); sync()
+        val second = nativeImported(source, nativeOrganization("Floor 4"))
+        val report = sync()
+        assertEquals("Floor 4", data(second, Organization.CONTENT_ITEM_TYPE, Organization.OFFICE_LOCATION))
+        assertEquals(listOf(first, second), provider.rawIds); assertNull(raw(second, RawContacts.SYNC4))
+        assertEquals(1, report.unverifiedImports); assertEquals(0, api.creates + api.updates + api.deletes)
+    }
+    @Test fun repeatSourceIdImportKeepsUnaccountedNativeOfficeLocation() = repeatedNativeOfficeImport("17")
+    @Test fun repeatSourceLessImportKeepsUnaccountedNativeOfficeLocation() = repeatedNativeOfficeImport(null)
+    @Test fun nativeMappedRepeatStillAdoptsAndCollapses() {
+        for (source in listOf(null, "17")) fixture {
+            val remote = organizationPerson(); api.remote[remote.resource] = remote
+            val first = nativeImported(source, nativeOrganization()); sync()
+            nativeImported(source, nativeOrganization()); sync()
+            assertEquals(listOf(first), provider.rawIds); assertEquals(first, store.contacts().single().id)
+            assertEquals("Fixture Co", data(first, Organization.CONTENT_ITEM_TYPE, Organization.COMPANY))
+            assertEquals(0, api.creates + api.updates + api.deletes)
+        }
+    }
+    @Test fun otherLossySwitchNativeColumnsStayUnownedForReview() {
+        fun native(mime: String, fill: ContentValues.() -> Unit) = ContentValues().apply { put(Data.MIMETYPE, mime); fill() }
+        val rows = listOf(
+            nativeOrganization().apply { put(Organization.PHONETIC_NAME_STYLE, 3) },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(StructuredName.FULL_NAME_STYLE, 3) },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(StructuredName.PHONETIC_NAME_STYLE, 3) },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(StructuredName.DISPLAY_NAME, "Custom display") },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(Data.IS_PRIMARY, 1) },
+            native(Nickname.CONTENT_ITEM_TYPE) { put(Nickname.NAME, "Nickname"); put(Nickname.TYPE, Nickname.TYPE_DEFAULT) },
+            native(Nickname.CONTENT_ITEM_TYPE) { put(Nickname.NAME, "Nickname"); put(Nickname.LABEL, "Custom nickname") },
+            native(Nickname.CONTENT_ITEM_TYPE) { put(Nickname.NAME, "Nickname"); put(Data.IS_SUPER_PRIMARY, 1) },
+            native(Phone.CONTENT_ITEM_TYPE) { put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_CAR) },
+            native(Phone.CONTENT_ITEM_TYPE) { put(Phone.NUMBER, "123"); put(Phone.NORMALIZED_NUMBER, "+1123") },
+            native(Website.CONTENT_ITEM_TYPE) { put(Website.URL, "https://example.invalid"); put(Website.TYPE, Website.TYPE_HOMEPAGE) },
+            native(Website.CONTENT_ITEM_TYPE) { put(Website.URL, "ftp://example.invalid"); put(Website.TYPE, Website.TYPE_FTP) },
+            native(Email.CONTENT_ITEM_TYPE) { put(Email.ADDRESS, "native@invalid"); put(Email.TYPE, Email.TYPE_HOME); put(Email.LABEL, "Extra label") },
+            native(Email.CONTENT_ITEM_TYPE) { put(Email.ADDRESS, "native@invalid"); put(Email.TYPE, Email.TYPE_CUSTOM); put(Email.LABEL, "home") },
+            native(Im.CONTENT_ITEM_TYPE) { put(Im.DATA, "Native"); put(Im.PROTOCOL, 42) },
+            native(Im.CONTENT_ITEM_TYPE) { put(Im.DATA, "Native"); put(Im.PROTOCOL, Im.PROTOCOL_AIM); put(Im.CUSTOM_PROTOCOL, "Extra protocol") },
+            native(Event.CONTENT_ITEM_TYPE) { put(Event.START_DATE, "2000-01-01"); put(Event.TYPE, Event.TYPE_BIRTHDAY); put(Event.LABEL, "Extra label") },
+            nativeOrganization().apply { put(Data.DATA14, 1.5) },
+            nativeOrganization().apply { put(Data.DATA15, byteArrayOf(1, 2, 3)) }
+        )
+        for ((index, row) in rows.withIndex()) fixture {
+            val remote = person(); api.remote[remote.resource] = remote
+            val id = nativeImported("17", row)
+            val report = sync()
+            assertNull("native row $index must remain unowned", raw(id, RawContacts.SYNC4))
+            assertEquals(1, report.unverifiedImports); assertTrue(id in provider.rawIds)
+            assertEquals(0, api.creates + api.updates + api.deletes)
+        }
+    }
+    @Test fun nativeRoundTripKeepsMeaningfulZeroesAndSeparatePhotoGroupColumns() {
+        val aim = ContentValues().apply {
+            put(Data.MIMETYPE, Im.CONTENT_ITEM_TYPE); put(Im.DATA, "Native"); put(Im.TYPE, Im.TYPE_WORK); put(Im.PROTOCOL, Im.PROTOCOL_AIM)
+        }
+        assertTrue(ContactFieldMapper.losslessImport(aim)) // AIM=0 is a real protocol, not an absent value.
+        val custom = ContentValues().apply {
+            put(Data.MIMETYPE, Email.CONTENT_ITEM_TYPE); put(Email.ADDRESS, "native@invalid")
+            put(Email.TYPE, Email.TYPE_CUSTOM); put(Email.LABEL, "Special")
+        }
+        assertTrue(ContactFieldMapper.losslessImport(custom))
+        custom.put(Email.LABEL, "home")
+        assertFalse(ContactFieldMapper.losslessImport(custom)) // TYPE_CUSTOM=0 must not normalize to TYPE_HOME.
+        val phone = ContentValues().apply {
+            put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "+14155550123")
+            put(Phone.NORMALIZED_NUMBER, "+14155550123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            put(Data.IS_PRIMARY, 1); put(Data.IS_SUPER_PRIMARY, 0); put(Data.IS_READ_ONLY, 0)
+        }
+        assertTrue(ContactFieldMapper.losslessImport(phone))
+        for ((mime, column, value) in listOf(
+            Triple(ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE, Data.DATA15, byteArrayOf(1, 2, 3)),
+            Triple(ContactsContract.CommonDataKinds.GroupMembership.CONTENT_ITEM_TYPE, Data.DATA1, 7L)
+        )) {
+            val row = ContentValues().apply {
+                put(Data.MIMETYPE, mime)
+                if (value is ByteArray) put(column, value) else put(column, value as Long)
+            }
+            assertTrue(ContactFieldMapper.losslessImport(row))
+            row.put(Data.DATA2, "Unaccounted value")
+            assertFalse(ContactFieldMapper.losslessImport(row))
+        }
     }
 }

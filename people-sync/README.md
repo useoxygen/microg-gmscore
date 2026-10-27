@@ -117,6 +117,14 @@ unknown source ID never falls back to content matching. Source-less contacts can
 match one complete mapped-field projection, or become a new contact. Device/app,
 other-account, dataset and other-adapter rows remain separate.
 
+Import adoption and duplicate deletion first require every populated native
+column to survive the mapper's reconstruction (including type/label/protocol
+semantics). Organization office location, unrepresented name styles/preferences,
+nickname types and other lossy columns stay unowned for review, even if the MIME
+type is recognized. Populated provider-generated columns are held too when their
+equivalence cannot be proved; only unset style/flag values and exactly redundant
+normalized phone numbers have explicit exceptions.
+
 Adoption records ownership and the remote etag without replacing native data.
 Switch transfers no original etag or baseline: divergent populated fields and
 pre-adoption deletions are retained as conflicts rather than overwriting cloud

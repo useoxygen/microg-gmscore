@@ -141,7 +141,8 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
                 var unreadablePhoto = false
                 val hasPhoto = try { photoToken(id) != ContactPhotos.NONE } catch (error: UnreadableContact) { unreadablePhoto = true; true }
                 val unsupported = legacyNeedsReview || unreadablePhoto || rows.any { !ContactFieldMapper.supported(it) && it.getAsString(Data.MIMETYPE) != Photo.CONTENT_ITEM_TYPE &&
-                    !(groupStore != null && it.getAsString(Data.MIMETYPE) == GroupMembership.CONTENT_ITEM_TYPE) } || membership.any { it.startsWith("localGroup:") }
+                    !(groupStore != null && it.getAsString(Data.MIMETYPE) == GroupMembership.CONTENT_ITEM_TYPE) } || membership.any { it.startsWith("localGroup:") } ||
+                    imported && rows.any { !ContactFieldMapper.losslessImport(it) }
                 val fields = ContactFieldMapper.fields(rows).toMutableMap().apply { if (groupStore != null) put("memberships", Memberships.field(membership)) }
                 add(LocalContact(id, number(RawContacts.VERSION), text(RawContacts.SOURCE_ID), text(RawContacts.SYNC1),
                     fields, text(RawContacts.SYNC2)?.let { baselineFields(JSONObject(it)) }.orEmpty(),
@@ -199,6 +200,9 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         val remoteByFields = people.filter { !it.deleted }.groupBy { importFields(project(it)) }
         var unverified = 0
         for (candidate in candidates) try {
+            // A mapped-field signature cannot account for native data it omits
+            // (e.g. Switch hmg.java:722 organization office location/data9).
+            if (candidate.unsupported) { checked[candidate.id] = candidate.version; unverified++; continue }
             if (!full && candidate.resource.isNullOrEmpty()) { unverified++; continue }
             val key = importFields(candidate.fields)
             val emptyText = candidate.fields.filterKeys { it != "memberships" }.values.all { it == "[]" }
