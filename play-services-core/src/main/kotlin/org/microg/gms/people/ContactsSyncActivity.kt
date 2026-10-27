@@ -447,7 +447,7 @@ class ContactsSyncActivity : ComponentActivity() {
             status == "auto_off" -> Triple(rememberVectorPainter(Icons.Filled.Info), muted, stringResource(R.string.contacts_sync_auto_sync_off_status))
             else -> Triple(rememberVectorPainter(Icons.Filled.CheckCircle), MaterialTheme.colorScheme.primary, stringResource(R.string.contacts_sync_switch_on))
         }
-        val detail = if (status == "active" || status == "off") null else lastSync ?: stringResource(R.string.contacts_sync_ready).takeIf { status != "permission" }
+        val detail = if (status == "active" || status == "off") null else lastSync ?: stringResource(R.string.contacts_sync_ready).takeIf { status != "permission" && !isWarning(status) }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             icon?.let { Icon(it, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp)) }
             Text(if (detail == null) label else stringResource(R.string.contacts_sync_status_bullet, label, detail),
