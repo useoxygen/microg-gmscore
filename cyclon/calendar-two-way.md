@@ -71,7 +71,11 @@ changes or create a separate event rather than changing the parent series.
 
 The provider stores the last server representation, a durable mutation journal,
 and the fingerprint of the local edit before each request. Create retries use
-the same client event ID. Acknowledgment preserves newer local edits. An absent
+the same client event ID. The journal also retains the actual dispatched provider
+projection: acknowledgment merges unchanged fields from Google while preserving
+later local edits, including after a lost reply. A master refresh waits while an
+unsynced occurrence still depends on its inherited baseline; once that occurrence
+settles or its conflict is resolved, the master and sync token can advance. An absent
 local row is never a server-delete request: only an explicit dirty tombstone
 with an owned server identity can delete remotely. Losing the local calendar
 also loses its sync token, so a provider wipe downloads a fresh snapshot.

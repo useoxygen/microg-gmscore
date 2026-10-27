@@ -18,7 +18,9 @@ data class RemoteEvent(val id: String, val etag: String, val title: String, val 
     val visibility: String = "default", val transparency: String = "opaque")
 /** A provider snapshot; fingerprints are opaque to the engine and must include all local writable fields. */
 data class LocalEvent(val id: Long, val event: RemoteEvent, val deleted: Boolean, val dirty: Boolean,
-    val base: RemoteEvent?, val pending: JSONObject? = null, val fingerprint: String, val unsupported: Boolean = false)
+    val base: RemoteEvent?, val pending: JSONObject? = null, val fingerprint: String, val unsupported: Boolean = false,
+    /** The actual provider projection, retained when conflict resolution rebases [event] into a virtual upload intent. */
+    val observed: RemoteEvent? = null)
 data class CalendarPage(val calendars: List<RemoteCalendar>, val next: String?)
 /** [unreadable]: ids of events on this page that could not be read; they are skipped, and kept if already stored. */
 data class EventPage(val events: List<RemoteEvent>, val next: String?, val checkpoint: String?, val unreadable: List<String> = emptyList())

@@ -115,10 +115,18 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         if (current != null && ((current.row.getAsInteger(Events.DIRTY) ?: 0) != 0 || current.row.getAsString(Events.SYNC_DATA4) != null)) return false
         return write(calendar, event, local?.first, current)
     }
-    private fun write(calendar: RemoteCalendar, event: RemoteEvent, localId: Long?, assertion: Snapshot? = null): Boolean {
+    private data class Acknowledgement(val remote: RemoteEvent, val current: Snapshot,
+        val sentRow: JSONObject?, val keepReminders: Boolean)
+    private fun write(calendar: RemoteCalendar, event: RemoteEvent, localId: Long?, assertion: Snapshot? = null,
+        acknowledgement: Acknowledgement? = null): Boolean {
         check(prefs.enabled)
         val calendarId = requireNotNull(calendars[calendar.id])
-        if (event.cancelled && event.masterId == null) {
+        // A source-less exception inherits its conflict baseline from this master. Keep that revision until the
+        // exception acquires its own server identity; the same absence check below closes the insertion race.
+        // A newly created master has no baseline yet and must settle first so its children can acquire an identity.
+        val guardMaster = event.masterId == null && localId != null && assertion?.row?.getAsString(Events.SYNC_DATA3) != null
+        if (guardMaster && hasDependentOccurrences(calendarId, event.id, localId)) return false
+        if (event.cancelled && event.masterId == null && acknowledgement == null) {
             if (hasDirtyChildren(calendarId, event.id, localId)) return false
             return localId?.let { deleteDownloaded(calendarId, event.id, it) } ?: true
         }
@@ -130,16 +138,18 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         val end = event.end ?: if (event.cancelled) start.copy(millis = start.millis + if (start.allDay) 86_400_000 else 1_000) else null
         requireNotNull(end)
         require(end.millis >= start.millis && start.allDay == end.allDay)
+        val baseline = acknowledgement?.remote ?: event
         val values = ContentValues().apply {
             put(Events.CALENDAR_ID, calendarId); put(Events._SYNC_ID, event.id); put(Events.SYNC_DATA1, MARKER)
-            put(Events.SYNC_DATA2, event.etag); put(Events.SYNC_DATA3, CalendarEventCodec.encode(event).toString())
+            put(Events.SYNC_DATA2, baseline.etag); put(Events.SYNC_DATA3, CalendarEventCodec.encode(baseline).toString())
             putNull(Events.SYNC_DATA4); put(Events.SYNC_DATA5, event.creationId)
             put(Events.TITLE, event.title); put(Events.DESCRIPTION, event.description)
             put(Events.EVENT_LOCATION, event.location); put(Events.DTSTART, start.millis)
             put(Events.EVENT_TIMEZONE, start.zone); put(Events.EVENT_END_TIMEZONE, end.zone)
             put(Events.ALL_DAY, if (start.allDay) 1 else 0)
             put(Events.STATUS, if (event.cancelled) Events.STATUS_CANCELED else Events.STATUS_CONFIRMED)
-            put(Events.DIRTY, 0); put(Events.DELETED, 0)
+            put(Events.DIRTY, if (acknowledgement == null) 0 else 1)
+            put(Events.DELETED, acknowledgement?.current?.row?.getAsInteger(Events.DELETED) ?: 0)
             put(Events.HAS_ALARM, if (event.cancelled || event.reminders.isEmpty()) 0 else 1)
             for ((prefix, column) in listOf("RRULE:" to Events.RRULE, "RDATE:" to Events.RDATE,
                 "EXRULE:" to Events.EXRULE, "EXDATE:" to Events.EXDATE)) {
@@ -160,11 +170,25 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
                 putNull(Events.ORIGINAL_INSTANCE_TIME); putNull(Events.ORIGINAL_ALL_DAY)
             }
         }
-        val extraValues = extraValues(event)
-        values.putAll(extraValues)
-        values.put(Events.SYNC_DATA6, json(extraValues).toString())
+        val metadata = extraValues(event)
+        values.putAll(metadata)
+        values.put(Events.SYNC_DATA6, json(extraValues(baseline)).toString())
+        if (acknowledgement != null) {
+            // Unknown local edits remain visible and dirty. Only metadata unchanged since dispatch may take the
+            // server's value; never bless a later organizer/guest-policy edit by moving the baseline under it.
+            for (column in extraColumns - supportedExtraColumns) {
+                val current = acknowledgement.current.row.getAsString(column)
+                val sent = acknowledgement.sentRow
+                if (sent == null || current != if (sent.isNull(column)) null else sent.get(column).toString()) {
+                    values.put(column, current)
+                }
+            }
+            if (acknowledgement.keepReminders) values.put(Events.HAS_ALARM, acknowledgement.current.row.getAsInteger(Events.HAS_ALARM) ?: 0)
+        }
         val operations = arrayListOf<ContentProviderOperation>()
         assertion?.let { operations += assertions(it) }
+        if (guardMaster) operations += ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI))
+            .withSelection(dependentOccurrenceSelection(), childArgs(calendarId, event.id, localId)).withExpectedCount(0).build()
         if (localId != null && !removeDuplicates(calendarId, event.id, localId, operations)) return false
         if (localId == null && event.masterId != null && event.original != null) {
             operations += ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection(occurrenceSelection(),
@@ -177,9 +201,9 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
                 if (assertion == null) " AND ${Events.SYNC_DATA1}=? AND ${Events.DIRTY}=0 AND ${Events.SYNC_DATA4} IS NULL" else "",
                 if (assertion == null) arrayOf(localId.toString(), calendarId.toString(), MARKER) else arrayOf(localId.toString(), calendarId.toString()))
             .withExpectedCount(1).build()
-        if (localId != null) operations += ContentProviderOperation.newDelete(sync(Reminders.CONTENT_URI))
+        if (localId != null && acknowledgement?.keepReminders != true) operations += ContentProviderOperation.newDelete(sync(Reminders.CONTENT_URI))
             .withSelection("${Reminders.EVENT_ID}=?", arrayOf(localId.toString())).build()
-        for (minutes in if (event.cancelled) emptyList() else event.reminders) {
+        for (minutes in if (event.cancelled || acknowledgement?.keepReminders == true) emptyList() else event.reminders) {
             val builder = ContentProviderOperation.newInsert(sync(Reminders.CONTENT_URI)).withValue(Reminders.MINUTES, minutes)
                 .withValue(Reminders.METHOD, Reminders.METHOD_ALERT)
             if (localId == null) builder.withValueBackReference(Reminders.EVENT_ID, eventIndex) else builder.withValue(Reminders.EVENT_ID, localId)
@@ -259,6 +283,10 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         arrayOf(Events._ID), occurrenceSelection(), occurrenceArgs(calendar, event), null)).use { it.moveToFirst() }
     private fun childSelection() = "${Events.CALENDAR_ID}=? AND (${Events.ORIGINAL_SYNC_ID}=? OR ${Events.ORIGINAL_ID}=?) AND " +
         "(${Events.DIRTY}!=0 OR ${Events.SYNC_DATA4} IS NOT NULL OR ${Events.SYNC_DATA1} IS NULL)"
+    private fun dependentOccurrenceSelection() = "${Events.CALENDAR_ID}=? AND (${Events.ORIGINAL_SYNC_ID}=? OR ${Events.ORIGINAL_ID}=?) AND " +
+        "${Events._SYNC_ID} IS NULL AND (${Events.DIRTY}!=0 OR ${Events.SYNC_DATA4} IS NOT NULL)"
+    private fun hasDependentOccurrences(calendar: Long, remote: String, local: Long?) = requireNotNull(provider.query(sync(Events.CONTENT_URI),
+        arrayOf(Events._ID), dependentOccurrenceSelection(), childArgs(calendar, remote, local), null)).use { it.moveToFirst() }
     private fun childArgs(calendar: Long, remote: String, local: Long?) = arrayOf(calendar.toString(), remote, (local ?: -1).toString())
     private fun hasDirtyChildren(calendar: Long, remote: String, local: Long?) = requireNotNull(provider.query(sync(Events.CONTENT_URI),
         arrayOf(Events._ID), childSelection(), childArgs(calendar, remote, local), null)).use { it.moveToFirst() }
@@ -381,7 +409,7 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
                 Events.ACCESS_CONFIDENTIAL -> "confidential"; Events.ACCESS_PRIVATE -> "private"; Events.ACCESS_PUBLIC -> "public"; else -> "default"
             }, transparency = if (number(Events.AVAILABILITY).toInt() == Events.AVAILABILITY_FREE) "transparent" else "opaque")
         return LocalEvent(id = snapshot.id, event = event, deleted = event.cancelled, dirty = number(Events.DIRTY) != 0L,
-            base = base, pending = pending, fingerprint = snapshot.fingerprint, unsupported = unsupported)
+            base = base, pending = pending, fingerprint = snapshot.fingerprint, unsupported = unsupported, observed = event)
     }
     private fun assertions(snapshot: Snapshot): List<ContentProviderOperation> = buildList {
         add(ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection("${Events._ID}=? AND ${Events.CALENDAR_ID}=?",
@@ -403,6 +431,13 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
             put(Events.SYNC_DATA1, MARKER)
             put(Events.SYNC_DATA4, JSONObject(pending.toString()).apply {
                 if (optString("kind") == "conflict") put("holdGeneration", prefs.conflictResolutionGeneration)
+                else if (!has("providerSnapshot")) {
+                    // Persist the actual provider revision, not a rebased upload intent or a copy read after a lost
+                    // reply. Exclude sync columns so retries never recursively embed another mutation journal.
+                    put("providerSnapshot", JSONObject().put("event", CalendarEventCodec.encode(local(calendar, current).event))
+                        .put("row", json(ContentValues(current.row).apply { syncColumns.forEach(::remove) }))
+                        .put("reminders", JSONArray(current.reminders.map { json(it) })))
+                }
             }.toString())
             if (pending.optString("kind") == "create") {
                 put(Events._SYNC_ID, pending.getString("id"))
@@ -474,16 +509,20 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
             return true
         }
         if (current.fingerprint == existing.fingerprint) return write(calendar, remote, existing.id, current)
-        // The sent revision settled. Keep edits made while the request was in flight and rebase their next conditional write.
-        val operations = ArrayList(assertions(current))
-        if (!removeDuplicates(calendarId, remote.id, existing.id, operations)) return false
-        operations += ContentProviderOperation.newUpdate(sync(Events.CONTENT_URI)).withSelection("${Events._ID}=?",
-            arrayOf(existing.id.toString())).withValues(ContentValues().apply {
-                put(Events._SYNC_ID, remote.id); put(Events.SYNC_DATA1, MARKER); put(Events.SYNC_DATA2, remote.etag)
-                put(Events.SYNC_DATA3, CalendarEventCodec.encode(remote).toString()); putNull(Events.SYNC_DATA4)
-                put(Events.SYNC_DATA5, remote.creationId); put(Events.DIRTY, 1)
-            }).withExpectedCount(1).build()
-        provider.applyBatch(operations)
+        val dispatched = existing.pending?.optJSONObject("providerSnapshot")
+        // Old journals cannot reconstruct which fields changed after dispatch. Retain them rather than guessing
+        // that stale provider values are new owner edits and overwriting disjoint Google changes next time.
+        if (existing.pending != null && dispatched == null) return false
+        val sent = dispatched?.getJSONObject("event")?.let(CalendarEventCodec::decode) ?: existing.observed ?: existing.event
+        val currentEvent = local(calendar, current).event
+        val merged = CalendarEventMerge.acknowledge(sent, currentEvent, remote)
+        val keepReminders = if (dispatched == null) currentEvent.reminders != sent.reminders ||
+            currentEvent.useDefaultReminders != sent.useDefaultReminders
+            else JSONArray(current.reminders.map { json(it) }).toString() != dispatched.getJSONArray("reminders").toString() ||
+                current.row.getAsInteger(Events.HAS_ALARM) != dispatched.getJSONObject("row").optInt(Events.HAS_ALARM)
+        // Merge unchanged fields from Google, retain later local edits, and keep the actual response as the
+        // next baseline. Reproject temporal fields together so DTEND/DURATION stay consistent with recurrence.
+        write(calendar, merged, existing.id, current, Acknowledgement(remote, current, dispatched?.getJSONObject("row"), keepReminders))
         return false
     }
     override fun removeLocal(calendar: RemoteCalendar, existing: LocalEvent) {
