@@ -15,6 +15,10 @@ interface ContactStore {
     fun checkpoint(): String?
     fun checkpoint(token: String)
     fun contacts(): List<LocalContact>
+    // Imported rows have no trustworthy baseline. Reconcile against a complete,
+    // account-scoped snapshot before a pull can insert a second raw contact.
+    fun hasImportCandidates(): Boolean = false
+    fun reconcileImports(people: List<Person>, full: Boolean): Int = 0
     fun project(person: Person): Fields
     fun apply(person: Person, existing: LocalContact?, readOnly: Boolean)
     fun remove(existing: LocalContact)
@@ -29,7 +33,8 @@ interface ContactStore {
     fun acknowledge(existing: LocalContact, remote: Person?)
 }
 
-data class SyncReport(val downloaded: Int, val uploaded: Int, val conflicts: Int, val uncertain: Int, val skipped: Int = 0)
+data class SyncReport(val downloaded: Int, val uploaded: Int, val conflicts: Int, val uncertain: Int, val skipped: Int = 0,
+    val unverifiedImports: Int = 0)
 
 class ContactsSync(private val api: ContactsApi, private val store: ContactStore,
     private val mode: () -> SyncMode) {
@@ -67,10 +72,13 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
 
     fun sync(): SyncReport {
         if (mode() == SyncMode.OFF) return SyncReport(0, 0, 0, 0)
-        val saved = store.checkpoint()
+        val importing = store.hasImportCandidates()
+        val saved = if (importing) null else store.checkpoint()
         val snapshot = try { download(saved) } catch (e: ApiException) {
             if (saved != null && e.expired) download(null) else throw e
         }
+        check(mode() != SyncMode.OFF) { "Contacts sync disabled" }
+        val unverifiedImports = if (snapshot.skipped == 0) store.reconcileImports(snapshot.people, snapshot.full) else 0
         var skipped = snapshot.skipped
         var downloaded = 0
         var uploaded = 0
@@ -94,6 +102,9 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
                 continue
             }
             val existing = byResource[remote.resource]
+            // A partial import snapshot cannot prove that a new remote person
+            // has no unowned copy. Existing owned contacts can still progress.
+            if (existing == null && importing && snapshot.skipped > 0) continue
             // Never overwrite pending requests or local edits with a pull.
             if (existing?.pending != null || existing?.dirty == true) continue
             if (remote.deleted) {
@@ -226,7 +237,7 @@ class ContactsSync(private val api: ContactsApi, private val store: ContactStore
         } catch (e: UnreadableContact) { skipped++ }
         // Retrying the old checkpoint revisits any pull skipped for dirty rows.
         if (conflicts == 0 && uncertain == 0 && skipped == 0 && mode() != SyncMode.OFF) store.checkpoint(snapshot.token)
-        return SyncReport(downloaded, uploaded, conflicts, uncertain, skipped)
+        return SyncReport(downloaded, uploaded, conflicts, uncertain, skipped, unverifiedImports)
     }
 
     companion object {

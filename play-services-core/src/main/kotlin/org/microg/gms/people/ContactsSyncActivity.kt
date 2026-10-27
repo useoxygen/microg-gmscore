@@ -421,6 +421,7 @@ class ContactsSyncActivity : ComponentActivity() {
         "network" -> R.string.contacts_sync_network
         "local" -> R.string.contacts_sync_local
         "needs_review" -> R.string.contacts_sync_needs_review
+        "import_review" -> R.string.contacts_sync_import_review
         "needs_update" -> R.string.contacts_sync_needs_update
         "two_way_unavailable" -> R.string.contacts_sync_two_way_unavailable
         else -> null

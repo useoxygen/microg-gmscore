@@ -23,10 +23,9 @@ class SyncedContacts(private val provider: ContentProviderClient, private val ac
     private val accountScope = "account_name=? AND account_type=? AND data_set IS NULL"
     private val args get() = arrayOf(account.name, account.type) + owners
 
-    // Exactly what the sync engine treats as its own: rows it owns, plus new rows it would adopt
-    // (created in this account after enabling, never uploaded, still dirty). See AndroidContactStore.contacts().
-    private val rawScope get() = "$accountScope AND (${RawContacts.SYNC4} IN (?,?) OR (${RawContacts.SYNC4} IS NULL AND " +
-        "${RawContacts.SOURCE_ID} IS NULL AND ${RawContacts._ID}>${if (prefs.uploadNewContacts) prefs.privateAdoptionFloor else Long.MAX_VALUE} AND ${RawContacts.DIRTY}=1))"
+    // Unverified imports are not sync-owned, even source-less rows above the
+    // adoption floor. Turning sync off must retain those copies and their edits.
+    private val rawScope get() = "$accountScope AND ${RawContacts.SYNC4} IN (?,?)"
     // Groups sync created (labels and imported system groups), plus new labels it would adopt (AndroidGroupStore.groups()).
     private val groupScope get() = "$accountScope AND (${Groups.SYNC4} IN (?,?) OR (${Groups.SYNC4} IS NULL AND ${Groups.SYSTEM_ID} IS NULL AND " +
         "${Groups.SOURCE_ID} IS NULL AND ${Groups._ID}>${prefs.privateGroupAdoptionFloor} AND ${Groups.DIRTY}=1))"

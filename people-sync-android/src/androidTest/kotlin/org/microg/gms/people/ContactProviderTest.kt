@@ -190,6 +190,8 @@ class ContactProviderTest {
         resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->
             val store = AndroidContactStore(provider, account, prefs, backendOwner = PrivatePeopleApi.OWNER,
                 checkpointBinding = PrivatePeopleContext("25.24.32").binding)
+            assertTrue(store.contacts().isEmpty())
+            store.reconcileImports(emptyList(), full = true)
             assertEquals(listOf(created), store.contacts().map { it.id })
             val pending = JSONObject().put("kind", "create").put("local", JSONObject())
             val journaled = store.begin(store.contacts().single(), pending)

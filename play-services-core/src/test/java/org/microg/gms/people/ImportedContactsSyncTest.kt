@@ -1,0 +1,577 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package org.microg.gms.people
+
+import android.accounts.Account
+import android.app.Application
+import android.content.ContentProviderClient
+import android.content.ContentValues
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ProviderInfo
+import android.provider.ContactsContract
+import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.ContactsContract.CommonDataKinds.Organization
+import android.provider.ContactsContract.CommonDataKinds.StructuredName
+import android.provider.ContactsContract.CommonDataKinds.Email
+import android.provider.ContactsContract.CommonDataKinds.Event
+import android.provider.ContactsContract.CommonDataKinds.Im
+import android.provider.ContactsContract.CommonDataKinds.Nickname
+import android.provider.ContactsContract.CommonDataKinds.Website
+import android.provider.ContactsContract.Data
+import android.provider.ContactsContract.RawContacts
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.microg.gms.people.sync.*
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowContentResolver
+
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, application = Application::class, sdk = [28])
+class ImportedContactsSyncTest {
+    private val account = Account("switch-fixture@invalid", "com.google")
+    private fun person(id: String = "17", name: String = "Synthetic", phone: String = "123", etag: String = "e1"): Person = Person.parse(
+        JSONObject().put("resourceName", "people/fsa_$id").put("metadata", JSONObject().put("sources", JSONArray()
+            .put(JSONObject().put("type", "CONTACT").put("id", id).put("etag", etag))))
+            .put("names", JSONArray().put(JSONObject().put("givenName", name)))
+            .put("phoneNumbers", JSONArray().put(JSONObject().put("value", phone).put("type", "mobile"))))
+
+    private inner class Api : ContactsApi {
+        val remote = linkedMapOf<String, Person>()
+        val tombstones = mutableListOf<Person>()
+        val listTokens = mutableListOf<String?>()
+        var creates = 0; var updates = 0; var deletes = 0; var skipped = 0
+        var canUpload: () -> Boolean = { true }
+        var afterList: (() -> Unit)? = null
+        override fun list(syncToken: String?, pageToken: String?): Page {
+            listTokens.add(syncToken)
+            return Page(remote.values.toList() + tombstones, null, "cursor", skipped).also { afterList?.invoke() }
+        }
+        override fun get(resource: String) = remote[resource]
+        override fun create(body: JSONObject): Person {
+            if (!canUpload()) throw UploadDisabled()
+            creates++
+            val json = JSONObject(body.toString()).put("resourceName", "people/fsa_a${creates}")
+                .put("metadata", JSONObject().put("sources", JSONArray().put(JSONObject().put("type", "CONTACT")
+                    .put("id", "a$creates").put("etag", "created"))))
+            return Person.parse(json).also { remote[it.resource] = it }
+        }
+        override fun update(person: Person, fields: Set<String>, body: JSONObject): Person {
+            if (!canUpload()) throw UploadDisabled()
+            updates++
+            val json = JSONObject(remote.getValue(person.resource).json.toString())
+            for (field in fields) json.put(field, body.getJSONArray(field))
+            json.getJSONObject("metadata").getJSONArray("sources").getJSONObject(0).put("etag", "updated-$updates")
+            return Person.parse(json).also { remote[it.resource] = it }
+        }
+        override fun delete(resource: String) {
+            if (!canUpload()) throw UploadDisabled()
+            deletes++; remote.remove(resource)
+        }
+    }
+    private inner class Fixture(val provider: ImportContactsProvider, val client: ContentProviderClient, val prefs: ContactSyncPreferences) {
+        val api = Api()
+        val store get() = AndroidContactStore(client, account, prefs, backendOwner = PrivatePeopleApi.OWNER)
+        fun sync() = ContactsSync(api, store) { prefs.mode }.sync()
+        fun imported(source: String? = null, data: Person = person(), rawAccount: Account? = account, owner: String? = null,
+            dirty: Boolean = true, dataset: String? = null, deleted: Boolean = false): Long =
+            provider.addRaw(rawAccount, source, owner, dirty, dataset, deleted).also { provider.addFields(it, data) }
+        fun editPhone(id: Long, number: String) = provider.update(Data.CONTENT_URI, ContentValues().apply { put(Phone.NUMBER, number) },
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), Phone.CONTENT_ITEM_TYPE))
+        // Native provider-shaped columns, deliberately independent of ContactFieldMapper.rows().
+        fun nativeImported(source: String?, extra: ContentValues? = null): Long = provider.addRaw(account, source).also { id ->
+            val rows = listOf(ContentValues().apply {
+                put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, "Synthetic")
+                put(StructuredName.DISPLAY_NAME, "Synthetic")
+                put(StructuredName.FULL_NAME_STYLE, 1); put(StructuredName.PHONETIC_NAME_STYLE, 0)
+            }, ContentValues().apply {
+                put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            }) + listOfNotNull(extra)
+            for (row in rows) provider.insert(Data.CONTENT_URI, ContentValues(row).apply { put(Data.RAW_CONTACT_ID, id) })
+        }
+        fun data(id: Long, mime: String, column: String): String? = provider.query(Data.CONTENT_URI, arrayOf(column),
+            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(id.toString(), mime), null).use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+        fun raw(id: Long, column: String): String? = provider.query(RawContacts.CONTENT_URI, arrayOf(column), "_id=?", arrayOf(id.toString()), null).use {
+            assertTrue(it.moveToFirst()); it.getString(0)
+        }
+    }
+    private fun fixture(mode: SyncMode = SyncMode.TWO_WAY, countryDetector: Any? = null, block: Fixture.() -> Unit) {
+        val application: Context = RuntimeEnvironment.getApplication()
+        val context = if (countryDetector == null) application else object : ContextWrapper(application) {
+            override fun getSystemService(name: String): Any? = if (name == "country_detector") countryDetector else super.getSystemService(name)
+        }
+        context.getSharedPreferences("contacts-sync", 0).edit().clear().commit()
+        context.getSharedPreferences("contacts-migration-privacy", 0).edit().clear().commit()
+        val provider = ImportContactsProvider()
+        provider.attachInfo(context, ProviderInfo().apply { authority = ContactsContract.AUTHORITY })
+        ShadowContentResolver.registerProviderInternal(ContactsContract.AUTHORITY, provider)
+        val prefs = ContactSyncPreferences(context, account)
+        prefs.configure(mode, 0)
+        context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use {
+            try { Fixture(provider, it, prefs).block() } finally { provider.shutdown() }
+        }
+    }
+
+    @Test fun exactGoogleSourceIdAdoptsTheImportedRawRowBeforeDownload() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        val id = imported("17")
+        sync()
+        val row = store.contacts().single()
+        assertEquals(id, row.id); assertEquals(original.resource, row.resource); assertEquals(original.etag, row.etag)
+        assertEquals(PrivatePeopleApi.OWNER, raw(id, RawContacts.SYNC4)); assertFalse(row.dirty)
+        assertEquals(listOf(id), provider.rawIds); assertEquals(0, api.creates); assertEquals(0, api.updates)
+    }
+    @Test fun sourceLessImportUploadsOnceAndDownloadUsesTheSameRawRow() = fixture {
+        val id = imported()
+        assertEquals(1, sync().uploaded)
+        assertEquals(1, api.creates); assertEquals(id, store.contacts().single().id)
+        assertNotNull(store.contacts().single().resource)
+        sync(); assertEquals(1, api.creates); assertEquals(listOf(id), provider.rawIds)
+    }
+    @Test fun sourceLessImportCanMatchOneCompleteRemoteContactWithoutCreatingItAgain() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        val id = imported()
+        sync()
+        assertEquals(original.resource, store.contacts().single().resource); assertEquals(listOf(id), provider.rawIds)
+        assertEquals(0, api.creates)
+    }
+    @Test fun preAdoptionDirtyEditSurvivesAsAConflictWithoutAnOriginalEtag() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        val id = imported("17")
+        editPhone(id, "456")
+        assertEquals(1, sync().conflicts)
+        assertEquals(0, api.updates); assertEquals(0, api.creates)
+        assertEquals("123", api.remote.getValue(original.resource).json.getJSONArray("phoneNumbers").getJSONObject(0).getString("value"))
+        val row = store.contacts().single()
+        assertEquals(id, row.id); assertTrue(row.dirty); assertEquals("conflict", row.pending!!.getString("kind"))
+        assertEquals("456", JSONArray(row.fields.getValue("phoneNumbers")).getJSONObject(0).getString("value"))
+        sync(); assertEquals(0, api.updates)
+    }
+    @Test fun importedProjectionDoesNotEraseCloudFieldsThatSwitchDidNotCopy() = fixture {
+        val original = person().also { it.json.put("emailAddresses", JSONArray().put(JSONObject().put("value", "synthetic@invalid").put("type", "home"))) }
+        api.remote[original.resource] = original
+        imported("17")
+        sync()
+        assertEquals(0, api.updates)
+        assertEquals("synthetic@invalid", api.remote.getValue(original.resource).json.getJSONArray("emailAddresses").getJSONObject(0).getString("value"))
+        assertEquals(store.project(api.remote.getValue(original.resource)), store.contacts().single().fields)
+    }
+    @Test fun foreignOrUnknownSourceIdsAreNeverAdoptedByContentOrGuessedNumericAliases() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        val foreign = listOf("foreign-id", "23", "people/c23").map { imported(it) }
+        assertEquals(3, sync().unverifiedImports)
+        assertEquals(1, store.contacts().size); assertEquals(0, api.creates); assertEquals(0, api.updates)
+        for (id in foreign) { assertNull(raw(id, RawContacts.SYNC4)); assertEquals("1", raw(id, RawContacts.DIRTY)) }
+        assertEquals(4, provider.rawIds.size)
+    }
+    @Test fun accountDatasetAndOtherAdaptersRowsRemainSeparate() = fixture {
+        val excluded = listOf(imported("17", rawAccount = Account("other@invalid", "com.google")), imported("17", rawAccount = null),
+            imported("17", dataset = "foreign"), imported("17", owner = "foreign-adapter"))
+        api.remote[person().resource] = person()
+        sync()
+        assertEquals(1, store.contacts().size); assertEquals(5, provider.rawIds.size)
+        assertNull(raw(excluded[0], RawContacts.SYNC4)); assertNull(raw(excluded[1], RawContacts.SYNC4))
+        assertNull(raw(excluded[2], RawContacts.SYNC4)); assertEquals("foreign-adapter", raw(excluded[3], RawContacts.SYNC4))
+    }
+    @Test fun twoSourceIdCopiesBeforeTheFirstSyncConvergeToOneRawRow() = fixture {
+        api.remote[person().resource] = person()
+        val first = imported("17"); imported("17")
+        sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(0, api.creates); assertEquals(0, api.updates)
+    }
+    @Test fun secondSourceLessTransferAfterUploadAndLocalEditDoesNotRevertOrDuplicate() = fixture {
+        val first = imported(); sync()
+        editPhone(first, "456"); sync()
+        imported(); sync(); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(1, api.creates); assertEquals(1, api.updates)
+        assertEquals("456", store.contacts().single().fields.let { JSONArray(it.getValue("phoneNumbers")).getJSONObject(0).getString("value") })
+    }
+    @Test fun downloadAfterImportAndSecondGoogleTransferBothKeepTheOriginalRawId() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        val id = imported("17"); sync()
+        api.remote[original.resource] = person(name = "Changed on Google", etag = "e2")
+        sync(); assertEquals(id, store.contacts().single().id)
+        imported("17"); sync()
+        assertEquals(listOf(id), provider.rawIds); assertEquals(0, api.updates); assertEquals(0, api.creates)
+        assertEquals(store.project(api.remote.getValue(original.resource)), store.contacts().single().fields)
+    }
+    @Test fun downloadOnlyKeepsDirtyImportEditsWithoutUploading() = fixture(SyncMode.DOWNLOAD) {
+        val original = person(); api.remote[original.resource] = original
+        val id = imported("17"); editPhone(id, "456")
+        sync(); sync()
+        val row = store.contacts().single()
+        assertEquals(id, row.id); assertTrue(row.dirty); assertEquals("1", raw(id, RawContacts.RAW_CONTACT_IS_READ_ONLY))
+        assertEquals("456", JSONArray(row.fields.getValue("phoneNumbers")).getJSONObject(0).getString("value"))
+        assertEquals(SyncMode.DOWNLOAD, prefs.mode); assertEquals(0, api.updates)
+    }
+    @Test fun syncOffDoesNotReadOrAdoptAnything() = fixture(SyncMode.OFF) {
+        val id = imported("17"); sync()
+        assertTrue(api.listTokens.isEmpty()); assertNull(raw(id, RawContacts.SYNC4)); assertEquals(SyncMode.OFF, prefs.mode)
+    }
+    @Test fun migrationHoldSurvivesAdoptionAndResumesTheSameDirtyRow() = fixture {
+        val privacy = ContactMigrationPrivacy(RuntimeEnvironment.getApplication())
+        privacy.developerControlsEnabled = true; privacy.beginMigration()
+        api.canUpload = { !ContactMigrationPrivacy(RuntimeEnvironment.getApplication()).held }
+        val id = imported()
+        sync()
+        assertTrue(privacy.held); assertTrue(store.contacts().single().dirty); assertNull(store.contacts().single().pending)
+        assertEquals(0, api.creates); assertEquals(listOf(id), provider.rawIds)
+        privacy.ownerResume(); sync()
+        assertEquals(1, api.creates); assertFalse(store.contacts().single().dirty)
+    }
+    @Test fun developerImportGateAndFloorStillExcludeUnownedRows() = fixture {
+        ContactMigrationPrivacy(RuntimeEnvironment.getApplication()).developerControlsEnabled = true
+        val old = imported("17")
+        prefs.initializePrivateFloors(old, 0)
+        prefs.uploadNewContacts = false
+        val later = imported()
+        sync(); assertTrue(store.contacts().isEmpty()); assertNull(raw(old, RawContacts.SYNC4)); assertNull(raw(later, RawContacts.SYNC4))
+        prefs.uploadNewContacts = true; sync()
+        assertEquals(1, api.creates); assertNull(raw(old, RawContacts.SYNC4)); assertEquals(later, store.contacts().single().id)
+    }
+    @Test fun incompleteSnapshotCannotAdoptOrUploadANewImport() = fixture {
+        val id = imported(); api.skipped = 1
+        val report = sync()
+        assertEquals(1, report.skipped); assertNull(raw(id, RawContacts.SYNC4)); assertEquals(0, api.creates)
+        assertNull(store.checkpoint())
+    }
+    @Test fun concurrentEditDuringAdoptionFailsTheVersionAssertionAndKeepsNativeData() = fixture {
+        val id = imported("17"); api.remote[person().resource] = person()
+        provider.beforeBatch = { provider.beforeBatch = null; editPhone(id, "456") }
+        assertThrows(android.content.OperationApplicationException::class.java) { sync() }
+        assertNull(raw(id, RawContacts.SYNC4)); assertEquals(listOf(id), provider.rawIds)
+        sync(); assertEquals(0, api.updates); assertTrue(store.contacts().single().dirty)
+    }
+    @Test fun ambiguousContentAndDifferentDirtyDuplicateAreKeptForReview() = fixture {
+        api.remote[person().resource] = person(); api.remote[person("18").resource] = person("18")
+        val ambiguous = imported()
+        assertTrue(sync().unverifiedImports > 0); assertNull(raw(ambiguous, RawContacts.SYNC4)); assertEquals(0, api.creates)
+        val changed = imported("17", person(phone = "999"))
+        assertTrue(sync().unverifiedImports > 0); assertNull(raw(changed, RawContacts.SYNC4)); assertEquals(0, api.updates)
+    }
+    @Test fun sourceLessRepeatFindsOwnedIdentityEvenWithADirtyNativeEdit() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        sync()
+        val keeper = store.contacts().single().id
+        editPhone(keeper, "456")
+        imported()
+        sync()
+        assertEquals(listOf(keeper), provider.rawIds); assertEquals(1, api.updates); assertEquals(0, api.creates)
+    }
+    @Test fun identicalSecondImportCollapsesWhileFirstImportIsHeldInConflict() = fixture {
+        api.remote[person().resource] = person()
+        val first = imported("17", person(phone = "456")); sync()
+        val pending = canonical(store.contacts().single().pending)
+        imported("17", person(phone = "456")); sync()
+        assertEquals(listOf(first), provider.rawIds)
+        assertEquals(pending, canonical(store.contacts().single().pending)); assertEquals(0, api.updates)
+    }
+    @Test fun unknownSourceDoesNotHoldCheckpointOrUnrelatedRemoteDeletion() = fixture {
+        api.remote[person().resource] = person()
+        val foreign = imported("foreign")
+        assertEquals(1, sync().unverifiedImports); assertEquals("cursor", store.checkpoint())
+        val downloaded = store.contacts().single().id
+        api.remote.clear()
+        api.tombstones.add(Person.parse(JSONObject().put("resourceName", person().resource).put("metadata", JSONObject().put("deleted", true))))
+        assertEquals(1, sync().unverifiedImports)
+        assertEquals(listOf(null, "cursor"), api.listTokens)
+        assertEquals(listOf(foreign), provider.rawIds); assertFalse(provider.rawIds.contains(downloaded))
+    }
+    @Test fun unknownSourceCanBeRevisitedWhenTheRemoteIdentityAppearsLater() = fixture {
+        val id = imported("17")
+        sync(); assertNull(raw(id, RawContacts.SYNC4))
+        api.remote[person().resource] = person()
+        sync()
+        assertEquals(listOf(id), provider.rawIds); assertEquals(person().resource, store.contacts().single().resource)
+        assertEquals(listOf(null, "cursor"), api.listTokens)
+    }
+    @Test fun nativeEditAndDeletionAfterAdoptionUseTheSameCloudIdentity() = fixture {
+        val original = person(); api.remote[original.resource] = original
+        val id = imported("17"); sync()
+        editPhone(id, "456"); sync()
+        assertEquals(1, api.updates); assertEquals(0, api.creates)
+        provider.delete(RawContacts.CONTENT_URI, "_id=?", arrayOf(id.toString()))
+        sync(); assertEquals(1, api.deletes); assertTrue(provider.rawIds.isEmpty())
+    }
+    @Test fun repeatedImportRetainsTheFavoriteFlag() = fixture {
+        api.remote[person().resource] = person()
+        val id = imported("17"); sync()
+        val duplicate = imported("17")
+        provider.update(RawContacts.CONTENT_URI, ContentValues().apply { put(RawContacts.STARRED, 1) }, "_id=?", arrayOf(duplicate.toString()))
+        // Reconciliation itself must retain STARRED even without a group mapper.
+        store.reconcileImports(listOf(person()), full = true)
+        assertEquals(listOf(id), provider.rawIds); assertEquals("1", raw(id, RawContacts.STARRED)); assertTrue(store.contacts().single().dirty)
+    }
+    @Test fun photoOnlySourceLessContactRemainsEligibleForCreation() = fixture {
+        val empty = Person.parse(JSONObject().put("resourceName", "people/fsa_17").put("metadata", JSONObject().put("sources", JSONArray()
+            .put(JSONObject().put("type", "CONTACT").put("id", "17").put("etag", "e1")))))
+        val id = imported(data = empty)
+        provider.insert(Data.CONTENT_URI, ContentValues().apply {
+            put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+            put(ContactsContract.CommonDataKinds.Photo.PHOTO, byteArrayOf(1, 2, 3))
+        })
+        sync(); assertEquals(1, api.creates); assertEquals(listOf(id), provider.rawIds)
+    }
+    @Test fun originalFavoriteDoesNotReturnWhenTheSameImportIsRepeatedAfterAnUnstar() = fixture {
+        api.remote[person().resource] = person()
+        val id = imported("17")
+        provider.update(RawContacts.CONTENT_URI, ContentValues().apply { put(RawContacts.STARRED, 1) }, "_id=?", arrayOf(id.toString()))
+        store.reconcileImports(listOf(person()), full = true)
+        provider.update(RawContacts.CONTENT_URI, ContentValues().apply { put(RawContacts.STARRED, 0) }, "_id=?", arrayOf(id.toString()))
+        val duplicate = imported("17")
+        provider.update(RawContacts.CONTENT_URI, ContentValues().apply { put(RawContacts.STARRED, 1) }, "_id=?", arrayOf(duplicate.toString()))
+        store.reconcileImports(listOf(person()), full = true)
+        assertEquals(listOf(id), provider.rawIds); assertEquals("0", raw(id, RawContacts.STARRED))
+    }
+    @Test fun differentPhotoOnlyImportsDoNotShareAnEmptyTextIdentity() = fixture {
+        val empty = Person.parse(JSONObject().put("resourceName", "people/fsa_17").put("metadata", JSONObject().put("sources", JSONArray()
+            .put(JSONObject().put("type", "CONTACT").put("id", "17").put("etag", "e1")))))
+        fun photo(bytes: ByteArray): Long = imported(data = empty).also { id ->
+            provider.insert(Data.CONTENT_URI, ContentValues().apply {
+                put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                put(ContactsContract.CommonDataKinds.Photo.PHOTO, bytes)
+            })
+        }
+        val first = photo(byteArrayOf(1, 2, 3)); sync()
+        val second = photo(byteArrayOf(4, 5, 6)); sync()
+        assertEquals(2, api.creates); assertEquals(listOf(first, second), provider.rawIds)
+        photo(byteArrayOf(1, 2, 3)); sync()
+        assertEquals(2, api.creates); assertEquals(listOf(first, second), provider.rawIds)
+    }
+    @Test fun incompleteImportSnapshotStillAllowsOwnedContactsToConverge() = fixture {
+        val original = person(); api.remote[original.resource] = original; sync()
+        val owned = store.contacts().single().id
+        editPhone(owned, "456")
+        api.remote[original.resource] = person(name = "Remote edit", etag = "e2")
+        val unowned = imported(data = person("18", name = "New copy"))
+        api.remote[person("19").resource] = person("19", name = "New cloud contact")
+        api.skipped = 1
+        val report = sync()
+        assertEquals(1, report.skipped); assertEquals(1, report.uploaded)
+        assertEquals(1, api.updates); assertEquals(0, api.creates)
+        assertNull(raw(unowned, RawContacts.SYNC4)); assertEquals(listOf(owned, unowned), provider.rawIds)
+        assertEquals(store.project(api.remote.getValue(original.resource)), store.contacts().single().fields)
+    }
+    private fun nativeOrganization(office: String? = null) = ContentValues().apply {
+        put(Data.MIMETYPE, Organization.CONTENT_ITEM_TYPE); put(Organization.COMPANY, "Fixture Co")
+        put(Organization.TYPE, Organization.TYPE_WORK)
+        office?.let { put(Organization.OFFICE_LOCATION, it) }
+    }
+    private fun organizationPerson() = person().also { it.json.put("organizations", JSONArray()
+        .put(JSONObject().put("name", "Fixture Co").put("type", "work"))) }
+    private fun firstNativeOfficeImport(source: String?) = fixture {
+        val remote = organizationPerson(); api.remote[remote.resource] = remote
+        val id = nativeImported(source, nativeOrganization("Floor 4"))
+        val report = sync()
+        assertEquals("Floor 4", data(id, Organization.CONTENT_ITEM_TYPE, Organization.OFFICE_LOCATION))
+        assertNull(raw(id, RawContacts.SYNC4)); assertEquals(1, report.unverifiedImports)
+        assertEquals(0, api.creates + api.updates + api.deletes)
+        sync()
+        assertEquals("Floor 4", data(id, Organization.CONTENT_ITEM_TYPE, Organization.OFFICE_LOCATION))
+    }
+    @Test fun firstSourceIdImportKeepsNativeOfficeLocationUnowned() = firstNativeOfficeImport("17")
+    @Test fun firstSourceLessImportKeepsNativeOfficeLocationUnowned() = firstNativeOfficeImport(null)
+    private fun repeatedNativeOfficeImport(source: String?) = fixture {
+        val remote = organizationPerson(); api.remote[remote.resource] = remote
+        val first = nativeImported(source, nativeOrganization()); sync()
+        val second = nativeImported(source, nativeOrganization("Floor 4"))
+        val report = sync()
+        assertEquals("Floor 4", data(second, Organization.CONTENT_ITEM_TYPE, Organization.OFFICE_LOCATION))
+        assertEquals(listOf(first, second), provider.rawIds); assertNull(raw(second, RawContacts.SYNC4))
+        assertEquals(1, report.unverifiedImports); assertEquals(0, api.creates + api.updates + api.deletes)
+    }
+    @Test fun repeatSourceIdImportKeepsUnaccountedNativeOfficeLocation() = repeatedNativeOfficeImport("17")
+    @Test fun repeatSourceLessImportKeepsUnaccountedNativeOfficeLocation() = repeatedNativeOfficeImport(null)
+    @Test fun nativeMappedRepeatStillAdoptsAndCollapses() {
+        for (source in listOf(null, "17")) fixture {
+            val remote = organizationPerson(); api.remote[remote.resource] = remote
+            val first = nativeImported(source, nativeOrganization()); sync()
+            nativeImported(source, nativeOrganization()); sync()
+            assertEquals(listOf(first), provider.rawIds); assertEquals(first, store.contacts().single().id)
+            assertEquals("Fixture Co", data(first, Organization.CONTENT_ITEM_TYPE, Organization.COMPANY))
+            assertEquals(0, api.creates + api.updates + api.deletes)
+        }
+    }
+    @Test fun otherLossySwitchNativeColumnsStayUnownedForReview() {
+        fun native(mime: String, fill: ContentValues.() -> Unit) = ContentValues().apply { put(Data.MIMETYPE, mime); fill() }
+        val rows = listOf(
+            nativeOrganization().apply { put(Organization.PHONETIC_NAME_STYLE, 3) },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(StructuredName.FULL_NAME_STYLE, 3) },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(StructuredName.PHONETIC_NAME_STYLE, 3) },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(StructuredName.DISPLAY_NAME, "Custom display") },
+            native(StructuredName.CONTENT_ITEM_TYPE) { put(StructuredName.GIVEN_NAME, "Synthetic"); put(Data.IS_PRIMARY, 1) },
+            native(Nickname.CONTENT_ITEM_TYPE) { put(Nickname.NAME, "Nickname"); put(Nickname.TYPE, Nickname.TYPE_DEFAULT) },
+            native(Nickname.CONTENT_ITEM_TYPE) { put(Nickname.NAME, "Nickname"); put(Nickname.LABEL, "Custom nickname") },
+            native(Nickname.CONTENT_ITEM_TYPE) { put(Nickname.NAME, "Nickname"); put(Data.IS_SUPER_PRIMARY, 1) },
+            native(Phone.CONTENT_ITEM_TYPE) { put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_CAR) },
+            native(Phone.CONTENT_ITEM_TYPE) { put(Phone.NUMBER, "123"); put(Phone.NORMALIZED_NUMBER, "+1123") },
+            native(Website.CONTENT_ITEM_TYPE) { put(Website.URL, "https://example.invalid"); put(Website.TYPE, Website.TYPE_HOMEPAGE) },
+            native(Website.CONTENT_ITEM_TYPE) { put(Website.URL, "ftp://example.invalid"); put(Website.TYPE, Website.TYPE_FTP) },
+            native(Email.CONTENT_ITEM_TYPE) { put(Email.ADDRESS, "native@invalid"); put(Email.TYPE, Email.TYPE_HOME); put(Email.LABEL, "Extra label") },
+            native(Email.CONTENT_ITEM_TYPE) { put(Email.ADDRESS, "native@invalid"); put(Email.TYPE, Email.TYPE_CUSTOM); put(Email.LABEL, "home") },
+            native(Im.CONTENT_ITEM_TYPE) { put(Im.DATA, "Native"); put(Im.PROTOCOL, 42) },
+            native(Im.CONTENT_ITEM_TYPE) { put(Im.DATA, "Native"); put(Im.PROTOCOL, Im.PROTOCOL_AIM); put(Im.CUSTOM_PROTOCOL, "Extra protocol") },
+            native(Event.CONTENT_ITEM_TYPE) { put(Event.START_DATE, "2000-01-01"); put(Event.TYPE, Event.TYPE_BIRTHDAY); put(Event.LABEL, "Extra label") },
+            nativeOrganization().apply { put(Data.DATA14, 1.5) },
+            nativeOrganization().apply { put(Data.DATA15, byteArrayOf(1, 2, 3)) }
+        )
+        for ((index, row) in rows.withIndex()) fixture {
+            val remote = person(); api.remote[remote.resource] = remote
+            val id = nativeImported("17", row)
+            val report = sync()
+            assertNull("native row $index must remain unowned", raw(id, RawContacts.SYNC4))
+            assertEquals(1, report.unverifiedImports); assertTrue(id in provider.rawIds)
+            assertEquals(0, api.creates + api.updates + api.deletes)
+        }
+    }
+    @Test fun nativeRoundTripKeepsMeaningfulZeroesAndSeparatePhotoGroupColumns() {
+        val aim = ContentValues().apply {
+            put(Data.MIMETYPE, Im.CONTENT_ITEM_TYPE); put(Im.DATA, "Native"); put(Im.TYPE, Im.TYPE_WORK); put(Im.PROTOCOL, Im.PROTOCOL_AIM)
+        }
+        assertTrue(ContactFieldMapper.losslessImport(aim)) // AIM=0 is a real protocol, not an absent value.
+        val custom = ContentValues().apply {
+            put(Data.MIMETYPE, Email.CONTENT_ITEM_TYPE); put(Email.ADDRESS, "native@invalid")
+            put(Email.TYPE, Email.TYPE_CUSTOM); put(Email.LABEL, "Special")
+        }
+        assertTrue(ContactFieldMapper.losslessImport(custom))
+        custom.put(Email.LABEL, "home")
+        assertFalse(ContactFieldMapper.losslessImport(custom)) // TYPE_CUSTOM=0 must not normalize to TYPE_HOME.
+        val phone = ContentValues().apply {
+            put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "+14155550123")
+            put(Phone.NORMALIZED_NUMBER, "+14155550123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            put(Data.IS_PRIMARY, 1); put(Data.IS_SUPER_PRIMARY, 0); put(Data.IS_READ_ONLY, 0)
+        }
+        assertTrue(ContactFieldMapper.losslessImport(phone))
+        for ((mime, column, value) in listOf(
+            Triple(ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE, Data.DATA15, byteArrayOf(1, 2, 3)),
+            Triple(ContactsContract.CommonDataKinds.GroupMembership.CONTENT_ITEM_TYPE, Data.DATA1, 7L)
+        )) {
+            val row = ContentValues().apply {
+                put(Data.MIMETYPE, mime)
+                if (value is ByteArray) put(column, value) else put(column, value as Long)
+            }
+            assertTrue(ContactFieldMapper.losslessImport(row))
+            row.put(Data.DATA2, "Unaccounted value")
+            assertFalse(ContactFieldMapper.losslessImport(row))
+        }
+    }
+    @Test fun providerGeneratedNameSourceLessImportUploadsAndRepeatsWithoutDuplicates() = fixture {
+        val first = nativeImported(null)
+        assertEquals(1, sync().uploaded)
+        assertEquals(first, store.contacts().single().id); assertEquals(1, api.creates)
+        nativeImported(null); sync(); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(1, api.creates); assertEquals(0, api.updates)
+    }
+    @Test fun providerGeneratedNameGoogleImportAdoptsBeforeDownloadAndRepeats() = fixture {
+        val remote = person(); api.remote[remote.resource] = remote
+        val first = nativeImported("17")
+        assertEquals(0, sync().unverifiedImports)
+        assertEquals(first, store.contacts().single().id); assertEquals(remote.resource, store.contacts().single().resource)
+        nativeImported("17"); sync(); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(0, api.creates + api.updates)
+    }
+    @Test fun providerCompletionReceivesOnlyReconstructedInputsAndDoesNotChangeRows() = fixture {
+        nativeImported("17")
+        val before = provider.rawIds.associateWith { raw(it, RawContacts.VERSION) }
+        assertTrue(store.hasImportCandidates())
+        assertTrue(provider.nameInputs.isNotEmpty())
+        for (input in provider.nameInputs) {
+            assertEquals(mapOf(StructuredName.GIVEN_NAME to "Synthetic"), input)
+        }
+        assertEquals(before, provider.rawIds.associateWith { raw(it, RawContacts.VERSION) })
+    }
+    @Test fun providerGeneratedPhoneticStylesAdoptAndDifferentNameValuesRemainForReview() = fixture {
+        val native = ContentValues().apply {
+            put(Data.MIMETYPE, StructuredName.CONTENT_ITEM_TYPE); put(StructuredName.GIVEN_NAME, "太郎"); put(StructuredName.FAMILY_NAME, "山田")
+            put(StructuredName.PHONETIC_GIVEN_NAME, "タロウ"); put(StructuredName.PHONETIC_FAMILY_NAME, "ヤマダ")
+            put(StructuredName.DISPLAY_NAME, "山田 太郎"); put(StructuredName.FULL_NAME_STYLE, 4); put(StructuredName.PHONETIC_NAME_STYLE, 4)
+        }
+        // Literal lineage-23.0 name completion for these mapped components.
+        provider.completeNameResponse = { input ->
+            assertEquals("太郎", input[StructuredName.GIVEN_NAME]); assertEquals("山田", input[StructuredName.FAMILY_NAME])
+            assertFalse(input.containsKey(StructuredName.DISPLAY_NAME)); assertFalse(input.containsKey(Data.DATA10))
+            ContentValues(native)
+        }
+        val remote = person().also { it.json.put("names", JSONArray().put(JSONObject().put("givenName", "太郎").put("familyName", "山田")
+            .put("phoneticGivenName", "タロウ").put("phoneticFamilyName", "ヤマダ"))) }
+        api.remote[remote.resource] = remote
+        fun insert(name: ContentValues): Long = provider.addRaw(account, "17").also { id ->
+            provider.insert(Data.CONTENT_URI, ContentValues(name).apply { put(Data.RAW_CONTACT_ID, id) })
+            provider.insert(Data.CONTENT_URI, ContentValues().apply {
+                put(Data.RAW_CONTACT_ID, id); put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            })
+        }
+        val first = insert(native); sync(); insert(native); sync()
+        assertEquals(listOf(first), provider.rawIds); assertEquals(first, store.contacts().single().id)
+        for (different in listOf(
+            ContentValues(native).apply { put(StructuredName.DISPLAY_NAME, "Preferred name") },
+            ContentValues(native).apply { put(StructuredName.FULL_NAME_STYLE, 3) },
+            ContentValues(native).apply { put(StructuredName.PHONETIC_NAME_STYLE, 3) }
+        )) {
+            val id = insert(different)
+            assertTrue(sync().unverifiedImports > 0)
+            assertNull(raw(id, RawContacts.SYNC4))
+            assertEquals(different.getAsString(StructuredName.DISPLAY_NAME), data(id, StructuredName.CONTENT_ITEM_TYPE, StructuredName.DISPLAY_NAME))
+        }
+        assertEquals(0, api.creates + api.updates)
+    }
+    @Test fun earlierReviewCacheCannotStrandNowRepresentableNativeNames() = fixture {
+        val id = nativeImported(null)
+        val previousKey = "${account.type}:${account.name}:importChecks:${PrivatePeopleApi.OWNER}"
+        RuntimeEnvironment.getApplication().getSharedPreferences("contacts-sync", 0).edit()
+            .putString(previousKey, JSONObject().put(id.toString(), raw(id, RawContacts.VERSION)!!.toLong()).toString()).commit()
+        store.checkpoint("old-cursor")
+        sync()
+        assertEquals(listOf<String?>(null), api.listTokens); assertEquals(1, api.creates); assertEquals(id, store.contacts().single().id)
+    }
+    @Test fun unavailableCompletionHoldsDataAndCanRecoverWithoutANativeEdit() = fixture {
+        val id = nativeImported(null)
+        provider.completeNameAvailable = false
+        assertEquals(1, sync().unverifiedImports); assertNull(raw(id, RawContacts.SYNC4))
+        assertEquals("Synthetic", data(id, StructuredName.CONTENT_ITEM_TYPE, StructuredName.DISPLAY_NAME))
+        val version = raw(id, RawContacts.VERSION)
+        provider.completeNameAvailable = true
+        assertEquals(version, raw(id, RawContacts.VERSION)); sync()
+        assertEquals(1, api.creates); assertEquals(listOf(id), provider.rawIds)
+        assertEquals(listOf<String?>(null, null), api.listTokens)
+    }
+    class FixtureCountry(private val iso: String) { fun getCountryIso() = iso }
+    class FixtureCountryDetector(private val iso: String) { fun detectCountry() = FixtureCountry(iso) }
+    @Test fun providerNormalizedNationalPhonesUseDetectedCountryAndKeepDifferentValues() = fixture(countryDetector = FixtureCountryDetector("US")) {
+        val number = ContentValues().apply {
+            put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "(415) 555-0123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            put(Phone.NORMALIZED_NUMBER, "+14155550123")
+        }
+        val first = nativeImported(null, number); sync(); nativeImported(null, number); sync()
+        assertEquals(1, api.creates); assertEquals(listOf(first), provider.rawIds)
+        val different = nativeImported(null, ContentValues(number).apply { put(Phone.NORMALIZED_NUMBER, "+442079460000") })
+        assertEquals(1, sync().unverifiedImports); assertNull(raw(different, RawContacts.SYNC4))
+        provider.query(Data.CONTENT_URI, arrayOf(Phone.NORMALIZED_NUMBER), "${Data.RAW_CONTACT_ID}=? AND ${Phone.NUMBER}=?",
+            arrayOf(different.toString(), "(415) 555-0123"), null).use {
+            assertTrue(it.moveToFirst()); assertEquals("+442079460000", it.getString(0))
+        }
+    }
+    @Test fun detectorFailureDoesNotInventACountryForPhoneReconstruction() = fixture(countryDetector = Any()) {
+        val id = nativeImported(null, ContentValues().apply {
+            put(Data.MIMETYPE, Phone.CONTENT_ITEM_TYPE); put(Phone.NUMBER, "(415) 555-0123"); put(Phone.TYPE, Phone.TYPE_MOBILE)
+            put(Phone.NORMALIZED_NUMBER, "+14155550123")
+        })
+        assertEquals(1, sync().unverifiedImports); assertNull(raw(id, RawContacts.SYNC4)); assertEquals(0, api.creates)
+    }
+    @Test fun providerPhotoFileReferencesDoNotBlockContentVerifiedImports() = fixture {
+        fun photo(file: Long) = ContentValues().apply {
+            put(Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+            put(ContactsContract.CommonDataKinds.Photo.PHOTO_FILE_ID, file)
+            put(ContactsContract.CommonDataKinds.Photo.PHOTO, byteArrayOf(1, 2, 3))
+        }
+        val first = nativeImported(null, photo(7)); sync()
+        nativeImported(null, photo(8)); sync()
+        assertEquals(1, api.creates); assertEquals(listOf(first), provider.rawIds)
+    }
+}
