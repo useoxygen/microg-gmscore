@@ -102,6 +102,12 @@
     <string name="contacts_sync_device_review">Review &amp; save to Google</string>
     <string name="contacts_sync_device_auto">Automatically back up &amp; sync device contacts</string>
     <string name="contacts_sync_device_auto_on">New device contacts are saved to %1$s</string>
+    <string name="contacts_sync_device_auto_paused">Paused: turn on Upload changes from this phone for %1$s</string>
+    <string name="contacts_sync_device_unsupported">Stays on this phone: has details Google Contacts can\'t store</string>
+    <plurals name="contacts_sync_device_kept">
+        <item quantity="one">%d contact stays on this phone because Google Contacts can\'t store some of its details</item>
+        <item quantity="other">%d contacts stay on this phone because Google Contacts can\'t store some of their details</item>
+    </plurals>
     <string name="contacts_sync_device_exclusions">Doesn\'t apply to contacts on SIM or in accounts syncing with other services, like Exchange.</string>
     <string name="contacts_sync_device_dialog_title">Save device contacts to Google</string>
     <string name="contacts_sync_device_dialog_body">Selected contacts are saved to the Google account and synced with Google Contacts. Each one is removed from this phone\'s device storage only once its Google copy is saved.</string>

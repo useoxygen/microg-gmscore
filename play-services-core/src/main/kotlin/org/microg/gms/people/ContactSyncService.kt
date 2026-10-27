@@ -51,11 +51,13 @@ class ContactSyncService : Service() {
                     val currentMode = { if (prefs.mode == mode) mode else SyncMode.OFF }
                     // Opted in to Google's "Automatically back up & sync device contacts": move this phone's device-only
                     // contacts into the account first, so this pass uploads them. Never while uploads are paused.
-                    if (mode == SyncMode.TWO_WAY && DeviceContacts.autoAccount(this@ContactSyncService) == account.name &&
-                        !ContactMigrationPrivacy(this@ContactSyncService).held) {
+                    // Rechecked before every contact: turning sync or the opt-in off, or a transfer hold, stops it at once.
+                    val autoMove = { prefs.mode == SyncMode.TWO_WAY && DeviceContacts.autoAccount(this@ContactSyncService) == account.name &&
+                        !ContactMigrationPrivacy(this@ContactSyncService).held }
+                    if (mode == SyncMode.TWO_WAY && autoMove()) {
                         val device = DeviceContacts(contentResolver)
-                        val moved = device.moveTo(account, device.list().map { it.id })
-                        if (moved > 0) Log.i("GmsContactSync", "stage=device_contacts moved=$moved")
+                        val result = device.moveTo(account, device.list().filter { it.supported }.map { it.id }, autoMove)
+                        if (result.moved > 0) Log.i("GmsContactSync", "stage=device_contacts moved=${result.moved}")
                     }
                     // Uploads pause after a phone transfer until the owner resumes them (Android Switch).
                     val api = privateContactsApi(token, canCreate = { prefs.uploadNewContacts }) {

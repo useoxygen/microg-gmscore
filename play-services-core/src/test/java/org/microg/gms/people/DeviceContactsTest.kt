@@ -95,7 +95,7 @@ class DeviceContactsTest {
         provider.row(1, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE, null, byteArrayOf(1, 2, 3))
         provider.contact(2, "DEVICE", "com.android.contacts", "Keep") // not selected
 
-        assertEquals(1, device.moveTo(google, listOf(1L)))
+        assertEquals(DeviceContacts.MoveResult(1, 0), device.moveTo(google, listOf(1L)))
 
         assertEquals(listOf(2L), device.list().map { it.id })
         val copy = provider.db.rawQuery("SELECT _id, starred FROM raw_contacts WHERE account_name=? AND account_type=?",
@@ -111,7 +111,29 @@ class DeviceContactsTest {
     @Test fun aContactThatChangedOrVanishedIsLeftAlone() {
         val (provider, device) = setup()
         provider.contact(1, google.name, google.type, "Already Google")
-        assertEquals(0, device.moveTo(google, listOf(1L, 99L)))
+        assertEquals(DeviceContacts.MoveResult(0, 0), device.moveTo(google, listOf(1L, 99L)))
         assertEquals(1L, provider.db.rawQuery("SELECT COUNT(*) FROM raw_contacts", null).use { it.moveToFirst(); it.getLong(0) })
+    }
+
+    @Test fun aContactWithDetailsGoogleSyncCantUploadStaysOnThePhone() {
+        val (provider, device) = setup()
+        provider.contact(1, "DEVICE", "com.android.contacts", "Custom")
+        provider.row(1, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE, "Custom")
+        provider.row(1, "vnd.com.example.cursor.item/app_profile", "app-specific")
+        assertFalse(device.list().single().supported)
+        assertEquals(DeviceContacts.MoveResult(0, 1), device.moveTo(google, listOf(1L)))
+        assertEquals(listOf(1L), device.list().map { it.id })
+        assertEquals(1L, provider.db.rawQuery("SELECT COUNT(*) FROM raw_contacts", null).use { it.moveToFirst(); it.getLong(0) })
+    }
+
+    @Test fun turningSyncOffStopsTheMoveBeforeTheNextContact() {
+        val (provider, device) = setup()
+        for (id in 1L..3L) {
+            provider.contact(id, "DEVICE", "com.android.contacts", "C$id")
+            provider.row(id, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE, "C$id")
+        }
+        var allowed = 1
+        assertEquals(DeviceContacts.MoveResult(1, 0), device.moveTo(google, listOf(1L, 2L, 3L)) { allowed-- > 0 })
+        assertEquals(listOf(2L, 3L), device.list().map { it.id }.sorted())
     }
 }

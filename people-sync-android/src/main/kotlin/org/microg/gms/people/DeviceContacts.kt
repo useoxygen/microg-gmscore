@@ -22,26 +22,53 @@ import android.provider.ContactsContract.RawContacts
  * SIM contacts and other accounts (e.g. Exchange) are never touched.
  */
 class DeviceContacts(private val resolver: ContentResolver) {
-    data class Entry(val id: Long, val name: String?)
+    /** [supported] is false when the contact has details Google sync can't upload; such a contact stays on the phone. */
+    data class Entry(val id: Long, val name: String?, val supported: Boolean)
+    data class MoveResult(val moved: Int, val unsupported: Int)
 
     fun list(): List<Entry> = resolver.query(RawContacts.CONTENT_URI, arrayOf(RawContacts._ID, RawContacts.DISPLAY_NAME_PRIMARY),
         LOCAL, null, "${RawContacts.DISPLAY_NAME_PRIMARY} COLLATE LOCALIZED")?.use { c ->
-        buildList { while (c.moveToNext()) add(Entry(c.getLong(0), c.getString(1))) }
+        buildList { while (c.moveToNext()) add(Entry(c.getLong(0), c.getString(1), rows(c.getLong(0)).all(::uploadable))) }
     } ?: emptyList()
 
     fun count(): Int = resolver.query(RawContacts.CONTENT_URI, arrayOf(RawContacts._ID), LOCAL, null, null)?.use { it.count } ?: 0
 
-    /** Moves the given device contacts into [account]; returns how many moved. Changed or vanished ones are skipped. */
-    fun moveTo(account: Account, ids: Collection<Long>): Int {
-        var moved = 0
-        for (id in ids) if (runCatching { move(account, id) }.getOrDefault(false)) moved++
-        return moved
+    /**
+     * Moves the given device contacts into [account]. [shouldContinue] is checked before each contact, so turning
+     * sync off (or the opt-in) stops the move at once. Changed or vanished contacts are skipped; contacts with
+     * details Google sync can't upload are left on the phone and counted as unsupported.
+     */
+    fun moveTo(account: Account, ids: Collection<Long>, shouldContinue: () -> Boolean = { true }): MoveResult {
+        var moved = 0; var unsupported = 0
+        for (id in ids) {
+            if (!shouldContinue()) break
+            when (runCatching { move(account, id) }.getOrDefault(Outcome.SKIPPED)) {
+                Outcome.MOVED -> moved++
+                Outcome.UNSUPPORTED -> unsupported++
+                Outcome.SKIPPED -> {}
+            }
+        }
+        return MoveResult(moved, unsupported)
     }
 
-    private fun move(account: Account, id: Long): Boolean {
+    private enum class Outcome { MOVED, UNSUPPORTED, SKIPPED }
+
+    // Device groups don't exist in the Google account; the photo is copied in full size separately.
+    private fun copied(row: ContentValues) = row.getAsString(Data.MIMETYPE) !in setOf(GroupMembership.CONTENT_ITEM_TYPE, Photo.CONTENT_ITEM_TYPE)
+    // The same rule the sync uses: a contact with any other row would never be uploaded.
+    private fun uploadable(row: ContentValues) = !copied(row) || ContactFieldMapper.supported(row)
+
+    private fun rows(id: Long): List<ContentValues> =
+        resolver.query(Data.CONTENT_URI, DATA_COLUMNS, "${Data.RAW_CONTACT_ID}=?", arrayOf(id.toString()), null)?.use { c ->
+            buildList { while (c.moveToNext()) add(values(c)) }
+        } ?: emptyList()
+
+    private fun move(account: Account, id: Long): Outcome {
         val raw = resolver.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, id),
             arrayOf(RawContacts.VERSION, RawContacts.STARRED, RawContacts.CUSTOM_RINGTONE, RawContacts.SEND_TO_VOICEMAIL),
-            LOCAL, null, null)?.use { if (it.moveToFirst()) values(it) else null } ?: return false
+            LOCAL, null, null)?.use { if (it.moveToFirst()) values(it) else null } ?: return Outcome.SKIPPED
+        val rows = rows(id)
+        if (!rows.all(::uploadable)) return Outcome.UNSUPPORTED
         val version = raw.getAsInteger(RawContacts.VERSION)
         raw.remove(RawContacts.VERSION)
         val ops = arrayListOf(
@@ -50,14 +77,8 @@ class DeviceContacts(private val resolver: ContentResolver) {
                 .withSelection(LOCAL, null).withValue(RawContacts.VERSION, version).withExpectedCount(1).build(),
             ContentProviderOperation.newInsert(RawContacts.CONTENT_URI).withValues(raw)
                 .withValue(RawContacts.ACCOUNT_NAME, account.name).withValue(RawContacts.ACCOUNT_TYPE, account.type).build())
-        resolver.query(Data.CONTENT_URI, DATA_COLUMNS, "${Data.RAW_CONTACT_ID}=?", arrayOf(id.toString()), null)?.use { c ->
-            while (c.moveToNext()) {
-                val row = values(c)
-                // Device groups don't exist in the Google account; the photo is copied in full size below.
-                if (row.getAsString(Data.MIMETYPE) in setOf(GroupMembership.CONTENT_ITEM_TYPE, Photo.CONTENT_ITEM_TYPE)) continue
-                ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI).withValues(row).withValueBackReference(Data.RAW_CONTACT_ID, 1).build())
-            }
-        }
+        for (row in rows.filter(::copied))
+            ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI).withValues(row).withValueBackReference(Data.RAW_CONTACT_ID, 1).build())
         photo(id)?.let { bytes ->
             ops.add(ContentProviderOperation.newInsert(Data.CONTENT_URI).withValueBackReference(Data.RAW_CONTACT_ID, 1)
                 .withValue(Data.MIMETYPE, Photo.CONTENT_ITEM_TYPE).withValue(Photo.PHOTO, bytes).withValue(Data.IS_SUPER_PRIMARY, 1).build())
@@ -65,7 +86,7 @@ class DeviceContacts(private val resolver: ContentResolver) {
         ops.add(ContentProviderOperation.newDelete(ContentUris.withAppendedId(RawContacts.CONTENT_URI, id)).withSelection(LOCAL, null)
             .withExpectedCount(1).build())
         resolver.applyBatch(ContactsContract.AUTHORITY, ops)
-        return true
+        return Outcome.MOVED
     }
 
     /** The full-size photo if the provider has one, else the thumbnail. */
