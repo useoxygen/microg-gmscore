@@ -30,6 +30,7 @@ class PlaySetupProtocolTest {
     private val catalog = mutableMapOf<String, Bundle>()
     private var pauseSucceeds = true
     private var ready = true
+    private var supportsHold = true
     private lateinit var queue: MigrationInstallQueue
     private lateinit var protocol: PlaySetupProtocol
 
@@ -46,6 +47,8 @@ class PlaySetupProtocolTest {
         }, controlCall = { operation, options ->
             controls += operation to Bundle(options)
             Bundle().apply {
+                putBoolean("automatic_update_hold", supportsHold)
+                putBoolean("owner_approved_retry", true)
                 putBoolean("success", pauseSucceeds)
                 putBoolean("ready", ready)
                 if (!ready || !pauseSucceeds) putString("error", "store_unavailable")
@@ -71,6 +74,7 @@ class PlaySetupProtocolTest {
     private fun receipt(name: String = APP, status: String, installed: Boolean = false) = Bundle().apply {
         putString("package_name", name)
         putString("status", status)
+        putLong("version_code", 12)
         putBoolean("installed", installed)
         if (installed) putLong("installed_version_code", 12)
     }
@@ -234,18 +238,43 @@ class PlaySetupProtocolTest {
         val receiver = Receiver()
         bundle(13) { parcelable(receiver); parcelable(Bundle().apply { putString("caller_id", "com.google.android.apps.restore") }) }
         assertEquals(listOf(0), receiver.results.map { it.first })
-        assertEquals(4, controls.single().first)
-        assertEquals(queue.currentSessionId(), controls.single().second.getString("session_id"))
+        assertEquals(listOf(7, 4), controls.map { it.first })
+        assertEquals(queue.currentSessionId(), controls.last().second.getString("session_id"))
         assertTrue(receiver.results.single().second.getBoolean("success"))
     }
 
     @Test fun failedPauseDoesNotSendSuccessCallback() {
         pauseSucceeds = false
         val receiver = Receiver()
-        bundle(13) { parcelable(receiver); parcelable(Bundle()) }
-        assertEquals(1, receiver.results.size)
-        assertNotEquals(0, receiver.results.single().first)
-        assertFalse(receiver.results.single().second.getBoolean("success"))
+        val reply = bundle(13) { parcelable(receiver); parcelable(Bundle()) }
+        assertTrue(receiver.results.isEmpty())
+        assertEquals("store_unavailable", reply.getBundle("error")!!.getString("error"))
+    }
+
+    @Test fun unsupportedPauseReturnsTypedErrorAndGatesIgnoredErrorsBeforeSetup() {
+        supportsHold = false
+        val receiver = Receiver()
+        val paused = bundle(13) { parcelable(receiver); parcelable(Bundle()) }
+        assertEquals("store_update_required", paused.getBundle("error")!!.getString("error"))
+        assertTrue(receiver.results.isEmpty())
+        assertNull(queue.currentSessionId())
+        assertEquals(listOf(7), controls.map { it.first })
+        val catalog = bundle(7) { writeString(null); writeStringArray(arrayOf(APP)) }
+        assertNotNull(catalog.getBundle("error"))
+        assertTrue(calls.isEmpty())
+        val setup = select()
+        assertFalse(setup.getBoolean("accepted"))
+        assertNotNull(setup.getBundle("error"))
+        assertTrue(queue.selected().isEmpty())
+        assertTrue(queue.pending().isEmpty())
+    }
+
+    @Test fun resumeDoesNotCloseASelectionThatCanStillReceiveChunks() {
+        select()
+        bundle(14) { parcelable(Bundle()) }
+        assertFalse(queue.summary().getBoolean("selection_closed"))
+        select(MISSING)
+        assertEquals(setOf(APP, MISSING), queue.selected())
     }
 
     @Test fun resumeTransactionReleasesTheSameSession() {
@@ -253,7 +282,7 @@ class PlaySetupProtocolTest {
         val id = queue.currentSessionId()
         val result = bundle(14) { parcelable(Bundle().apply { putString("caller_id", "com.google.android.apps.restore") }) }
         assertTrue(result.getBoolean("success"))
-        assertEquals(listOf(4, 5), controls.map { it.first })
+        assertEquals(listOf(7, 4, 5), controls.map { it.first })
         assertEquals(id, controls.last().second.getString("session_id"))
     }
 
@@ -273,6 +302,7 @@ class PlaySetupProtocolTest {
 
     @Test fun receiverSurvivesTheOriginalBoundProtocolBeingDestroyed() {
         select()
+        queue.finishSelection(queue.currentSessionId()!!)
         queue.dispatch(APP)
         receipts[APP] = receipt(status = "downloading")
         val progress = Receiver()

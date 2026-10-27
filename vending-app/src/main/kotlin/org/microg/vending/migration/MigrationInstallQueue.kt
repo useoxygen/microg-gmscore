@@ -26,7 +26,7 @@ internal class MigrationInstallQueue(private val context: Context,
                 val names = prefs.getStringSet("packages", emptySet()).orEmpty().toSet()
                 val ambiguous = prefs.getStringSet("pending", emptySet()).orEmpty()
                 val edit = prefs.edit().putString("sessions", id).putString("current_session", id)
-                    .putBoolean("$id:selected", true).putStringSet("$id:packages", names)
+                    .putBoolean("$id:selected", true).putBoolean("$id:selection_closed", true).putStringSet("$id:packages", names)
                 for (name in names) {
                     for (key in listOf("status", "error")) edit.putString("$id:$name:$key", prefs.getString("$name:$key", null))
                     edit.putLong("$id:$name:expectedVersion", prefs.getLong("$name:expectedVersion", 0))
@@ -69,6 +69,8 @@ internal class MigrationInstallQueue(private val context: Context,
             if (key == "disable_pre_archiving") putBoolean(key, stored.toBoolean()) else putInt(key, stored.toInt())
         }
     }
+    fun requireUpdateHold() { check(prefs.edit().putBoolean("requires_update_hold", true).commit()) }
+    fun storeReady(): Boolean = !prefs.getBoolean("requires_update_hold", false) || control(7, Bundle()).getBoolean("automatic_update_hold")
     fun pause(id: String): Bundle {
         val result = control(4, options(id))
         if (result.getBoolean("success")) check(prefs.edit().putBoolean("$id:pause_requested", true).commit())
@@ -103,7 +105,9 @@ internal class MigrationInstallQueue(private val context: Context,
         if (doc.containsKey("version_code")) edit.putLong("$id:$name:expectedVersion", doc.getLong("version_code"))
     }
     fun select(documents: List<Bundle>) = synchronized(LOCK) {
+        check(storeReady()) { "Update App Store before transferring apps" }
         val id = session()
+        check(!prefs.getBoolean("$id:selection_closed", false)) { "App selection is already closed" }
         val names = documents.map { requireNotNull(it.getString("package_name")) }.toSet()
         val fresh = names - selected(id)
         val edit = prefs.edit().putBoolean("$id:selected", true).putStringSet("$id:packages", selected(id) + names)
@@ -112,8 +116,9 @@ internal class MigrationInstallQueue(private val context: Context,
         check(edit.commit()); changed(id); schedule()
     }
     fun finishSelection(id: String) = synchronized(LOCK) {
-        if (!prefs.getBoolean("$id:selected", false)) {
-            check(prefs.edit().putBoolean("$id:selected", true).commit())
+        require(id in sessions())
+        if (!prefs.getBoolean("$id:selection_closed", false)) {
+            check(prefs.edit().putBoolean("$id:selected", true).putBoolean("$id:selection_closed", true).commit())
             changed(id); schedule()
         }
     }
@@ -128,10 +133,11 @@ internal class MigrationInstallQueue(private val context: Context,
         if (result.getBoolean("installed") && result.getLong("installed_version_code") >= prefs.getLong("$id:$name:expectedVersion", 0))
             edit.putBoolean("$id:$name:ever_installed", true)
         if (dispatched) edit.putStringSet("$id:pending", pending(id) - name).putBoolean("$id:$name:uncertain", false)
+            .putBoolean("$id:$name:acknowledged", true).putBoolean("$id:$name:owner_retry", false)
         check(edit.commit())
     }
     fun retryDocuments(id: String = currentSessionId().orEmpty()): List<Bundle> = selected(id).filter { name ->
-        prefs.getString("$id:$name:status", null) in setOf("failed", "cancelled", "unavailable") &&
+        prefs.getString("$id:$name:status", null) in setOf("failed", "cancelled", "unavailable", "owner_action_required") &&
             !prefs.getBoolean("$id:$name:ever_installed", false)
     }.map { name -> document(id, name) }
     fun retry(id: String, packageName: String? = null) = synchronized(LOCK) {
@@ -140,6 +146,7 @@ internal class MigrationInstallQueue(private val context: Context,
         if (names.isNotEmpty()) control(6, options(id).apply { putBoolean("force_refresh", true) })
         val edit = prefs.edit().putStringSet("$id:pending", pending(id) + names)
         for (name in names) edit.putBoolean("$id:$name:terminal", false).putBoolean("$id:$name:uncertain", false)
+            .putBoolean("$id:$name:owner_retry", true)
         check(edit.commit())
         changed(id); schedule()
     }
@@ -161,32 +168,65 @@ internal class MigrationInstallQueue(private val context: Context,
         putBoolean("installed", prefs.getBoolean("$id:$name:installed", false))
         putBoolean("terminal", prefs.getBoolean("$id:$name:terminal", false))
     }
+    private fun satisfies(name: String, result: Bundle, id: String): Boolean = result.getBoolean("installed") &&
+        result.getLong("installed_version_code") >= prefs.getLong("$id:$name:expectedVersion", 0)
+    private fun removed(result: Bundle): Boolean = result.getString("status") == "installed" &&
+        !result.getBoolean("installed") && !result.getBoolean("package_present")
+    private fun olderAttempt(name: String, result: Bundle, id: String): Boolean {
+        val expected = prefs.getLong("$id:$name:expectedVersion", 0)
+        return !satisfies(name, result, id) && expected > result.getLong("version_code") &&
+            (result.getString("status") in ACTIVE || (result.getString("status") == "installed" && result.getBoolean("package_present")))
+    }
+    private fun ownerReview(result: Bundle, reason: String): Bundle = Bundle(result).apply {
+        putString("status", "owner_action_required"); putString("error", reason)
+        putBoolean("installed", false); putBoolean("terminal", true)
+    }
+    private fun removedResult(result: Bundle) = Bundle(result).apply {
+        putString("status", "removed"); putString("error", "removed_by_owner")
+        putBoolean("installed", false); putBoolean("terminal", true)
+    }
     fun summary(id: String = currentSessionId().orEmpty()): Bundle = synchronized(LOCK) {
         val results = selected(id).sorted().map { name ->
             val saved = document(id, name)
             if (saved.getBoolean("terminal") && name !in pending(id)) return@map saved
-            val result = saved.apply {
+            var result = saved.apply {
                 val current = bridge(3, name)
                 if (current.getString("status") != "none") { remove("error"); remove("errorCode") }
-                // Missing row metadata must not erase names/artwork from catalog matching.
                 if (current.getString("title") == name) current.remove("title")
                 if (current.getString("icon_url").isNullOrEmpty()) current.remove("icon_url")
                 putAll(current)
             }
-            if (result.getString("status") == "installed" && !result.getBoolean("installed") && !result.getBoolean("package_present")) {
-                result.putString("status", "removed"); result.putString("error", "removed_by_owner")
+            val acknowledged = prefs.getBoolean("$id:$name:acknowledged", name !in pending(id) && prefs.contains("$id:$name:status"))
+            val ownerRetry = prefs.getBoolean("$id:$name:owner_retry", false)
+            val status = result.getString("status")
+            if (removed(result) || (prefs.getBoolean("$id:$name:ever_installed", false) &&
+                    !satisfies(name, result, id) && result.getString("error") != "store_unavailable")) {
+                result = removedResult(result)
                 check(prefs.edit().putBoolean("$id:$name:ever_installed", true).commit())
-            }
-            val expected = prefs.getLong("$id:$name:expectedVersion", 0)
-            if (expected > 0 && result.getLong("installed_version_code") < expected) result.putBoolean("installed", false)
-            if (prefs.getBoolean("$id:$name:ever_installed", false) && !result.getBoolean("installed") && result.getString("error") != "store_unavailable") {
-                result.putString("status", "removed"); result.putString("error", "removed_by_owner")
-            } else if (result.getString("status") == "none" && prefs.getString("$id:$name:error", null) != null) {
+                save(name, result, dispatched = true, id = id)
+            } else if (!satisfies(name, result, id) && status == "awaiting_install" && !ownerRetry) {
+                result = ownerReview(result, "installation_confirmation_required")
+                save(name, result, dispatched = true, id = id)
+            } else if (!satisfies(name, result, id) && status == "none" && acknowledged && !ownerRetry) {
+                // An acknowledged row can disappear after restart/owner cleanup. Its absence is not install consent.
+                val previous = prefs.getString("$id:$name:status", null)
+                result = if (previous in TERMINAL && prefs.getString("$id:$name:error", null) != null) {
+                    result.apply { putString("status", previous); putString("error", prefs.getString("$id:$name:error", null)) }
+                } else ownerReview(result, "installation_requires_review")
+                save(name, result, dispatched = true, id = id)
+            } else if (olderAttempt(name, result, id) && !ownerRetry) {
+                // Also repairs receipts adopted by the previous version, which dropped the newer pending target.
+                check(prefs.edit().putStringSet("$id:pending", pending(id) + name)
+                    .putBoolean("$id:$name:acknowledged", true).commit())
+            } else if (status == "none" && prefs.getString("$id:$name:error", null) != null && !ownerRetry) {
                 result.putString("status", prefs.getString("$id:$name:status", "unavailable"))
                 result.putString("error", prefs.getString("$id:$name:error", null))
+            } else if (status == "installed" && !satisfies(name, result, id) && name !in pending(id)) {
+                result = ownerReview(result, "installation_verification_required")
             }
+            if (!satisfies(name, result, id)) result.putBoolean("installed", false)
             val terminal = result.getBoolean("installed") || (name !in pending(id) &&
-                result.getString("status") in setOf("failed", "cancelled", "unavailable", "removed") && result.getString("error") != "store_unavailable")
+                result.getString("status") in TERMINAL && result.getString("error") != "store_unavailable")
             result.putBoolean("terminal", terminal)
             save(name, result, id = id)
             result
@@ -196,32 +236,58 @@ internal class MigrationInstallQueue(private val context: Context,
         Bundle().apply {
             putString("session_id", id); putParcelableArray("cyclon_app_results", results.toTypedArray())
             putBoolean("all_installed", results.all { it.getBoolean("installed") })
-            putBoolean("complete", prefs.getBoolean("$id:selected", false) && pending(id).isEmpty() && results.all { it.getBoolean("terminal") })
+            putBoolean("selection_closed", prefs.getBoolean("$id:selection_closed", false))
+            putBoolean("installs_settled", pending(id).isEmpty() && results.all { it.getBoolean("terminal") })
+            putBoolean("complete", getBoolean("selection_closed") && getBoolean("installs_settled"))
             putBundle("setup_options", options(id))
             putString("cyclon_hold_state", if (getBoolean("complete")) "complete" else "installing")
         }
     }
     fun dispatch(name: String, id: String = session()): Boolean = synchronized(LOCK) {
         if (name !in pending(id)) return true
-        // An earlier successful install remains a receipt even if the owner subsequently removes it.
-        if (prefs.getBoolean("$id:$name:ever_installed", false)) {
-            save(name, unavailable(name, "removed_by_owner").apply { putString("status", "removed") }, true, id)
-            return true
-        }
         val current = bridge(3, name)
         if (current.getString("error") == "store_unavailable") return false
-        val result = if (prefs.getBoolean("$id:$name:uncertain", false)) {
-            if (current.getString("status") == "none" && needsEnqueue(name, current, id)) {
-                unavailable(name, "installation_requires_review").apply { putString("status", "failed") }
-            } else current
-        } else if (needsEnqueue(name, current, id)) {
-            // Commit BEFORE IPC. An uncertain reply never authorizes another enqueue after the owner removed the app.
+        if (prefs.getBoolean("$id:$name:ever_installed", false)) {
+            save(name, if (satisfies(name, current, id)) current else removedResult(current), true, id)
+            return true
+        }
+        val ownerRetry = prefs.getBoolean("$id:$name:owner_retry", false)
+        val needsReview = !satisfies(name, current, id) && (
+            current.getString("status") == "awaiting_install" || (current.getString("status") == "none" &&
+                (prefs.getBoolean("$id:$name:uncertain", false) || prefs.getBoolean("$id:$name:acknowledged", false))))
+        var requestedInstall = false
+        var result = if (removed(current)) {
+            check(prefs.edit().putBoolean("$id:$name:ever_installed", true).commit())
+            removedResult(current)
+        } else if (needsReview && !ownerRetry) {
+            ownerReview(current, if (current.getString("status") == "awaiting_install") "installation_confirmation_required" else "installation_requires_review")
+        } else if (olderAttempt(name, current, id) && current.getString("status") in ACTIVE) {
+            // Let the old attempt settle, then reconcile this session's still-pending target.
+            save(name, current, id = id)
+            check(prefs.edit().putBoolean("$id:$name:acknowledged", true).commit())
+            return false
+        } else if (ownerRetry && current.getString("status") == "awaiting_install" && !control(7, Bundle()).getBoolean("owner_approved_retry")) {
+            ownerReview(current, "installation_confirmation_required") // Legacy Aurora: use its owner-facing install UI.
+        } else if (needsEnqueue(name, current, id) || (ownerRetry && current.getString("status") == "awaiting_install")) {
             check(prefs.edit().putBoolean("$id:$name:uncertain", true).commit())
-            bridge(2, name, options(id))
+            requestedInstall = true
+            bridge(2, name, options(id).apply {
+                putLong("minimum_version_code", prefs.getLong("$id:$name:expectedVersion", 0))
+                putBoolean("owner_approved_retry", ownerRetry)
+            })
         } else current
         if (result.getString("error") == "store_unavailable") return false
-        save(name, result, dispatched = true, id = id); changed(id)
-        true
+        if (requestedInstall && result.getString("status") == "installed" && !satisfies(name, result, id) &&
+            (result.getBoolean("package_present") || result.getBoolean("installed"))) {
+            // Legacy Aurora cannot enforce the selected minimum. Its settled lower offer needs review,
+            // not an endless clear/re-add/reinstall cycle.
+            result = ownerReview(result, "selected_version_unavailable")
+        }
+        val retainTarget = olderAttempt(name, result, id) && result.getString("status") in ACTIVE
+        save(name, result, dispatched = !retainTarget, id = id)
+        if (retainTarget) check(prefs.edit().putBoolean("$id:$name:acknowledged", true).putBoolean("$id:$name:uncertain", false).commit())
+        changed(id)
+        !retainTarget
     }
     fun bridge(operation: Int, name: String, options: Bundle? = null): Bundle = try {
         storeCall?.invoke(operation, name) ?: AuroraMigrationClient(context).use { it.call(operation, name, options) }
@@ -239,6 +305,8 @@ internal class MigrationInstallQueue(private val context: Context,
         const val ACTION_CHANGED = "org.microg.vending.migration.CHANGED"
         private val LOCK = Any()
         private const val JOB = 700714
+        private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
+        private val TERMINAL = setOf("failed", "cancelled", "unavailable", "removed", "owner_action_required")
         fun unavailable(name: String, reason: String) = Bundle().apply {
             putString("package_name", name); putString("title", name); putInt("availability", 2)
             putString("status", "unavailable"); putString("error", reason); putBoolean("installed", false)
@@ -269,7 +337,9 @@ class MigrationInstallJob : JobService() {
                             queue.releaseCompletedPause(id)
                             MigrationNotifications.completed(this, id, state)
                         } else if (queue.selected(id).isNotEmpty()) {
-                            retry = true
+                            // Settled chunks do not prove the selection closed. Preserve the lease and
+                            // receipts without polling forever; the next chunk/explicit close schedules work.
+                            if (!state.getBoolean("installs_settled")) retry = true
                             queue.renewPause(id)
                         }
                     }

@@ -33,6 +33,7 @@ class MigrationResultsActivity : ComponentActivity() {
             var results by remember { mutableStateOf(emptyList<Bundle>()) }
             var retryable by remember { mutableStateOf(emptySet<String>()) }
             var complete by remember { mutableStateOf(false) }
+            var selectionClosed by remember { mutableStateOf(false) }
             var refresh by remember { mutableStateOf(0) }
             var showSessions by remember { mutableStateOf(false) }
             DisposableEffect(Unit) {
@@ -52,6 +53,7 @@ class MigrationResultsActivity : ComponentActivity() {
                 if (sessionId != receipt.second) sessionId = receipt.second
                 results = receipt.third?.getParcelableArray("cyclon_app_results")?.map { it as Bundle }.orEmpty()
                 complete = receipt.third?.getBoolean("complete") ?: false
+                selectionClosed = receipt.third?.getBoolean("selection_closed") ?: false
                 retryable = receipt.second?.let { id ->
                     withContext(Dispatchers.IO) { queue.retryDocuments(id).mapNotNull { it.getString("package_name") }.toSet() }
                 }.orEmpty()
@@ -67,7 +69,7 @@ class MigrationResultsActivity : ComponentActivity() {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.padding(20.dp).systemBarsPadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Transferred apps", style = MaterialTheme.typography.headlineMedium)
-                        Text(if (complete) "App installation has finished. Check the results below."
+                        Text(if (complete) "App transfer is ready to review. Check the results below."
                             else "Your data transfer can finish while App Store installs your apps. Results update as each app finishes.")
                         if (sessions.size > 1) Box {
                             TextButton(onClick = { showSessions = true }) {
@@ -104,6 +106,13 @@ class MigrationResultsActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        if (!selectionClosed && sessionId != null) {
+                            Text("When you have finished choosing apps to copy, finish app selection here.")
+                            Button(onClick = {
+                                val id = sessionId ?: return@Button
+                                scope.launch { withContext(Dispatchers.IO) { queue.finishSelection(id) }; refresh++ }
+                            }) { Text("Finish app selection") }
+                        }
                         TextButton(onClick = { finish() }) { Text("Done") }
                     }
                 }
@@ -124,6 +133,10 @@ internal object MigrationResultText {
             "incompatible", "incompatible_device" -> "This app is not compatible with this phone."
             "insufficient_storage", "storage", "no_space" -> "There is not enough space. Free some storage and retry."
             "owner_removed", "removed_by_owner", "removed" -> "You removed this app. It will not be installed again."
+            "store_update_required", "bridge_update_required" -> "Update App Store before transferring apps."
+            "installation_confirmation_required" -> "Installation needs your approval. Retry to resume, or open App Store."
+            "installation_verification_required" -> "App Store could not verify this installation. Retry or check App Store."
+            "selected_version_unavailable" -> "The selected app version is no longer available. Check App Store before retrying."
             "previous_transfer_requires_review", "installation_requires_review" -> "App Store could not confirm the previous request. Retry to approve another installation."
             "cancelled", "canceled" -> "Installation was cancelled."
             "needs_confirmation", "user_action_required" -> "Open App Store to confirm the installation."

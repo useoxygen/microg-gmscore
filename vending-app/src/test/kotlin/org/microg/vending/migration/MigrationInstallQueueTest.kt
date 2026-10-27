@@ -19,7 +19,7 @@ class MigrationInstallQueueTest {
     private fun selected() = listOf(Bundle().apply { putString("package_name", "org.example.app"); putLong("version_code", 12) })
     private fun state(status: String, installed: Boolean = false, version: Long = 0) = Bundle().apply {
         putString("package_name", "org.example.app"); putString("status", status)
-        putBoolean("installed", installed); putLong("installed_version_code", version)
+        putBoolean("installed", installed); putLong("installed_version_code", version); putLong("version_code", 12)
     }
     @Before fun clear() { context.getSharedPreferences("migration-installs", 0).edit().clear().commit() }
     @Test fun unavailableDocumentsNeverEnterTheSelectableCatalog() {
@@ -90,7 +90,7 @@ class MigrationInstallQueueTest {
     @Test fun completedReceiptsDoNotFollowLaterSessionsAuroraRows() {
         var status = state("failed").apply { putString("error", "not_found") }
         val queue = MigrationInstallQueue(context) { _, _ -> Bundle(status) }
-        val first = queue.beginTransfer(); queue.select(selected()); queue.dispatch("org.example.app", first)
+        val first = queue.beginTransfer(); queue.select(selected()); queue.finishSelection(first); queue.dispatch("org.example.app", first)
         assertTrue(queue.summary(first).getBoolean("complete"))
         val second = queue.beginTransfer(); queue.select(selected())
         status = state("downloading")
@@ -114,7 +114,7 @@ class MigrationInstallQueueTest {
             if (operation == 2) installs++
             state("installed").apply { putBoolean("package_present", false) }
         }
-        queue.select(selected()); queue.dispatch("org.example.app")
+        queue.select(selected()); queue.finishSelection(queue.currentSessionId()!!); queue.dispatch("org.example.app")
         assertTrue(queue.summary().getBoolean("complete"))
         assertEquals(0, installs)
         assertTrue(queue.retryDocuments().isEmpty())
@@ -167,7 +167,7 @@ class MigrationInstallQueueTest {
         val calls = mutableListOf<Int>()
         val queue = MigrationInstallQueue(context) { operation, _ ->
             calls += operation
-            if (operation == 3) state("installed", true, 11).apply { putBoolean("package_present", true) } else state("queued")
+            if (operation == 3) state("installed", true, 11).apply { putBoolean("package_present", true); putLong("version_code", 11) } else state("queued")
         }
         queue.select(selected()); assertTrue(queue.dispatch("org.example.app"))
         assertEquals(listOf(3, 2), calls)
@@ -182,6 +182,48 @@ class MigrationInstallQueueTest {
         assertNotEquals(first, next)
         assertEquals(next, queue.catalogSession())
         assertTrue(queue.summary(next).getParcelableArray("cyclon_app_results")!!.isEmpty())
+    }
+
+    @Test fun summaryObservedSuccessBeforeDispatchIsAdoptedWithoutFalseOwnerRemoval() {
+        var present = true
+        var installs = 0
+        val queue = MigrationInstallQueue(context) { operation, _ ->
+            if (operation == 2) installs++
+            state("installed", present, if (present) 12 else 0).apply { putBoolean("package_present", present) }
+        }
+        val id = queue.beginTransfer(); queue.select(selected()); queue.finishSelection(id)
+        assertTrue(queue.summary(id).getBoolean("all_installed"))
+        assertTrue(queue.dispatch("org.example.app", id))
+        assertTrue(queue.summary(id).getBoolean("complete"))
+        assertTrue(queue.summary(id).getBoolean("all_installed"))
+        assertEquals(0, installs)
+        assertTrue(queue.pending(id).isEmpty())
+    }
+    @Test fun noSelectionChunksAreAcceptedAfterExplicitClosure() {
+        val queue = MigrationInstallQueue(context) { _, _ -> state("queued") }
+        val id = queue.beginTransfer(); queue.select(selected()); queue.finishSelection(id)
+        assertThrows(IllegalStateException::class.java) { queue.select(selected()) }
+    }
+
+    @Test fun legacyStoreReturningSettledLowerOfferNeedsReviewWithoutRepeatedInstallCalls() {
+        var installs = 0
+        val queue = MigrationInstallQueue(context) { operation, _ ->
+            if (operation == 2) installs++
+            state("installed", true, 12).apply { putBoolean("package_present", true) }
+        }
+        val id = queue.beginTransfer()
+        queue.select(listOf(Bundle(selected().single()).apply { putLong("version_code", 13) }))
+        queue.finishSelection(id)
+        queue.dispatch("org.example.app", id)
+        val summary = queue.summary(id)
+        assertTrue(summary.getBoolean("complete"))
+        assertFalse(summary.getBoolean("all_installed"))
+        val receipt = summary.getParcelableArray("cyclon_app_results")!!.single() as Bundle
+        assertEquals("selected_version_unavailable", receipt.getString("error"))
+        assertEquals("owner_action_required", receipt.getString("status"))
+        assertTrue(queue.pending(id).isEmpty())
+        repeat(3) { queue.dispatch("org.example.app", id); queue.summary(id) }
+        assertEquals(1, installs)
     }
 
 }

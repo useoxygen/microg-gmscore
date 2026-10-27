@@ -35,23 +35,50 @@ internal class AuroraMigrationClient(private val context: Context) : Closeable {
         }
         check(binder.interfaceDescriptor == DESCRIPTOR) { "Wrong Aurora migration bridge" }
     }
-    fun call(operation: Int, name: String, options: Bundle? = null): Bundle = transact(operation) { data ->
+    private val wire by lazy { AuroraMigrationWire(binder) }
+    fun call(operation: Int, name: String, options: Bundle? = null): Bundle = wire.call(operation, name, options)
+    fun control(operation: Int, options: Bundle): Bundle = wire.control(operation, options)
+    override fun close() { if (bound) context.unbindService(connection) }
+    companion object { const val DESCRIPTOR = "com.aurora.store.migration.IMigrationStore" }
+}
+
+/** Negotiate private extensions before adding fields that the original bridge rejects. */
+internal class AuroraMigrationWire(private val binder: IBinder) {
+    private val capabilities by lazy {
+        transact(7, optional = true) {} ?: Bundle().apply { putInt("bridge_version", 1) }
+    }
+    fun call(operation: Int, name: String, options: Bundle? = null): Bundle = requireNotNull(transact(operation) { data ->
         data.writeString(name)
-        if (options != null) { data.writeInt(1); options.writeToParcel(data, 0) }
+        if (operation == 2 && options != null && capabilities.getBoolean("install_options")) {
+            data.writeInt(1); options.writeToParcel(data, 0)
+        }
+    })
+    fun control(operation: Int, options: Bundle): Bundle {
+        if (operation == 7) return Bundle(capabilities)
+        val feature = when (operation) {
+            4, 5 -> "automatic_update_hold"
+            6 -> "anonymous_prepare"
+            else -> error("Unknown Aurora migration control")
+        }
+        if (!capabilities.getBoolean(feature)) return Bundle().apply {
+            putBoolean("success", false); putBoolean("unsupported", true)
+            putBoolean("recoverable", true); putString("error", "bridge_update_required")
+        }
+        return requireNotNull(transact(operation) { data ->
+            data.writeInt(1); options.writeToParcel(data, 0)
+        })
     }
-    fun control(operation: Int, options: Bundle): Bundle = transact(operation) { data ->
-        data.writeInt(1); options.writeToParcel(data, 0)
-    }
-    private fun transact(operation: Int, write: (Parcel) -> Unit): Bundle {
+    private fun transact(operation: Int, optional: Boolean = false, write: (Parcel) -> Unit): Bundle? {
         val data = Parcel.obtain(); val reply = Parcel.obtain()
         try {
-            data.writeInterfaceToken(DESCRIPTOR); write(data)
-            check(binder.transact(operation, data, reply, 0)) { "Aurora migration operation unavailable" }
+            data.writeInterfaceToken(AuroraMigrationClient.DESCRIPTOR); write(data)
+            if (!binder.transact(operation, data, reply, 0)) {
+                if (optional) return null
+                error("Aurora migration operation unavailable")
+            }
             reply.readException()
             check(reply.readInt() == 1)
             return Bundle.CREATOR.createFromParcel(reply)
         } finally { data.recycle(); reply.recycle() }
     }
-    override fun close() { if (bound) context.unbindService(connection) }
-    companion object { const val DESCRIPTOR = "com.aurora.store.migration.IMigrationStore" }
 }

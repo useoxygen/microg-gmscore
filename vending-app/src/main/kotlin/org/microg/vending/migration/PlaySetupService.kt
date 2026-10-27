@@ -71,7 +71,7 @@ internal class PlaySetupProtocol(private val queue: MigrationInstallQueue,
                     val docs = options.getParcelableArray("documents")?.map { it as Bundle }.orEmpty()
                     queue.recordOptions(options)
                     // Only Play application documents can be installed by the Aurora bridge.
-                    if (options.getInt("documents_type", 0) !in setOf(0, 3)) Bundle().apply {
+                    if (!queue.storeReady()) storeUpdateError() else if (options.getInt("documents_type", 0) !in setOf(0, 3)) Bundle().apply {
                         putBoolean("accepted", false); putBundle("error", Bundle().apply { putString("reason", "unsupported_documents_type"); putString("exception_type", "UnsupportedOperationException") })
                     } else { select(docs); Bundle().apply { putBoolean("accepted", true) } }
                 }
@@ -91,18 +91,30 @@ internal class PlaySetupProtocol(private val queue: MigrationInstallQueue,
                 2 -> { end(data); reply?.writeNoException(); return true }
                 13 -> {
                     val receiver = readReceiver(data); val options = readBundle(data); end(data)
+                    queue.requireUpdateHold()
+                    if (!queue.control(7, Bundle()).getBoolean("automatic_update_hold")) {
+                        // lql checks lqm.l on this reply before awaiting a callback. Legacy async callers
+                        // can ignore this error, so catalog/setup enforce the persisted requirement too.
+                        reply!!.writeNoException(); reply.writeInt(1)
+                        Bundle().apply { putBundle("error", Bundle().apply { putString("error", "store_update_required") }) }.writeToParcel(reply, 0)
+                        return true
+                    }
                     val id = queue.startPausedTransfer()
                     options.putString("session_id", id)
-                    execute {
-                        val state = queue.pause(id)
-                        // lqf.java:25 accepts only 0 as success; a failed hold must fail explicitly.
-                        val success = state.getBoolean("success")
-                        if (!success) state.putBundle("error", Bundle().apply { putString("error", "store_unavailable") })
-                        receiver?.send(if (success) 0 else -1, state)
+                    val state = queue.pause(id)
+                    if (!state.getBoolean("success")) Bundle().apply {
+                        putBundle("error", Bundle().apply { putString("error", "store_unavailable") })
+                    } else {
+                        execute { receiver?.send(0, state) }
+                        Bundle()
                     }
-                    Bundle()
                 }
-                14 -> { readBundle(data); end(data); queue.resume(session()) }
+                14 -> {
+                    readBundle(data); end(data)
+                    queue.resume(session()).apply {
+                        if (!getBoolean("success")) putBundle("error", Bundle().apply { putString("error", "store_update_required") })
+                    }
+                }
                 15, 16 -> {
                     val receiver = readReceiver(data); readBundle(data); end(data)
                     if (receiver != null) {
@@ -122,6 +134,11 @@ internal class PlaySetupProtocol(private val queue: MigrationInstallQueue,
     private fun session() = queue.currentSessionId() ?: queue.beginTransfer()
     private fun compatible(names: List<String>): Bundle {
         queue.catalogSession()
+        if (!queue.storeReady()) {
+            val documents = names.map { name -> MigrationInstallQueue.unavailable(name, "store_update_required").apply { putBoolean("recoverable", true) } }
+            queue.recordCatalog(documents)
+            return PlaySetupService.catalog(documents).apply { putAll(storeUpdateError()) }
+        }
         val prepared = queue.control(6)
         val calls = names.map { name -> lookups.submit<Bundle> { queue.bridge(1, name) } }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45)
@@ -159,6 +176,13 @@ internal class PlaySetupProtocol(private val queue: MigrationInstallQueue,
         private fun end(data: Parcel) { require(data.dataAvail() == 0) { "Unexpected setup request fields" } }
         private fun readBundle(data: Parcel): Bundle = if (data.readInt() != 0) Bundle.CREATOR.createFromParcel(data) else Bundle()
         private fun readReceiver(data: Parcel): ResultReceiver? = if (data.readInt() != 0) ResultReceiver.CREATOR.createFromParcel(data) else null
+        private fun storeUpdateError() = Bundle().apply {
+            putBoolean("accepted", false)
+            putBundle("error", Bundle().apply {
+                putString("reason", "Update App Store before transferring apps")
+                putString("exception_type", "StoreUpdateRequiredException")
+            })
+        }
         private fun emptyDocuments() = Bundle().apply { putParcelableArray("document_groups", emptyArray<Bundle>()) }
     }
 }

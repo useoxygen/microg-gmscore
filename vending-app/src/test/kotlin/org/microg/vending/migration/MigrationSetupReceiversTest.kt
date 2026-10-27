@@ -24,6 +24,7 @@ class MigrationSetupReceiversTest {
         putString("status", if (installed) "installed" else "installing")
         putBoolean("installed", installed)
         putLong("installed_version_code", if (installed) 12 else 0)
+        putLong("version_code", 12)
     } })
     private fun receiver(codes: MutableList<Int>) = object : ResultReceiver(null) {
         override fun onReceiveResult(resultCode: Int, resultData: Bundle?) { codes += resultCode }
@@ -38,6 +39,7 @@ class MigrationSetupReceiversTest {
     private fun select(queue: MigrationInstallQueue): String {
         val id = queue.beginTransfer()
         queue.select(listOf(Bundle().apply { putString("package_name", "org.example.app"); putLong("version_code", 12) }))
+        queue.finishSelection(id)
         queue.dispatch("org.example.app", id)
         return id
     }

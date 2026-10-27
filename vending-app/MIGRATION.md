@@ -12,7 +12,7 @@ Evidence is Android Switch 1140078, `src/sources/defpackage/` in the retained
 - `chc.java:11-185` provides transaction numbers and Parcelable presence layouts;
   `eja.java:85-160` provides the method names and unbinds after each method.
 - Pause (13) sends callback **0** after Aurora confirms the hold (`lqf.java:24-29`).
-  Failure sends a nonzero code with the nested error Bundle; it never claims a hold.
+  Failure returns the nested synchronous error Bundle without a callback claiming a hold.
 - Modern final hold (9) accepts 1 complete and 2/3 progress (`lqg.java:24-32`),
   but legacy cable/cloud `drj.java:18-22`, `chf.java:18-22` and `cyn.java:10-12`
   complete on **every** callback. Therefore tx9 sends its single code1 only after
@@ -114,3 +114,50 @@ registered. This evidence gap remains under CYC-712/CYC-700.
    summary notification opens the correct session's APP_RESULTS. Reopen/restart
    without another alert; check per-app Retry and Open. Also deny permission and
    verify no crash or false delivered receipt.
+
+## Review round 1
+
+A selected target stays pending while an older Aurora row is queued/downloading/
+installing. After that attempt settles, FakeStore reconciles the target again;
+removal or a lost receipt never silently authorizes another install. The same
+reconciliation repairs old-draft sessions that already dropped the pending target.
+Actual installed version, row version and the selected minimum stay separate.
+Aurora rejects an offer below `minimum_version_code` rather than reinstalling an
+old offer indefinitely.
+
+`awaiting_install` and disappeared acknowledged receipts become terminal
+`owner_action_required` receipts, with `all_installed=false`. This releases a
+closed final hold and allows the summary notification without claiming installation
+success. An owner Retry explicitly approves another request; negotiated
+`owner_approved_retry` lets Aurora resume retained install files. Legacy Aurora
+requires its App Store UI for a parked installer. Old-draft acknowledgements are
+inferred from persisted status and a package already absent from pending.
+
+Private bridge tx7 (no fields) returns `bridge_version` and capability booleans
+`install_options`, `automatic_update_hold`, `anonymous_prepare` and
+`owner_approved_retry`. An unimplemented tx7 means original bridge v1. FakeStore
+then keeps tx2 string-only and sends no unsupported tx4/5/6. A modern Switch pause
+requiring an unavailable hold returns the nested synchronous error checked by
+`lql.java:103-105` / `lqm.java:27-31`, with no unexpected nonzero callback. Some
+async Switch callers only log that error, so catalog/setup also enforce the
+persisted requirement and report `store_update_required` until Aurora supports it.
+
+Selection has a separate persisted `selection_closed` bit. tx8/12 only add chunks;
+tx9 explicitly closes them. No terminal receiver, update-hold release or summary
+notification can occur between chunks. tx14 does not close selection: Switch's
+SetupCompanion schedules resume on Activity destruction, including recreation
+(`SetupCompanionActivity.java:299-310`; recovered `exp` worker). There is no final
+chunk marker in tx12. For flows that omit tx9, the owner can explicitly choose
+**Finish app selection** in the results screen. Settled chunks stop polling while
+preserving their receipts and bounded hold lease; the next chunk or explicit close
+schedules reconciliation. Inactivity is never presented as successful closure.
+
+Additional parent device checks: start a v13 selection while Aurora downloads v12;
+verify the v13 target survives and advances after v12 settles. Restart during an
+install to reach AWAITING_INSTALL, and separately clear an acknowledged download
+row: both must finish final hold with an owner-action receipt and require an
+explicit Retry/Open App Store action. Temporarily use an older Aurora: legacy
+string-only installs remain valid, but modern Switch's unsupported hold is shown
+as an update-required error before apps are selected. Delay the final setup chunk:
+no hold release/terminal callback/summary notification until tx9 or explicit owner
+closure. Exercise a cable flow with final hold disabled and the owner closure UI.
