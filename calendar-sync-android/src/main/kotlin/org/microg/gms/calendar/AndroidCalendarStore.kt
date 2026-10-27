@@ -391,10 +391,13 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         if (extras == null) {
             val defaults = extraValues(if (remote == null && base != null) base else
                 RemoteEvent("", "", "", "", "", null, null, emptyList(), null, null, false, emptyList()))
+            // A journaled create already has its client-assigned ID before its first server baseline. It is
+            // still this account's local event, including while an acknowledged-create conflict is resolved.
+            val ownCreate = base == null && remote != null && remote == text(Events.SYNC_DATA5) && text(Events.SYNC_DATA1) == MARKER
             // Unrepresented organizer/guest changes must never be cleared as if uploaded.
             for (column in extraColumns - supportedExtraColumns - Events.ORGANIZER) if (row.getAsString(column) != defaults.getAsString(column)) unsupported = true
             val expectedOrganizer = defaults.getAsString(Events.ORGANIZER)
-            if (text(Events.ORGANIZER)?.let { it != expectedOrganizer && (remote != null || it != account.name) } == true) unsupported = true
+            if (text(Events.ORGANIZER)?.let { it != expectedOrganizer && ((remote != null && !ownCreate) || it != account.name) } == true) unsupported = true
         }
         val deleting = number(Events.DELETED) != 0L || number(Events.STATUS) == Events.STATUS_CANCELED.toLong()
         if (deleting && master == null && hasDirtyChildren(number(Events.CALENDAR_ID), remote.orEmpty(), snapshot.id)) unsupported = true
@@ -510,12 +513,16 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         }
         if (current.fingerprint == existing.fingerprint) return write(calendar, remote, existing.id, current)
         val dispatched = existing.pending?.optJSONObject("providerSnapshot")
-        // Old journals cannot reconstruct which fields changed after dispatch. Retain them rather than guessing
-        // that stale provider values are new owner edits and overwriting disjoint Google changes next time.
-        if (existing.pending != null && dispatched == null) return false
+        // An old journal cannot reconstruct which edits followed dispatch. Preserve the row and require an
+        // owner choice instead of either guessing a merge or leaving the mutation in recovery forever.
+        if (existing.pending != null && dispatched == null)
+            return holdAcknowledgement(calendarId, current, remote, "missing-provider-snapshot")
         val sent = dispatched?.getJSONObject("event")?.let(CalendarEventCodec::decode) ?: existing.observed ?: existing.event
         val currentEvent = local(calendar, current).event
-        val merged = CalendarEventMerge.acknowledge(sent, currentEvent, remote)
+        val merged = try { CalendarEventMerge.acknowledge(sent, currentEvent, remote) }
+            catch (conflict: CalendarAcknowledgementConflict) {
+                return holdAcknowledgement(calendarId, current, remote, "acknowledgement-overlap", conflict.fields)
+            }
         val keepReminders = if (dispatched == null) currentEvent.reminders != sent.reminders ||
             currentEvent.useDefaultReminders != sent.useDefaultReminders
             else JSONArray(current.reminders.map { json(it) }).toString() != dispatched.getJSONArray("reminders").toString() ||
@@ -523,6 +530,24 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         // Merge unchanged fields from Google, retain later local edits, and keep the actual response as the
         // next baseline. Reproject temporal fields together so DTEND/DURATION stay consistent with recurrence.
         write(calendar, merged, existing.id, current, Acknowledgement(remote, current, dispatched?.getJSONObject("row"), keepReminders))
+        return false
+    }
+    private fun holdAcknowledgement(calendarId: Long, current: Snapshot, remote: RemoteEvent,
+        reason: String, fields: Set<String> = emptySet()): Boolean {
+        check(prefs.enabled)
+        val journal = current.row.getAsString(Events.SYNC_DATA4)?.let(::JSONObject) ?: JSONObject()
+        journal.put("kind", "conflict").put("id", remote.id).put("fingerprint", current.fingerprint)
+            .put("holdGeneration", prefs.conflictResolutionGeneration).put("reason", reason)
+            .put("fields", JSONArray(fields.sorted())).put("acknowledged", true)
+            // The server already committed this mutation. Even a create now refers to an existing event;
+            // Keep phone changes must conditionally update that ID, never allocate a duplicate create.
+            .put("operation", "update")
+        val operations = ArrayList(assertions(current))
+        operations += ContentProviderOperation.newUpdate(sync(Events.CONTENT_URI))
+            .withSelection("${Events._ID}=? AND ${Events.CALENDAR_ID}=?", arrayOf(current.id.toString(), calendarId.toString()))
+            .withValue(Events.SYNC_DATA4, journal.toString()).withExpectedCount(1).build()
+        // Neither the current provider values nor their baseline move until the owner resolves the overlap.
+        provider.applyBatch(operations)
         return false
     }
     override fun removeLocal(calendar: RemoteCalendar, existing: LocalEvent) {

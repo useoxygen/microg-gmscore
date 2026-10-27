@@ -124,6 +124,165 @@ class CalendarStoreEngineTest {
         assertEquals(2, api.patches.size)
     }
 
+    // Port of the reviewer's failing /tmp/calendar-pr54-r2-evidence/overlap-lost-reply.xml probe.
+    // PR #54 round-2 overlap-lost-reply.xml: a committed title must not approve a later phone/Google location race.
+    @Test fun probeSameFieldRaceDuringAcknowledgementRequiresConflict() { overlappingAcknowledgement(false) }
+    @Test fun probeSameFieldRaceDuringLostReplyRecoveryRequiresConflict() { overlappingAcknowledgement(true) }
+    @Test fun overlappingNormalReplySettlesOnlyAfterExplicitKeepPhoneChoice() { overlappingChoice(false, true) }
+    @Test fun overlappingNormalReplySettlesOnlyAfterExplicitUseGoogleChoice() { overlappingChoice(false, false) }
+    @Test fun overlappingLostReplySettlesOnlyAfterExplicitKeepPhoneChoice() { overlappingChoice(true, true) }
+    @Test fun overlappingLostReplySettlesOnlyAfterExplicitUseGoogleChoice() { overlappingChoice(true, false) }
+
+    private fun changeGoogleLocation(id: String, value: String) {
+        val previous = requireNotNull(api.remote[id])
+        val json = JSONObject(requireNotNull(previous.raw)).put("location", value)
+            .put("etag", "cloud-${++api.revision}").put("sequence", previous.sequence + 1)
+        api.remote[id] = GoogleCalendarApi.parseEvent(json, calendar)
+    }
+    private fun overlappingAcknowledgement(loseReply: Boolean): Long {
+        val id = seed(event())
+        title(id, "sent title")
+        api.returnLatestAfterWrite = !loseReply
+        api.afterWrite = {
+            // The phone edit happens first. A later Google edit of the same field must not be accepted as
+            // the baseline of that phone edit when the committed title's acknowledgement is recovered.
+            edit(id, ContentValues().apply { put(Events.EVENT_LOCATION, "phone room") })
+            changeGoogleLocation("event", if (loseReply) "newest cloud room" else "cloud room")
+            if (loseReply) throw IOException("Synthetic lost title reply after both location edits")
+        }
+        val first = sync()
+        if (loseReply) {
+            assertTrue(first.failure is IOException)
+            assertNoFailure(sync()) // Fresh store reads the journal and Google's newer revision.
+        } else assertNoFailure(first)
+        assertNoFailure(sync())
+        assertEquals("A later phone edit must not silently overwrite Google's concurrent location",
+            if (loseReply) "newest cloud room" else "cloud room", api.remote["event"]!!.location)
+        assertEquals("phone room", row(id).getAsString(Events.EVENT_LOCATION))
+        assertEquals("sent title", row(id).getAsString(Events.TITLE))
+        assertEquals(1, row(id).getAsInteger(Events.DIRTY).toInt())
+        assertEquals("conflict", store().localEvents(calendar).single().pending!!.getString("kind"))
+        assertEquals("initial", store().checkpoint(calendar.id))
+        assertEquals(1, api.patches.size)
+        assertEquals(setOf("summary", "sequence"), api.patches.single().keys().asSequence().toSet())
+        return id
+    }
+    private fun overlappingChoice(loseReply: Boolean, keepPhone: Boolean) {
+        val id = overlappingAcknowledgement(loseReply)
+        prefs.resolveConflicts(keepPhone)
+        assertNoFailure(sync())
+        val expected = if (keepPhone) "phone room" else if (loseReply) "newest cloud room" else "cloud room"
+        assertEquals(expected, api.remote["event"]!!.location)
+        assertEquals(expected, row(id).getAsString(Events.EVENT_LOCATION))
+        assertEquals(0, row(id).getAsInteger(Events.DIRTY).toInt())
+        assertNull(row(id).getAsString(Events.SYNC_DATA4))
+        assertEquals(if (keepPhone) 2 else 1, api.patches.size)
+        if (keepPhone) assertEquals(setOf("location", "sequence"), api.patches.last().keys().asSequence().toSet())
+        assertNoFailure(sync())
+        assertEquals(if (keepPhone) 2 else 1, api.patches.size)
+    }
+
+    @Test fun committedCreateConflictKeepPhoneUpdatesTheSameServerEvent() { committedCreateConflict(false, true) }
+    @Test fun committedCreateLostReplyConflictKeepPhoneDoesNotCreateAnotherEvent() { committedCreateConflict(true, true) }
+    @Test fun committedCreateConflictUseGoogleKeepsTheSameServerEvent() { committedCreateConflict(false, false) }
+    private fun committedCreateConflict(loseReply: Boolean, keepPhone: Boolean) {
+        val id = seed(event())
+        api.remote.clear()
+        edit(id, ContentValues().apply {
+            listOf(Events._SYNC_ID, Events.SYNC_DATA1, Events.SYNC_DATA2, Events.SYNC_DATA3,
+                Events.SYNC_DATA4, Events.SYNC_DATA5, Events.SYNC_DATA6).forEach(::putNull)
+            put(Events.ORGANIZER, account.name)
+        })
+        api.returnLatestAfterWrite = !loseReply
+        api.afterWrite = {
+            edit(id, ContentValues().apply { put(Events.EVENT_LOCATION, "phone room") })
+            changeGoogleLocation(api.remote.keys.single(), "cloud room")
+            if (loseReply) throw IOException("Synthetic lost create reply after overlapping edits")
+        }
+        val first = sync()
+        if (loseReply) { assertTrue(first.failure is IOException); assertNoFailure(sync()) }
+        else assertNoFailure(first)
+        val remoteId = api.remote.keys.single()
+        assertNoFailure(sync())
+        assertEquals("conflict", store().localEvents(calendar).single().pending!!.getString("kind"))
+        assertEquals("phone room", row(id).getAsString(Events.EVENT_LOCATION))
+        assertEquals("cloud room", api.remote[remoteId]!!.location)
+        assertEquals(1, api.creates); assertTrue(api.patches.isEmpty())
+        prefs.resolveConflicts(keepPhone)
+        assertNoFailure(sync())
+        assertEquals(1, api.creates)
+        assertEquals(setOf(remoteId), api.remote.keys)
+        assertEquals(remoteId, row(id).getAsString(Events._SYNC_ID))
+        assertEquals(if (keepPhone) "phone room" else "cloud room", api.remote[remoteId]!!.location)
+        assertEquals(0, row(id).getAsInteger(Events.DIRTY).toInt())
+        assertNull(row(id).getAsString(Events.SYNC_DATA4))
+        assertEquals(if (keepPhone) 1 else 0, api.patches.size)
+        if (keepPhone) assertEquals(setOf("location", "sequence"), api.patches.single().keys().asSequence().toSet())
+        assertNoFailure(sync())
+        assertEquals(1, api.creates)
+        assertEquals(if (keepPhone) 1 else 0, api.patches.size)
+    }
+
+    @Test fun journalWithoutDispatchSnapshotBecomesResolvableConflictAndKeepsPhoneData() {
+        legacyJournalConflict()
+    }
+    @Test fun legacyJournalConflictCanUseGoogleWithoutAnotherWrite() { legacyJournalChoice(false) }
+    @Test fun legacyJournalConflictCanKeepPhoneOnlyAfterOwnerChoice() { legacyJournalChoice(true) }
+    @Test fun earlierOwnerChoiceDoesNotAuthorizeLaterLegacyJournalConflict() {
+        val id = createLegacyJournal()
+        prefs.resolveConflicts(true)
+        assertNoFailure(sync())
+        assertEquals("conflict", store().localEvents(calendar).single().pending!!.getString("kind"))
+        assertNoFailure(sync())
+        assertEquals(1, api.patches.size)
+        assertEquals("room", api.remote["event"]!!.location)
+        assertEquals("phone room", row(id).getAsString(Events.EVENT_LOCATION))
+        prefs.resolveConflicts(true)
+        assertNoFailure(sync())
+        assertEquals("phone room", api.remote["event"]!!.location)
+        assertEquals(0, row(id).getAsInteger(Events.DIRTY).toInt())
+    }
+    private fun createLegacyJournal(): Long {
+        val id = seed(event())
+        title(id, "sent title")
+        api.afterWrite = {
+            edit(id, ContentValues().apply { put(Events.EVENT_LOCATION, "phone room") })
+            throw IOException("Synthetic old-client reply loss")
+        }
+        assertTrue(sync().failure is IOException)
+        val old = JSONObject(requireNotNull(row(id).getAsString(Events.SYNC_DATA4))).apply { remove("providerSnapshot") }
+        assertEquals("update", old.getString("kind"))
+        assertEquals(1, client.update(Events.CONTENT_URI, ContentValues().apply { put(Events.SYNC_DATA4, old.toString()) },
+            "${Events._ID}=?", arrayOf(id.toString())))
+        return id
+    }
+    private fun legacyJournalConflict(): Long {
+        val id = createLegacyJournal()
+        assertNoFailure(sync())
+        assertEquals("conflict", store().localEvents(calendar).single().pending!!.getString("kind"))
+        assertEquals("sent title", row(id).getAsString(Events.TITLE))
+        assertEquals("phone room", row(id).getAsString(Events.EVENT_LOCATION))
+        assertEquals(1, row(id).getAsInteger(Events.DIRTY).toInt())
+        assertEquals("initial", store().checkpoint(calendar.id))
+        assertNoFailure(sync())
+        assertEquals(1, api.patches.size)
+        assertEquals("room", api.remote["event"]!!.location)
+        return id
+    }
+    private fun legacyJournalChoice(keepPhone: Boolean) {
+        val id = legacyJournalConflict()
+        prefs.resolveConflicts(keepPhone)
+        assertNoFailure(sync())
+        assertEquals(if (keepPhone) "phone room" else "room", api.remote["event"]!!.location)
+        assertEquals(if (keepPhone) "phone room" else "room", row(id).getAsString(Events.EVENT_LOCATION))
+        assertNull(row(id).getAsString(Events.SYNC_DATA4))
+        assertEquals(0, row(id).getAsInteger(Events.DIRTY).toInt())
+        assertEquals(if (keepPhone) 2 else 1, api.patches.size)
+        if (keepPhone) assertEquals(setOf("location", "sequence"), api.patches.last().keys().asSequence().toSet())
+        assertNoFailure(sync())
+        assertEquals(if (keepPhone) 2 else 1, api.patches.size)
+    }
+
     @Test fun concurrentReminderEditKeepsItsValueAndMergesDisjointGoogleLocation() {
         val id = seed(event())
         title(id, "phone first")
@@ -299,6 +458,7 @@ class CalendarStoreEngineTest {
         val patches = mutableListOf<JSONObject>()
         var occurrence: RemoteEvent? = null
         var afterWrite: (() -> Unit)? = null
+        var returnLatestAfterWrite = false
         var revision = 10
         var creates = 0
         override fun calendars(page: String?) = CalendarPage(listOf(calendar), null)
@@ -311,7 +471,8 @@ class CalendarStoreEngineTest {
             creates++
             check(id !in remote)
             val body = JSONObject(payload.toString()).put("id", id).put("etag", "server-${++revision}")
-            return GoogleCalendarApi.parseEvent(body, calendar).also { remote[id] = it }
+            val updated = GoogleCalendarApi.parseEvent(body, calendar).also { remote[id] = it }
+            return reply(updated)
         }
         override fun update(calendar: RemoteCalendar, id: String, etag: String, payload: JSONObject): RemoteEvent {
             val previous = requireNotNull(get(calendar, id))
@@ -322,9 +483,12 @@ class CalendarStoreEngineTest {
             body.put("etag", "server-${++revision}")
             val updated = GoogleCalendarApi.parseEvent(body, calendar)
             remote[id] = updated
+            return reply(updated)
+        }
+        private fun reply(updated: RemoteEvent): RemoteEvent {
             val action = afterWrite.also { afterWrite = null }
             action?.invoke()
-            return updated
+            return if (returnLatestAfterWrite) requireNotNull(remote[updated.id]) else updated
         }
     }
 }

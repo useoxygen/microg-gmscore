@@ -42,7 +42,7 @@ class CalendarEventMergeTest {
 
     @Test fun laterPhoneReminderEditKeepsReminderValuesAndDefaultChoiceTogether() {
         val current = sent.copy(reminders = listOf(5), useDefaultReminders = true)
-        val remote = sent.copy(reminders = listOf(15), useDefaultReminders = false, location = "web")
+        val remote = sent.copy(location = "web")
         val merged = CalendarEventMerge.acknowledge(sent, current, remote)
         assertEquals(listOf(5), merged.reminders)
         assertTrue(merged.useDefaultReminders)
@@ -51,7 +51,7 @@ class CalendarEventMergeTest {
 
     @Test fun laterDefaultReminderChoiceIsAnEditEvenWhenPopupMinutesMatch() {
         val current = sent.copy(useDefaultReminders = true)
-        val remote = sent.copy(reminders = listOf(15), useDefaultReminders = false)
+        val remote = sent.copy(location = "web")
         val merged = CalendarEventMerge.acknowledge(sent, current, remote)
         assertEquals(sent.reminders, merged.reminders)
         assertTrue(merged.useDefaultReminders)
@@ -83,5 +83,58 @@ class CalendarEventMergeTest {
         assertEquals(remote.creationId, merged.creationId)
         assertEquals(remote.raw, merged.raw)
         assertEquals(remote.sequence, merged.sequence)
+    }
+
+    @Test fun overlappingWritableFieldsRequireAnExplicitConflict() {
+        val variants: List<Triple<String, RemoteEvent, RemoteEvent>> = listOf(
+            Triple("title", sent.copy(title = "phone later"), sent.copy(title = "newer Google title")),
+            Triple("description", sent.copy(description = "phone details"), sent.copy(description = "Google details")),
+            Triple("location", sent.copy(location = "phone room"), sent.copy(location = "newest cloud room")),
+            Triple("visibility", sent.copy(visibility = "private"), sent.copy(visibility = "public")),
+            Triple("start", sent.copy(start = sent.start!!.copy(millis = sent.start!!.millis + 60_000)),
+                sent.copy(start = sent.start!!.copy(millis = sent.start!!.millis + 120_000))),
+            Triple("end", sent.copy(end = sent.end!!.copy(millis = sent.end!!.millis + 60_000)),
+                sent.copy(end = sent.end!!.copy(millis = sent.end!!.millis + 120_000))),
+            Triple("recurrence", sent.copy(recurrence = listOf("RRULE:FREQ=WEEKLY;COUNT=3")),
+                sent.copy(recurrence = listOf("RRULE:FREQ=MONTHLY;COUNT=3"))),
+            Triple("reminders", sent.copy(reminders = listOf(5)), sent.copy(reminders = listOf(15))))
+        for ((field, current, remote) in variants) {
+            val conflict = assertThrows(CalendarAcknowledgementConflict::class.java) {
+                CalendarEventMerge.acknowledge(sent, current, remote)
+            }
+            assertEquals(field, setOf(field), conflict.fields)
+        }
+    }
+
+    @Test fun samePhoneAndGoogleChangeConvergesWithoutConflict() {
+        val common = sent.copy(title = "same title", description = "same details", location = "same room",
+            visibility = "private", transparency = "transparent", start = sent.start!!.copy(millis = sent.start!!.millis + 60_000),
+            end = sent.end!!.copy(millis = sent.end!!.millis + 60_000), recurrence = listOf("RRULE:FREQ=WEEKLY;COUNT=3"),
+            cancelled = true, reminders = listOf(5, 15), useDefaultReminders = true)
+        val remote = common.copy(etag = "newest-etag", sequence = 4)
+        val current = common.copy(reminders = listOf(15, 5))
+        assertTrue(CalendarEventMerge.conflictingFields(sent, current, remote).isEmpty())
+        val merged = CalendarEventMerge.acknowledge(sent, current, remote)
+        assertEquals(remote.copy(reminders = current.reminders), merged)
+    }
+
+    @Test fun reminderModeAndMinutesOverlapsAreOneConflict() {
+        val current = sent.copy(useDefaultReminders = true)
+        val remote = sent.copy(reminders = listOf(15))
+        val conflict = assertThrows(CalendarAcknowledgementConflict::class.java) {
+            CalendarEventMerge.acknowledge(sent, current, remote)
+        }
+        assertEquals(setOf("reminders"), conflict.fields)
+    }
+
+    @Test fun allConflictingFieldsAreReportedBeforeAnyMerge() {
+        val current = sent.copy(title = "phone title", location = "phone room", reminders = listOf(5))
+        val remote = sent.copy(title = "Google title", location = "Google room", reminders = listOf(15), etag = "newest-etag")
+        val conflict = assertThrows(CalendarAcknowledgementConflict::class.java) {
+            CalendarEventMerge.acknowledge(sent, current, remote)
+        }
+        assertEquals(setOf("title", "location", "reminders"), conflict.fields)
+        assertEquals("newest-etag", remote.etag)
+        assertEquals("phone title", current.title)
     }
 }

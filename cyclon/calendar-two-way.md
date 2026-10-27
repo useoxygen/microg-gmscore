@@ -73,7 +73,12 @@ The provider stores the last server representation, a durable mutation journal,
 and the fingerprint of the local edit before each request. Create retries use
 the same client event ID. The journal also retains the actual dispatched provider
 projection: acknowledgment merges unchanged fields from Google while preserving
-later local edits, including after a lost reply. A master refresh waits while an
+later local edits, including after a lost reply. If the dispatch value, current
+phone value and acknowledged Google value of a field all differ, the phone data
+and baseline stay unchanged and a durable conflict requires an owner choice.
+Older journals without a dispatch snapshot also require that explicit choice
+after concurrent edits. A known committed create retains its event ID through
+either conflict choice. A master refresh waits while an
 unsynced occurrence still depends on its inherited baseline; once that occurrence
 settles or its conflict is resolved, the master and sync token can advance. An absent
 local row is never a server-delete request: only an explicit dirty tombstone
