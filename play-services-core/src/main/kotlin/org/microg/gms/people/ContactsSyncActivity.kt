@@ -26,6 +26,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -136,6 +137,12 @@ class ContactsSyncActivity : ComponentActivity() {
                         }
                         // Keyed: each card keeps its own state (e.g. the photo) when accounts are added or removed.
                         for (account in accounts) key(account.name) { AccountCard(account) }
+                        // Google's "Also sync device contacts": offered while an account uploads (Two-way).
+                        val targets = syncTargets()
+                        val deviceCount = if (targets.isEmpty() || !hasContactsPermission) 0
+                            else runCatching { DeviceContacts(contentResolver).count() }.getOrDefault(0)
+                        val autoAccount = DeviceContacts.autoAccount(this@ContactsSyncActivity)?.takeIf { name -> targets.any { it.name == name } }
+                        if (targets.isNotEmpty() && (deviceCount > 0 || autoAccount != null)) DeviceContactsCard(deviceCount, autoAccount)
                         MoreOptions()
                     }
                 }
@@ -143,6 +150,8 @@ class ContactsSyncActivity : ComponentActivity() {
                 if (resumeUploads) ResumeUploadsDialog()
                 newContactsConfirmation?.let { NewContactsDialog(it) }
                 if (autoSyncConfirmation) AutoSyncDialog()
+                deviceEntries?.let { entries -> syncTargets().takeIf { it.isNotEmpty() }?.let { MoveDeviceContactsDialog(entries, it) } }
+                if (deviceAutoConfirmation) syncTargets().takeIf { it.isNotEmpty() }?.let { DeviceAutoDialog(it) }
             }
         }
     }
@@ -227,6 +236,128 @@ class ContactsSyncActivity : ComponentActivity() {
                 autoSyncConfirmation = false; revision++
             }) { Text(stringResource(R.string.contacts_sync_turn_on)) } },
             dismissButton = { CyclonTextButton(onClick = { autoSyncConfirmation = false }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
+    }
+
+    private fun syncTargets() = AccountManager.get(this).getAccountsByType("com.google")
+        .filter { ContactSyncPreferences(this, it).mode == SyncMode.TWO_WAY }
+
+    private var deviceEntries by mutableStateOf<List<DeviceContacts.Entry>?>(null)
+    private var deviceAutoConfirmation by mutableStateOf(false)
+
+    @Composable
+    private fun DeviceContactsCard(count: Int, autoAccount: String?) {
+        OutlinedCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.contacts_sync_device_title), style = MaterialTheme.typography.titleMedium)
+                if (count > 0) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Filled.Info, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(pluralStringResource(R.plurals.contacts_sync_device_not_synced, count, count), style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(stringResource(R.string.contacts_sync_device_info), style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (count > 0) CyclonOutlinedButton(onClick = { openDeviceReview() }, enabled = !busy) {
+                    Text(stringResource(R.string.contacts_sync_device_review))
+                }
+            }
+            HorizontalDivider()
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                SwitchRow(stringResource(R.string.contacts_sync_device_auto), autoAccount?.let { stringResource(R.string.contacts_sync_device_auto_on, it) },
+                    autoAccount != null) { on ->
+                    if (on) deviceAutoConfirmation = true else { DeviceContacts.setAutoAccount(this@ContactsSyncActivity, null); revision++ }
+                }
+                Text(stringResource(R.string.contacts_sync_device_exclusions), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 12.dp))
+            }
+        }
+    }
+
+    private fun openDeviceReview() {
+        lifecycleScope.launch {
+            val entries = withContext(Dispatchers.IO) { runCatching { DeviceContacts(contentResolver).list() }.getOrDefault(emptyList()) }
+            if (entries.isNotEmpty()) deviceEntries = entries
+        }
+    }
+
+    @Composable
+    private fun AccountChoice(targets: List<Account>, selected: Account, onSelect: (Account) -> Unit) {
+        if (targets.size < 2) return
+        Text(stringResource(R.string.contacts_sync_device_account), style = MaterialTheme.typography.labelLarge)
+        for (account in targets) Row(Modifier.fillMaxWidth().selectable(selected = account == selected, role = Role.RadioButton) { onSelect(account) }
+            .padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = account == selected, onClick = null)
+            Spacer(Modifier.width(8.dp))
+            Text(account.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+
+    @Composable
+    private fun MoveDeviceContactsDialog(entries: List<DeviceContacts.Entry>, targets: List<Account>) {
+        val selected = remember(entries) { mutableStateListOf<Long>().apply { addAll(entries.map { it.id }) } }
+        var target by remember(targets) { mutableStateOf(targets.first()) }
+        AlertDialog(onDismissRequest = { deviceEntries = null }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(stringResource(R.string.contacts_sync_device_dialog_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.contacts_sync_device_dialog_body), style = MaterialTheme.typography.bodyMedium)
+                    AccountChoice(targets, target) { target = it }
+                    val all = selected.size == entries.size
+                    Row(Modifier.fillMaxWidth().toggleable(value = all, role = Role.Checkbox) { on ->
+                        selected.clear(); if (on) selected.addAll(entries.map { it.id })
+                    }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = all, onCheckedChange = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.contacts_sync_device_select_all), style = MaterialTheme.typography.titleSmall)
+                    }
+                    HorizontalDivider()
+                    // A plain scrolling column: lazy lists can't be measured inside a dialog's content.
+                    Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                        for (entry in entries) Row(Modifier.fillMaxWidth().toggleable(value = entry.id in selected, role = Role.Checkbox) { on ->
+                            if (on) selected.add(entry.id) else selected.remove(entry.id)
+                        }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = entry.id in selected, onCheckedChange = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(entry.name ?: stringResource(R.string.contacts_sync_device_no_name), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            },
+            confirmButton = { CyclonTextButton(enabled = selected.isNotEmpty(), onClick = {
+                val ids = selected.toList(); deviceEntries = null; moveDeviceContacts(target, ids)
+            }) { Text(pluralStringResource(R.plurals.contacts_sync_device_save, selected.size, selected.size)) } },
+            dismissButton = { CyclonTextButton(onClick = { deviceEntries = null }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
+    }
+
+    private fun moveDeviceContacts(account: Account, ids: List<Long>) {
+        busy = true
+        lifecycleScope.launch {
+            val moved = withContext(Dispatchers.IO) { runCatching { DeviceContacts(contentResolver).moveTo(account, ids) }.getOrDefault(0) }
+            busy = false; revision++
+            if (moved > 0) ContactSyncPreferences(this@ContactsSyncActivity, account).refresh()
+            Toast.makeText(this@ContactsSyncActivity, resources.getQuantityString(R.plurals.contacts_sync_device_saved, moved, moved, account.name),
+                Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Composable
+    private fun DeviceAutoDialog(targets: List<Account>) {
+        var target by remember(targets) { mutableStateOf(targets.first()) }
+        AlertDialog(onDismissRequest = { deviceAutoConfirmation = false }, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(stringResource(R.string.contacts_sync_device_auto_dialog_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.contacts_sync_device_auto_dialog_body), style = MaterialTheme.typography.bodyMedium)
+                    if (targets.size < 2) Text(target.name, style = MaterialTheme.typography.titleSmall)
+                    AccountChoice(targets, target) { target = it }
+                    Text(stringResource(R.string.contacts_sync_device_exclusions), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { CyclonTextButton(onClick = {
+                DeviceContacts.setAutoAccount(this@ContactsSyncActivity, target)
+                deviceAutoConfirmation = false; revision++
+                ContactSyncPreferences(this@ContactsSyncActivity, target).refresh()
+            }) { Text(stringResource(R.string.contacts_sync_turn_on)) } },
+            dismissButton = { CyclonTextButton(onClick = { deviceAutoConfirmation = false }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
     }
 
     @Composable
