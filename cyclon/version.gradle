@@ -25,7 +25,10 @@ ext.cyclonValidateVersion = { Map release, int vendingCode ->
     }
     def allocations = [
         [name: 'gmsVersionCode', base: gmsCode * 1000, width: 1000],
-        [name: 'vendingVersionCode', base: 80000000 + vendingCode * 100, width: 100]
+        // The first 100-code delivery block is exhausted at installed 84022699.
+        // Reserve the next block for the same pinned 40.2.26 compatibility version;
+        // revisit this allocation when the upstream vending version changes.
+        [name: 'vendingVersionCode', base: 80000000 + vendingCode * 100, width: (vendingCode == 40226 ? 200 : 100)]
     ]
     allocations.each { allocation ->
         def value = release[allocation.name]
