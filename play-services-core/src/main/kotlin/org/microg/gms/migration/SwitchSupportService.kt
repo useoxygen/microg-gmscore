@@ -74,17 +74,10 @@ class SwitchSupportService : LifecycleService() {
         }
     }
 
-    override fun onBind(intent: Intent): IBinder { super.onBind(intent); switchBound = true; return broker }
-    override fun onUnbind(intent: Intent): Boolean { switchBound = false; return super.onUnbind(intent) }
+    override fun onBind(intent: Intent): IBinder { super.onBind(intent); return broker }
     override fun onDestroy() {
-        switchBound = false
         synchronized(targets) { targets.forEach { it.close() }; targets.clear() }
         super.onDestroy()
-    }
-    companion object {
-        /** Switch is bound to its target services, as during a copy; its retained pairing must stay. */
-        @Volatile var switchBound = false
-            internal set
     }
 }
 

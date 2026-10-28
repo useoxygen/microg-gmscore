@@ -90,7 +90,10 @@ internal fun awaitAcceptance(channel: ClassicNearbyChannel, close: () -> Unit,
     } finally { alive.cancel(false); writer.shutdownNow() }
 }
 
-internal class ClassicNearbyBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
+/** [switchUid]: the caller, when its broker authenticated it as Switch; its live copy transports keep its retained
+ * pairing in use ([RetainedSessionUse]). Null for microG's own pairing transport. */
+internal class ClassicNearbyBinder(private val context: Context, uid: Int, private val switchUid: Int? = null) :
+    MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
     private val closed = AtomicBoolean(false)
     private val ownerUid=uid
     @Volatile var diagnosticFailure: String?=null; private set
@@ -146,6 +149,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
             // The deadline covers connection setup (request and UKEY2) only. Waiting for both sides to accept can take
             // as long as the owner needs to tap Next on the old phone; then, as in Nearby, keep-alives keep the link.
             val deadline = timer.schedule({ runCatching { link.close() } },SETUP_SECONDS,TimeUnit.SECONDS)
+            var inUse: Closeable? = null
             try {
                 val info: ByteArray
                 val incoming = peer == null
@@ -165,6 +169,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 }
                 if (!accepted) return@execute
                 session.token.fill(0); session.connected = true
+                inUse = switchUid?.let(RetainedSessionUse::transport)
                 session.receiver = receiver(session,ep)
                 event(lifecycle,"IConnectionLifecycleListener",3,DctRecord(ClassicSchemas.connected,mapOf(1 to ep,2 to 0,4 to 0)))
                 val keepAlive = timer.scheduleAtFixedRate({ runCatching { channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.KEEP_ALIVE).setKeepAlive(KeepAliveFrame.getDefaultInstance()).build()) }.onFailure { runCatching { link.close() } } },5,5,TimeUnit.SECONDS)
@@ -181,7 +186,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
             } catch (error: Exception) {
                 diagnosticFailure=channel.diagnosticPhase+":"+error.javaClass.simpleName
                 endpoint?.let { if (!session.connected) event(lifecycle,"IConnectionLifecycleListener",3,DctRecord(ClassicSchemas.connected,mapOf(1 to it,2 to 8012,4 to 0))) }
-            } finally { deadline.cancel(false); endpoint?.let { if (sessions.remove(it,session)) event(lifecycle,"IConnectionLifecycleListener",4,DctRecord(ClassicSchemas.disconnected,mapOf(1 to it,2 to 0,6 to 8012))) }; session.close(); connectionSlots.release() }
+            } finally { deadline.cancel(false); inUse?.close(); endpoint?.let { if (sessions.remove(it,session)) event(lifecycle,"IConnectionLifecycleListener",4,DctRecord(ClassicSchemas.disconnected,mapOf(1 to it,2 to 0,6 to 8012))) }; session.close(); connectionSlots.release() }
         } } catch(_: RejectedExecutionException) { connectionSlots.release(); link.close() }
     }
     private fun upgrade(session: Session, endpoint: String, message: BandwidthUpgradeNegotiationFrame) {

@@ -14,7 +14,7 @@ import java.io.Closeable
 /** Confirmed TargetDevice transactions, with no invented paired state or transferred accounts.
  * The pipe transport is separately testable; account bootstrap remains unavailable. */
 internal class AndroidTargetDeviceBinder(
-    uid: Int,
+    private val uid: Int,
     private var state: AndroidPostSetupState = AndroidPostSetupState(),
     private val direct: Boolean = false,
     private val reload: (() -> AndroidPostSetupState)? = null,
@@ -38,6 +38,8 @@ internal class AndroidTargetDeviceBinder(
             return true
         }
         val callback = requireNotNull(data.readStrongBinder())
+        // Only the broker's authenticated Switch reaches here; these calls use its retained pairing.
+        if (code in setOf(13, 14, 15, 17, 22)) RetainedSessionUse.called(uid)
         when (code) {
             1 -> {
                 val options = requireNotNull(DctRecord.nullable(data,LegacyBootstrapExchange.schema))

@@ -178,9 +178,24 @@ class AndroidTargetDeviceBinderTest {
         assertNull(state.hint())
     }
     @Test fun anotherUidCannotUseTargetState() {
+        RetainedSessionUse.reset()
         AndroidTargetDeviceBinder(Binder.getCallingUid() + 1).use { target ->
             assertThrows(Exception::class.java) { call(target, 13) { writeStrongBinder(Binder()); writeInt(0) } }
         }
+        // A refused caller marks no pairing as in use, for itself or the binder's owner.
+        assertFalse(RetainedSessionUse.inUse(Binder.getCallingUid()))
+        assertFalse(RetainedSessionUse.inUse(Binder.getCallingUid() + 1))
+    }
+
+    @Test fun switchsConnectionHintCallHoldsItsPairing() {
+        RetainedSessionUse.reset()
+        val uid = Binder.getCallingUid()
+        AndroidTargetDeviceBinder(uid).use { target ->
+            call(target, 13) { writeStrongBinder(object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int) = true }); writeInt(0) }
+        }
+        assertTrue(RetainedSessionUse.inUse(uid))
+        RetainedSessionUse.reset()
     }
     @Test fun cleanDoesNotClaimAnyTransferAndLeavesNoHint() {
         val state = AndroidPostSetupState(AndroidPostSetupState.VerifiedBootstrap("12345", ByteArray(32) { 7 }))

@@ -128,7 +128,8 @@ internal class NearbyDctBinder(private val context: Context, uid: Int) : Migrati
     override fun dispatch(code: Int, data: Parcel, reply: Parcel?): Boolean {
         if (code in listOf(2001, 2003, 2005)) {
             check(controller == null) { "Cannot mix DCT and classic Nearby clients" }
-            if (classic == null) classic = ClassicNearbyBinder(context, ownerUid)
+            // The broker admitted only Switch, so this binder's copy transports are Switch's.
+            if (classic == null) classic = ClassicNearbyBinder(context, ownerUid, switchUid = ownerUid)
         }
         classic?.let {
             val handled=it.handle(code,data,reply)
