@@ -81,6 +81,47 @@ class MigrationInstallQueueTest {
             assertTrue(queue.pending().isEmpty())
         }
     }
+    /** Run 6: Play refused 9 queued downloads for the anonymous session ("not purchased / unavailable in your country"). */
+    @Test fun aDownloadPlayRefusesTheAnonymousSessionIsQueuedOnceMoreForTheGoogleAccount() {
+        for (code in listOf("app_not_purchased", "rate_limited")) {
+            clear()
+            val installs = mutableListOf<Boolean>()
+            var download = state("none")
+            fun refused() = state("failed").apply { putString("error", "failed"); putString("errorCode", code) }
+            val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, _ ->
+                if (operation == 3) Bundle(download) else state("queued").also { download = it }
+            }.apply { sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") } }
+            queue.select(selected())
+            assertTrue(queue.dispatch("org.example.app"))
+            assertTrue(queue.pending().isEmpty())
+            download = refused()
+            val requeued = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+            assertEquals(code, "queued", requeued.getString("status")); assertFalse(requeued.getBoolean("terminal"))
+            assertEquals(setOf("org.example.app"), queue.pending())
+            assertTrue(queue.dispatch("org.example.app"))
+            assertEquals(code, listOf(false, true), installs)
+            // Refused for the Google account too: a failure the owner sees, not another round.
+            download = refused()
+            val failed = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+            assertEquals("failed", failed.getString("status")); assertTrue(failed.getBoolean("terminal"))
+            assertTrue(queue.pending().isEmpty())
+            assertEquals(2, installs.size)
+        }
+    }
+    @Test fun aRefusedDownloadStaysAFailureWithoutAuroraSupportOrForOtherErrors() {
+        for ((supported, code) in listOf(false to "app_not_purchased", true to "install_failed")) {
+            clear()
+            var download = state("none")
+            val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", supported) } }) { operation, _ ->
+                if (operation == 3) Bundle(download) else state("queued").also { download = it }
+            }
+            queue.select(selected()); queue.dispatch("org.example.app")
+            download = state("failed").apply { putString("errorCode", code) }
+            val result = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+            assertEquals("failed", result.getString("status")); assertTrue(result.getBoolean("terminal"))
+            assertTrue(queue.pending().isEmpty())
+        }
+    }
     @Test fun fallbackNeverAppliesToPaidAppsOrWithoutAuroraSupport() {
         val paid = mutableListOf<Boolean>()
         val paidQueue = fallbackQueue(true, paid) { MigrationInstallQueue.unavailable("org.example.app", "paid") }

@@ -28,6 +28,8 @@ class PlaySetupProtocolTest {
     private val controls = Collections.synchronizedList(mutableListOf<Pair<Int, Bundle>>())
     private val receipts = mutableMapOf<String, Bundle>()
     private val catalog = mutableMapOf<String, Bundle>()
+    /** Answers to give, in order, before falling back to [catalog]. */
+    private val lookups = mutableMapOf<String, ArrayDeque<Bundle>>()
     private var pauseSucceeds = true
     private var ready = true
     private var supportsHold = true
@@ -40,7 +42,7 @@ class PlaySetupProtocolTest {
         queue = MigrationInstallQueue(context, storeCall = { operation, name ->
             calls += operation to name
             when (operation) {
-                1 -> Bundle(catalog[name] ?: document(name))
+                1 -> Bundle(lookups[name]?.removeFirstOrNull() ?: catalog[name] ?: document(name))
                 2 -> receipt(name, "queued")
                 else -> Bundle(receipts[name] ?: receipt(name, "none"))
             }
@@ -200,6 +202,39 @@ class PlaySetupProtocolTest {
         assertEquals(MISSING, persisted.getString("package_name"))
         assertEquals("store_unavailable", persisted.getString("error"))
         assertTrue(persisted.getBoolean("excluded"))
+    }
+
+    /** Run 6: one app's passing failure made Switch drop the whole batch of 50 (lqm.k after three retries). */
+    @Test fun oneAppTheStoreCannotCheckYetDoesNotSinkItsBatch() {
+        catalog[MISSING] = MigrationInstallQueue.unavailable(MISSING, "google_approval_needed").apply { putBoolean("recoverable", true) }
+        val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        assertNull(result.getBundle("error"))
+        assertEquals(APP, resultDocuments(result, "document_groups").single().getString("package_name"))
+        val missing = resultDocuments(result, "unrestorable_document_groups").single()
+        assertEquals(MISSING, missing.getString("package_name"))
+        assertTrue(missing.getBoolean("recoverable"))
+        assertEquals(2, calls.count { it == 1 to MISSING }) // asked once more before leaving it out
+        assertEquals(1, calls.count { it == 1 to APP })
+    }
+
+    @Test fun anAppPlayRefusedForAMomentIsListedAfterItsSecondLookup() {
+        lookups[MISSING] = ArrayDeque(listOf(MigrationInstallQueue.unavailable(MISSING, "rate_limited").apply { putBoolean("recoverable", true) }))
+        val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        assertNull(result.getBundle("error"))
+        assertEquals(setOf(APP, MISSING), resultDocuments(result, "document_groups").map { it.getString("package_name") }.toSet())
+    }
+
+    @Test fun anAppThatIsNotOnPlayIsNotAskedAgain() {
+        catalog[MISSING] = MigrationInstallQueue.unavailable(MISSING, "not_found")
+        val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        assertNull(result.getBundle("error"))
+        assertEquals(1, calls.count { it == 1 to MISSING })
+    }
+
+    @Test fun aStoreOutageStillFailsTheBatchSoSwitchRetries() {
+        for (name in listOf(APP, MISSING)) catalog[name] = MigrationInstallQueue.unavailable(name, "store_unavailable").apply { putBoolean("recoverable", true) }
+        val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        assertEquals("StoreUnavailableException", result.getBundle("error")!!.getString("exception_type"))
     }
 
     @Test fun legacySetupTransactionAcceptsTypedBundleArrayWithoutBundleReply() {

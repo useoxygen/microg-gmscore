@@ -218,6 +218,7 @@ internal class MigrationInstallQueue(private val context: Context,
         putBoolean("installed", false); putBoolean("terminal", true)
     }
     fun summary(id: String = currentSessionId().orEmpty()): Bundle = synchronized(LOCK) {
+        val ownerFallback by lazy { ownerAccountSupported() }
         val results = selected(id).sorted().map { name ->
             val saved = document(id, name)
             if (saved.getBoolean("terminal") && name !in pending(id)) return@map saved
@@ -231,6 +232,20 @@ internal class MigrationInstallQueue(private val context: Context,
             val acknowledged = prefs.getBoolean("$id:$name:acknowledged", name !in pending(id) && prefs.contains("$id:$name:status"))
             val ownerRetry = prefs.getBoolean("$id:$name:owner_retry", false)
             val status = result.getString("status")
+            if (status == "failed" && result.getString("errorCode") in DOWNLOAD_REFUSALS && name !in pending(id) &&
+                !prefs.getBoolean("$id:$name:owner_account", false) && !prefs.getBoolean("$id:$name:ever_installed", false) &&
+                ownerFallback) {
+                // Play refused the anonymous session the download itself (run 6: "not purchased / unavailable in your
+                // country"). As on a Pixel, Play may install with the phone's Google account: queue it once more for that.
+                check(prefs.edit().putStringSet("$id:pending", pending(id) + name).putBoolean("$id:$name:owner_account", true)
+                    .putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:terminal", false)
+                    .putInt("$id:$name:throttle_count", 0).commit())
+                result.putString("status", "queued"); result.remove("error"); result.remove("errorCode")
+                result.putBoolean("installed", false); result.putBoolean("terminal", false)
+                save(name, result, id = id)
+                schedule()
+                return@map result
+            }
             if (removed(result) || (prefs.getBoolean("$id:$name:ever_installed", false) &&
                     !satisfies(name, result, id) && result.getString("error") != "store_unavailable")) {
                 result = removedResult(result)
@@ -389,6 +404,8 @@ internal class MigrationInstallQueue(private val context: Context,
         private const val MAX_RATE_LIMITED = 3
         /** The anonymous session's own limits: Play throttling it, not listing the app in its country, or no session. */
         private val ANONYMOUS_FAILURES = setOf(RATE_LIMITED, "not_found", "anonymous_sign_in_required", "not_signed_in", "session_expired")
+        /** Aurora's codes for Play refusing the anonymous session a download it had queued (DownloadFailure). */
+        private val DOWNLOAD_REFUSALS = setOf("app_not_purchased", RATE_LIMITED)
         private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
         private val TERMINAL = setOf("failed", "cancelled", "unavailable", "removed", "owner_action_required")
         fun unavailable(name: String, reason: String) = Bundle().apply {
