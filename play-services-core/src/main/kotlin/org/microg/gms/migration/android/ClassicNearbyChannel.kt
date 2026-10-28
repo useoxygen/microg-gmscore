@@ -28,6 +28,8 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     private var pausedWrites: MutableList<V1Frame>? = null
     var endpointId: String? = null
         private set
+    /** While we wait for the peer's acceptance: when its last frame (often a keep-alive) arrived, else null. */
+    @Volatile var peerHeardNanos: Long? = null; private set
 
     fun requestConnection(localId: String, localInfo: ByteArray, peerId: String,
         upgradeMediums: List<ConnectionRequestFrame.Medium> = listOf(ConnectionRequestFrame.Medium.WIFI_LAN)): ByteArray {
@@ -82,9 +84,11 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
                 .setOsInfo(OsInfo.newBuilder().setType(OsInfo.OsType.ANDROID))
                 .setSafeToDisconnectVersion(0)).build(), encrypted = false)
         diagnosticPhase="READ_PEER_ACCEPT"
+        peerHeardNanos = System.nanoTime()
         var response: V1Frame
         do {
             response = parse(readPacket())
+            peerHeardNanos = System.nanoTime()
             diagnosticPhase="PEER_FRAME_${response.type}"
             require(response.type == V1Frame.FrameType.CONNECTION_RESPONSE || response.type == V1Frame.FrameType.KEEP_ALIVE)
         } while (response.type == V1Frame.FrameType.KEEP_ALIVE)
@@ -96,11 +100,22 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         }
         val active = requireNotNull(handshake)
         active.verifyHandshake()
-        context = active.toConnectionContext()
-        diagnosticPhase="CONNECTED"
-        handshake = null
-        verification?.fill(0); verification = null
-        pending = false
+        synchronized(this) { // No cleartext keep-alive may follow the switch to encryption.
+            context = active.toConnectionContext()
+            diagnosticPhase="CONNECTED"
+            handshake = null
+            verification?.fill(0); verification = null
+            pending = false; peerHeardNanos = null
+        }
+    }
+
+    /** Nearby's keep-alive before both sides accepted: cleartext, as GMS sends it every 5 s while its user decides.
+     * Without it the peer drops the link after its 30 s keep-alive timeout. False once connected or closed. */
+    @Synchronized fun sendPendingKeepAlive(): Boolean {
+        if (closed || !pending || context != null) return false
+        writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.KEEP_ALIVE)
+            .setKeepAlive(KeepAliveFrame.getDefaultInstance()).build(), encrypted = false)
+        return true
     }
 
     fun reject() {

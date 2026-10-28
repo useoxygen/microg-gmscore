@@ -84,9 +84,12 @@ no selection or further activity arrives. WorkManager controls when a released
 update retry runs.
 
 Catalog lookup first calls Aurora tx6 to prepare its dedicated anonymous session.
-Mirror matches still work if the dispenser is unavailable. Anonymous failure is
-recoverable; the owner can retry matching or open the app in App Store. No owner
-account is substituted automatically.
+Mirror matches still work if the dispenser is unavailable. When the anonymous
+session cannot list an app (`not_found` in that session's country, Play's 429, or
+no session), Aurora looks it up with the phone's single Google account, as Play
+does on a Pixel, so Switch still offers it; the install then falls back the same
+way (below). Without a Google account the anonymous failure stands; it is
+recoverable, and the owner can retry matching or open the app in App Store.
 
 Results show session-specific names/artwork, readable reasons and individual
 retry/open actions. One summary notification per completed session opens

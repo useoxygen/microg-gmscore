@@ -101,7 +101,8 @@ class AndroidTargetDeviceBinderTest {
                 override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
                     data.enforceInterface(PAIR_CALLBACK)
                     assertEquals(event, code); assertEquals(IBinder.FLAG_ONEWAY, flags)
-                    assertEquals(1, data.readInt()); assertEquals(10590, Status.CREATOR.createFromParcel(data).statusCode)
+                    // startRestore without a session answers 13 as GMS foig does; the others report no secret.
+                    assertEquals(1, data.readInt()); assertEquals(if (operation == 22) 13 else 10590, Status.CREATOR.createFromParcel(data).statusCode)
                     if (operation != 22) {
                         assertEquals(1, data.readInt())
                         assertTrue(DctRecord.read(data, if (operation == 13) AndroidSetupSchemas.hint else
@@ -120,6 +121,36 @@ class AndroidTargetDeviceBinderTest {
             assertTrue(called)
         }
     }
+    @Test fun startRestoreSucceedsWithAVerifiedAndroidSession() {
+        var status = -1
+        val callback = object : Binder() {
+            override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                data.enforceInterface(PAIR_CALLBACK); assertEquals(7, code)
+                assertEquals(1, data.readInt()); status = Status.CREATOR.createFromParcel(data).statusCode
+                data.requireEnd(); return true
+            }
+        }
+        val session = AndroidPostSetupState.VerifiedBootstrap("712", ByteArray(32) { 7 })
+        AndroidTargetDeviceBinder(Binder.getCallingUid(), AndroidPostSetupState(session)).use { target ->
+            call(target, 22) { writeStrongBinder(callback); writeInt(0) }
+        }
+        assertEquals(0, status)
+    }
+
+    @Test fun aPairingSwitchAlreadyUsedIsForgottenAndANewOneReplacesTheMark() {
+        val root = java.nio.file.Files.createTempDirectory("sessions").toFile(); val uid = Binder.getCallingUid()
+        val store = AndroidSessionStore(root)
+        store.commit(uid, AndroidPostSetupState.VerifiedBootstrap("712", ByteArray(32) { 7 }))
+        assertFalse(store.launched(uid))
+        store.markLaunched(uid)
+        assertTrue(AndroidSessionStore(root).launched(uid)) // survives the activity's process
+        store.commit(uid, AndroidPostSetupState.VerifiedBootstrap("713", ByteArray(32) { 8 }))
+        assertFalse(store.launched(uid))
+        store.markLaunched(uid); store.clear(uid)
+        assertFalse(store.launched(uid)); assertNull(store.load(uid).hint())
+        root.deleteRecursively()
+    }
+
     @Test fun directTargetAbortUsesItsOwnCallbackDescriptor() {
         var called = false
         val callback = object : Binder() {
@@ -147,9 +178,24 @@ class AndroidTargetDeviceBinderTest {
         assertNull(state.hint())
     }
     @Test fun anotherUidCannotUseTargetState() {
+        RetainedSessionUse.reset()
         AndroidTargetDeviceBinder(Binder.getCallingUid() + 1).use { target ->
             assertThrows(Exception::class.java) { call(target, 13) { writeStrongBinder(Binder()); writeInt(0) } }
         }
+        // A refused caller marks no pairing as in use, for itself or the binder's owner.
+        assertFalse(RetainedSessionUse.inUse(Binder.getCallingUid()))
+        assertFalse(RetainedSessionUse.inUse(Binder.getCallingUid() + 1))
+    }
+
+    @Test fun switchsConnectionHintCallHoldsItsPairing() {
+        RetainedSessionUse.reset()
+        val uid = Binder.getCallingUid()
+        AndroidTargetDeviceBinder(uid).use { target ->
+            call(target, 13) { writeStrongBinder(object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int) = true }); writeInt(0) }
+        }
+        assertTrue(RetainedSessionUse.inUse(uid))
+        RetainedSessionUse.reset()
     }
     @Test fun cleanDoesNotClaimAnyTransferAndLeavesNoHint() {
         val state = AndroidPostSetupState(AndroidPostSetupState.VerifiedBootstrap("12345", ByteArray(32) { 7 }))

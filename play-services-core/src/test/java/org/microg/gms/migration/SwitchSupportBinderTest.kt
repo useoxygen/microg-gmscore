@@ -25,6 +25,12 @@ class SwitchSupportBinderTest {
         assertTrue(switchSupportFeatures(GmsService.SMARTDEVICE_TARGET_DIRECT_TRANSFER).isEmpty())
     }
 
+    /** Switch's startRestore (target tx22) requires it; without it the call never runs and Switch never advertises. */
+    @Test fun startRestoreIsAdvertisedOnTheTargetService() {
+        assertEquals(1L, switchSupportFeatures(GmsService.SMARTDEVICE_D2D_TARGET_DEVICE)
+            .single { it.name == "post_setup_start_restore" }.version)
+    }
+
     private fun call(binder: IBinder, descriptor: String, code: Int, write: Parcel.() -> Unit): Parcel {
         val data = Parcel.obtain()
         val reply = Parcel.obtain()

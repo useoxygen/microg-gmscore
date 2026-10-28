@@ -14,7 +14,7 @@ import java.io.Closeable
 /** Confirmed TargetDevice transactions, with no invented paired state or transferred accounts.
  * The pipe transport is separately testable; account bootstrap remains unavailable. */
 internal class AndroidTargetDeviceBinder(
-    uid: Int,
+    private val uid: Int,
     private var state: AndroidPostSetupState = AndroidPostSetupState(),
     private val direct: Boolean = false,
     private val reload: (() -> AndroidPostSetupState)? = null,
@@ -38,6 +38,8 @@ internal class AndroidTargetDeviceBinder(
             return true
         }
         val callback = requireNotNull(data.readStrongBinder())
+        // Only the broker's authenticated Switch reaches here; these calls use its retained pairing.
+        if (code in setOf(13, 14, 15, 17, 22)) RetainedSessionUse.called(uid)
         when (code) {
             1 -> {
                 val options = requireNotNull(DctRecord.nullable(data,LegacyBootstrapExchange.schema))
@@ -118,7 +120,13 @@ internal class AndroidTargetDeviceBinder(
             }
             22 -> {
                 data.skipApiMetadata(); data.requireEnd()
-                pair(callback, 7, 10590)
+                // startRestore. GMS foig asks the old phone over its quick-start session to start copying, and answers
+                // 13 without such a session. A legacy Android source starts its copy by itself once the bootstrap
+                // completes, so a verified retained session is that request already made; Switch fails the whole
+                // connection unless this succeeds.
+                val hint = state.hint()
+                pair(callback, 7, if (hint == null) 13 else 0)
+                hint?.bytes(3)?.fill(0)
             }
             23 -> {
                 data.skipApiMetadata(); data.requireEnd()
