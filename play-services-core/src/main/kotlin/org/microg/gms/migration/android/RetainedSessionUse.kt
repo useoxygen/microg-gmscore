@@ -31,10 +31,10 @@ internal object RetainedSessionUse {
     }
 
     @Synchronized private fun ended(uid: Int, started: Long) {
-        val left = (transports[uid] ?: 1) - 1
-        if (left > 0) { transports[uid] = left; return }
-        transports.remove(uid)
+        // Whichever transport ends, the calls it outlived are spent; transports still open keep the pairing anyway.
         if ((calls[uid]?.sequence ?: 0) <= started) calls.remove(uid)
+        val left = (transports[uid] ?: 1) - 1
+        if (left > 0) transports[uid] = left else transports.remove(uid)
     }
 
     @Synchronized fun inUse(uid: Int, now: Long = SystemClock.elapsedRealtime()): Boolean =

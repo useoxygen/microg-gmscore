@@ -38,6 +38,19 @@ class RetainedSessionUseTest {
         assertFalse(RetainedSessionUse.inUse(switch, now = 1_000 + RetainedSessionUse.LEASE_MS))
     }
 
+    /** Round 4 of #61: the outcome must not depend on which of two overlapping transports closes last. */
+    @Test fun aCallBetweenTwoTransportsIsSpentWhicheverClosesLast() {
+        for (newerFirst in listOf(true, false)) {
+            RetainedSessionUse.reset()
+            val old = RetainedSessionUse.transport(switch)
+            RetainedSessionUse.called(switch, now = 1_000)
+            val newer = RetainedSessionUse.transport(switch)
+            if (newerFirst) { newer.close(); assertTrue(RetainedSessionUse.inUse(switch, now = 1_001)); old.close() }
+            else { old.close(); assertTrue(RetainedSessionUse.inUse(switch, now = 1_001)); newer.close() }
+            assertFalse("newerFirst=$newerFirst", RetainedSessionUse.inUse(switch, now = 1_001))
+        }
+    }
+
     @Test fun aCallWithoutATransportHoldsThePairingOnlyForTheLease() {
         RetainedSessionUse.called(switch, now = 1_000)
         assertTrue(RetainedSessionUse.inUse(switch, now = 1_000 + RetainedSessionUse.LEASE_MS - 1))
