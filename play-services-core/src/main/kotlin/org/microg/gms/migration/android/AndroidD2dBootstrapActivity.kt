@@ -25,10 +25,11 @@ class AndroidD2dBootstrapActivity : Activity() {
         super.onCreate(state)
         message=TextView(this).apply { textSize=22f; text=getString(com.google.android.gms.R.string.android_d2d_prepare) }
         proceed=Button(this).apply { text=getString(com.google.android.gms.R.string.android_d2d_continue); isEnabled=false; setOnClickListener { continueCopy() } }
-        // Cancel forgets a pairing this screen holds, so trying again pairs afresh instead of reusing it.
+        // Cancel forgets a pairing this screen holds, so trying again pairs afresh instead of reusing it; never one
+        // Switch is using for a copy right now.
         val cancel=Button(this).apply { text=getString(android.R.string.cancel); setOnClickListener {
             bootstrap?.close(); bootstrap=null
-            if(targetUid>=0)sessions.clear(targetUid)
+            if(targetUid>=0 && !SwitchSupportService.switchBound)sessions.clear(targetUid)
             finish()
         } }
         setContentView(LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(40,80,40,40); addView(message); addView(proceed); addView(cancel) })
@@ -38,7 +39,9 @@ class AndroidD2dBootstrapActivity : Activity() {
             // is fixed to the installed Switch package, never an Intent-supplied UID.
             check(org.microg.gms.utils.ExtendedPackageInfo(this,SWITCH_PACKAGE).hasGooglePackagePermission(org.microg.gms.common.GooglePackagePermission.ACCOUNT))
             targetUid=packageManager.getApplicationInfo(SWITCH_PACKAGE,0).uid
-            if(sessions.launched(targetUid))sessions.clear(targetUid) // that copy already ran, copied or failed
+            // Switch was started with this pairing. Unless it is still bound (copying), that copy has ended, copied or
+            // failed, and the old phone has left it: pair afresh.
+            if(sessions.launched(targetUid) && !SwitchSupportService.switchBound)sessions.clear(targetUid)
             if(sessions.load(targetUid).use { it.hint()!=null }) {
                 ready(); return
             }

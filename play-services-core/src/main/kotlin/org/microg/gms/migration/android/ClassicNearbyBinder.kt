@@ -69,17 +69,25 @@ internal const val DECISION_SECONDS = 120L
  * app declined.
  */
 internal fun awaitAcceptance(channel: ClassicNearbyChannel, close: () -> Unit,
-    timer: java.util.concurrent.ScheduledExecutorService, token: ByteArray,
+    timer: ScheduledExecutorService, token: ByteArray,
     keepAliveMs: Long = KEEP_ALIVE_MS, timeoutMs: Long = KEEP_ALIVE_TIMEOUT_MS, decide: () -> Boolean): Boolean {
+    // Writes can block on a stalled link, so they get their own thread; the shared timer only watches the clock and
+    // closes the link, which also ends a blocked write.
+    val writer = Executors.newSingleThreadExecutor()
+    val writing = java.util.concurrent.atomic.AtomicLong(0)
     val alive = timer.scheduleAtFixedRate({
-        val silent = channel.peerHeardNanos?.let { TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-it) } ?: 0
-        if (silent > timeoutMs) close()
-        else runCatching { channel.sendPendingKeepAlive() }.onFailure { close() }
+        val now = System.nanoTime()
+        val silent = channel.peerHeardNanos?.let { TimeUnit.NANOSECONDS.toMillis(now-it) } ?: 0
+        val stuck = writing.get().let { if (it == 0L) 0 else TimeUnit.NANOSECONDS.toMillis(now-it) }
+        if (silent > timeoutMs || stuck > timeoutMs) runCatching(close)
+        else if (writing.compareAndSet(0, now)) runCatching { writer.execute {
+            try { channel.sendPendingKeepAlive() } catch (_: Exception) { runCatching(close) } finally { writing.set(0) }
+        } }.onFailure { writing.set(0) }
     },keepAliveMs,keepAliveMs,TimeUnit.MILLISECONDS)
     try {
         if (!decide()) { channel.reject(); return false }
         channel.accept(token); return true
-    } finally { alive.cancel(false) }
+    } finally { alive.cancel(false); writer.shutdownNow() }
 }
 
 internal class ClassicNearbyBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {

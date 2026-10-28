@@ -209,6 +209,41 @@ class AndroidD2dProtocolTest {
         }
     }
 
+    /** A keep-alive write that blocks on a stalled link must neither stop the silence watchdog nor the shared timer. */
+    @Test fun aStalledKeepAliveWriteClosesTheLinkAndLeavesTheTimerFree() {
+        ServerSocket(0).use { server ->
+            val pool = Executors.newSingleThreadExecutor(); val timer = Executors.newSingleThreadScheduledExecutor()
+            val release = java.util.concurrent.CountDownLatch(1); val closed = java.util.concurrent.CountDownLatch(1)
+            try {
+                pool.submit { server.accept().use { socket -> sourceUntilAcceptance(socket); release.await(10, TimeUnit.SECONDS) } }
+                Socket("127.0.0.1", server.localPort).use { socket ->
+                    var stall = false
+                    val out = object : FilterOutputStream(socket.getOutputStream()) {
+                        override fun write(b: ByteArray, off: Int, len: Int) {
+                            if (stall) { release.await(10, TimeUnit.SECONDS); throw IOException("stalled link closed") }
+                            out.write(b, off, len)
+                        }
+                        override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+                    }
+                    ClassicNearbyChannel(socket.getInputStream(), out).use { target ->
+                        val (_, token) = target.receiveConnection()
+                        stall = true
+                        val other = timer.schedule<Unit>({}, 600, TimeUnit.MILLISECONDS)
+                        val started = System.nanoTime()
+                        assertThrows(Exception::class.java) {
+                            awaitAcceptance(target, { closed.countDown(); release.countDown() }, timer, token,
+                                keepAliveMs = 100, timeoutMs = 400) {
+                                assertTrue(closed.await(5, TimeUnit.SECONDS)); false
+                            }
+                        }
+                        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3_000)
+                        other.get(2, TimeUnit.SECONDS) // the timer ran other work during the stall
+                    }
+                }
+            } finally { release.countDown(); pool.shutdownNow(); timer.shutdownNow() }
+        }
+    }
+
     @Test fun unknownOfflineVersionIsRejected() {
         assertThrows(IllegalArgumentException::class.java) { ClassicNearbyChannel.parse(byteArrayOf(8, 0)) }
     }
