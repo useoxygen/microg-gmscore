@@ -41,6 +41,9 @@ class TwoStepAccountsAndResendTest {
     private val shown = mutableListOf<Pair<String, String?>>()
     private val readStates = mutableListOf<Triple<String, String?, Int>>()
     private val dismissed = mutableListOf<String>()
+    private val events = mutableListOf<String>()
+    /** Shown prompts still up per account (the notification shade), as the Android side keeps them. */
+    private val shade = mutableMapOf<String, MutableList<String?>>()
     private val serverPrompts = mutableMapOf<String, NotificationData>()
 
     private val route = TwoStepRoute<String>(
@@ -53,8 +56,14 @@ class TwoStepAccountsAndResendTest {
             GnotsFetch(listOfNotNull(serverPrompts[id]), null)
         },
         setReadState = { account, notification, status -> readStates += Triple(account, notification.identifier?.uniqueId, status) },
-        show = { account, notification, _ -> shown += account to notification.identifier?.uniqueId; ShowOutcome(ShowResult.SHOWN, fullScreen = true, openedNow = true) },
+        show = { account, notification, _ ->
+            shown += account to notification.identifier?.uniqueId
+            events += "show:${notification.identifier?.uniqueId}"
+            shade.getOrPut(account) { mutableListOf() } += notification.identifier?.uniqueId
+            ShowOutcome(ShowResult.SHOWN, fullScreen = false, openAttempted = true)
+        },
         dismiss = { id -> dismissed += id; 1 },
+        retireOlder = { account -> events += "retire:$account"; shade.remove(account)?.size ?: 0 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         sleep = { },
     )
@@ -121,7 +130,7 @@ class TwoStepAccountsAndResendTest {
     }
 
     @Test
-    fun eachResendIsShownAsANewPrompt() {
+    fun eachResendReplacesTheOlderPromptOfItsAccount() {
         // Seen on the dev Pixel 7a on 2026-10-28: every "Resend it" is a new push naming a new GNOTS unique id.
         for (id in listOf("first", "resend-1", "resend-2")) {
             serverPrompt(owner, id)
@@ -129,9 +138,37 @@ class TwoStepAccountsAndResendTest {
         }
         assertEquals(listOf("first", "resend-1", "resend-2").map { owner.first to it }, shown)
         assertEquals(listOf("first", "resend-1", "resend-2").map { Triple(owner.first, it, NOTIFICATION_STATUS_SHOWN) }, readStates)
+        // The older prompt is taken down before the newer one is posted, so only the latest is left to answer.
+        assertEquals(listOf("retire:${owner.first}", "show:first", "retire:${owner.first}", "show:resend-1", "retire:${owner.first}", "show:resend-2"), events)
+        assertEquals(mapOf(owner.first to listOf<String?>("resend-2")), shade)
+        // Nothing is reported for the replaced ones and nothing is dismissed remotely.
         assertTrue(dismissed.isEmpty())
-        assertEquals(3, logs.count { it.startsWith("event=shown") })
-        assertTrue(logs.filter { it.startsWith("event=shown") }.all { it.endsWith("full_screen=true opened_now=true") })
+        assertEquals(listOf("replaced=0", "replaced=1", "replaced=1"), logs.filter { it.startsWith("event=shown") }.map { it.substringAfterLast(' ') })
+        assertTrue(logs.filter { it.startsWith("event=shown") }.all { it.contains("full_screen=false open_attempted=true") })
+    }
+
+    @Test
+    fun aNewPromptForOneAccountLeavesAnotherAccountsPromptUp() {
+        serverPrompt(workspace, "w1")
+        serverPrompt(owner, "u1")
+        route.route(GMS_GCM_NOTIFICATIONS, tickle(workspace.second, "w1"))
+        route.route(GMS_GCM_NOTIFICATIONS, tickle(owner.second, "u1"))
+        assertEquals(mapOf(workspace.first to listOf<String?>("w1"), owner.first to listOf<String?>("u1")), shade)
+    }
+
+    @Test
+    fun notificationIdsAreStablePerPromptAndDifferPerResend() {
+        var counter = 0
+        val first = promptNotificationId("a:GMSCORE_SYNC_RENDERER:36cc60b7637e0000") { ++counter }
+        assertEquals(first, promptNotificationId("a:GMSCORE_SYNC_RENDERER:36cc60b7637e0000") { ++counter })
+        assertNotEquals(first, promptNotificationId("a:GMSCORE_SYNC_RENDERER:682941f7637e0000") { ++counter })
+        assertEquals(0, counter)
+        for (id in listOf("x", "", "a:b:c", "\u0000", "z".repeat(500))) {
+            val n = promptNotificationId(id.ifEmpty { "e" }) { 0 }
+            assertTrue(n in 1..(1 shl 30))
+        }
+        assertEquals(1, promptNotificationId(null) { ++counter })
+        assertEquals(2, promptNotificationId("") { ++counter })
     }
 
     @Test
@@ -172,17 +209,31 @@ class TwoStepAccountsAndResendTest {
         for (line in logs) for (secret in secrets) assertFalse("$secret in $line", line.contains(secret))
     }
 
+    private fun present(interactive: Boolean = true, locked: Boolean = false, fullScreen: Boolean = true, bal: Boolean = true, alerts: Boolean = true, interruptions: Boolean = true) =
+        promptPresentation(interactive, locked, fullScreen, bal, alerts, interruptions)
+
     @Test
     fun presentationOpensThePageDirectlyOnlyOnAnUnlockedScreenInUse() {
-        // In use and unlocked: open now, and keep the full-screen intent so the heads-up stays until handled.
-        assertEquals(PromptPresentation(fullScreen = true, openNow = true), promptPresentation(interactive = true, keyguardLocked = false, fullScreenAllowed = true, backgroundStartAllowed = true))
+        // In use and unlocked: open now, without a full-screen intent (no second page, no heads-up kept over it).
+        assertEquals(PromptPresentation(fullScreen = false, openNow = true), present())
         // Locked, or screen off: only the full-screen intent; Android opens the page behind the lock screen.
-        assertEquals(PromptPresentation(fullScreen = true, openNow = false), promptPresentation(interactive = true, keyguardLocked = true, fullScreenAllowed = true, backgroundStartAllowed = true))
-        assertEquals(PromptPresentation(fullScreen = true, openNow = false), promptPresentation(interactive = false, keyguardLocked = false, fullScreenAllowed = true, backgroundStartAllowed = true))
-        assertEquals(PromptPresentation(fullScreen = true, openNow = false), promptPresentation(interactive = false, keyguardLocked = true, fullScreenAllowed = true, backgroundStartAllowed = true))
-        // The owner revoked full-screen notifications, or the privilege is missing: never worked around.
-        assertEquals(PromptPresentation(fullScreen = false, openNow = true), promptPresentation(interactive = true, keyguardLocked = false, fullScreenAllowed = false, backgroundStartAllowed = true))
-        assertEquals(PromptPresentation(fullScreen = true, openNow = false), promptPresentation(interactive = true, keyguardLocked = false, fullScreenAllowed = true, backgroundStartAllowed = false))
+        assertEquals(PromptPresentation(fullScreen = true, openNow = false), present(locked = true))
+        assertEquals(PromptPresentation(fullScreen = true, openNow = false), present(interactive = false))
+        assertEquals(PromptPresentation(fullScreen = true, openNow = false), present(interactive = false, locked = true))
+        // The owner revoked full-screen notifications: still opened while in use, a plain notification otherwise.
+        assertEquals(PromptPresentation(fullScreen = false, openNow = true), present(fullScreen = false))
+        assertEquals(PromptPresentation(fullScreen = false, openNow = false), present(fullScreen = false, locked = true))
+        // Without the privilege, the full-screen intent is the fallback.
+        assertEquals(PromptPresentation(fullScreen = true, openNow = false), present(bal = false))
+    }
+
+    @Test
+    fun theOwnersChannelAndDoNotDisturbChoicesAreRespected() {
+        // A channel turned down to silent or default, or Do Not Disturb on: no direct start. The full-screen intent
+        // stays; Android itself applies the channel and Do Not Disturb to it.
+        assertEquals(PromptPresentation(fullScreen = true, openNow = false), present(alerts = false))
+        assertEquals(PromptPresentation(fullScreen = true, openNow = false), present(interruptions = false))
+        assertEquals(PromptPresentation(fullScreen = false, openNow = false), present(interruptions = false, fullScreen = false))
     }
 
     @Test

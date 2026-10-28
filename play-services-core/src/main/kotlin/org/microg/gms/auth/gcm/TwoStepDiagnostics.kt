@@ -43,6 +43,8 @@ internal enum class TwoStepEvent {
     READ_STATE_FAILED,
     /** The owner opened a prompt; it was reported as opened and taken down. */
     OPENED,
+    /** Google's page opened without the owner's tap, as GmsCore asked while the phone was in use (nothing reported). */
+    OPENED_DIRECT,
     /** The owner swiped a prompt away; it was reported as dismissed. */
     DISMISSED,
     /** Google asked to take a prompt down (answered elsewhere or withdrawn); `count` is how many were removed. */

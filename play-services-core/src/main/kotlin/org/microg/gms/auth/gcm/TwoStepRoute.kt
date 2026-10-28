@@ -26,25 +26,45 @@ internal enum class ShowResult { SHOWN, NOTIFICATIONS_BLOCKED, NOT_SHOWABLE }
 
 /**
  * What showing a prompt did. [fullScreen]: the notification carries a full-screen intent, so Android opens Google's
- * page by itself while the phone is locked or its screen is off (behind the lock screen: the owner unlocks first), and
- * keeps it as a heads-up that stays until handled while the phone is in use. [openedNow]: Google's page was opened
- * right away because the owner is using the unlocked phone.
+ * page by itself while the phone is locked or its screen is off (behind the lock screen: the owner unlocks first).
+ * [openAttempted]: GmsCore asked Android to open the page right away because the owner is using the unlocked phone.
+ * Android may still refuse that silently; the page records `event=opened_direct` when it really opens.
  */
-internal data class ShowOutcome(val result: ShowResult, val fullScreen: Boolean = false, val openedNow: Boolean = false)
+internal data class ShowOutcome(val result: ShowResult, val fullScreen: Boolean = false, val openAttempted: Boolean = false)
 
 /**
  * How a prompt is presented, like Google Play services, which opens its confirmation full screen when a prompt arrives.
  * The notification is always posted, so the prompt can be found again in the shade. Nothing here answers the prompt:
  * Google's page only asks, and the owner decides there.
  *
- * - [fullScreen]: attach a full-screen intent whenever Android allows it ([fullScreenAllowed]).
- * - [openNow]: start the page directly only while the screen is on and unlocked. Locked or dark, the full-screen
- *   intent wakes the screen; starting it directly as well would open the page twice.
+ * - [openNow]: start the page directly, only while the screen is on and unlocked, the privilege is held, and the
+ *   owner lets the prompt interrupt: the channel is high importance ([channelAlerts]) and Do Not Disturb is off
+ *   ([interruptionsAllowed]). Otherwise the prompt is only a notification.
+ * - [fullScreen]: otherwise attach a full-screen intent when Android allows it ([fullScreenAllowed]); while locked or
+ *   dark it wakes the screen (Android applies Do Not Disturb to it). Not with [openNow], which would open the page
+ *   twice and keep a heads-up over it.
  */
 internal data class PromptPresentation(val fullScreen: Boolean, val openNow: Boolean)
 
-internal fun promptPresentation(interactive: Boolean, keyguardLocked: Boolean, fullScreenAllowed: Boolean, backgroundStartAllowed: Boolean) =
-    PromptPresentation(fullScreen = fullScreenAllowed, openNow = interactive && !keyguardLocked && backgroundStartAllowed)
+internal fun promptPresentation(
+    interactive: Boolean,
+    keyguardLocked: Boolean,
+    fullScreenAllowed: Boolean,
+    backgroundStartAllowed: Boolean,
+    channelAlerts: Boolean,
+    interruptionsAllowed: Boolean,
+): PromptPresentation {
+    val openNow = interactive && !keyguardLocked && backgroundStartAllowed && channelAlerts && interruptionsAllowed
+    return PromptPresentation(fullScreen = fullScreenAllowed && !openNow, openNow = openNow)
+}
+
+/**
+ * The Android notification id of the prompt with GNOTS unique id [uniqueId]: stable for the prompt and different for
+ * each resend, also after a process restart (a counter restarting at 1 could reuse an older prompt's id and, with
+ * FLAG_UPDATE_CURRENT, overwrite its intents). Positive and at most 2^30, so `-id` is a distinct request code.
+ */
+internal fun promptNotificationId(uniqueId: String?, fallback: () -> Int): Int =
+    if (uniqueId.isNullOrEmpty()) fallback() else (uniqueId.hashCode() and 0x3fffffff) + 1
 
 /** A prompt without a usable expiry stays this long; Google's own prompts expire within minutes. */
 internal const val PROMPT_DEFAULT_TIMEOUT_MILLIS = 10 * 60 * 1000L
@@ -133,7 +153,8 @@ internal fun admitTwoStepMessage(prefOn: Boolean, gcmBody: String?, diagnostics:
  *
  * Android and network access are passed in so the routing is host-testable: [accounts] lists local accounts with
  * their Google user ids, [fetch] asks GNOTS for the full notifications (an empty list counts as a failed attempt),
- * [setReadState] reports a read state, [show] posts the notification, [decodeBase64] decodes the URL-safe payload.
+ * [setReadState] reports a read state, [retireOlder] takes down the account's older prompts and returns how many,
+ * [show] posts the notification, [decodeBase64] decodes the URL-safe payload.
  */
 internal class TwoStepRoute<A>(
     private val diagnostics: TwoStepDiagnostics,
@@ -143,6 +164,7 @@ internal class TwoStepRoute<A>(
     private val setReadState: (A, NotificationData, Int) -> Unit,
     private val show: (A, NotificationData, Long) -> ShowOutcome,
     private val dismiss: (String) -> Int,
+    private val retireOlder: (A) -> Int,
     private val decodeBase64: (String) -> ByteArray,
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
     private val now: () -> Long = { System.currentTimeMillis() },
@@ -201,6 +223,9 @@ internal class TwoStepRoute<A>(
             }
             val reference = serverTimeMillis ?: now()
             val timeoutMillis = promptTimeoutMillis(notification.expiryTime, reference)
+            // A newer prompt for the account (Google's "Resend it") replaces the older one's notification, so the owner
+            // never answers a stale prompt first. The older one is not reported to Google; it simply expires there.
+            val replaced = retireOlder(account)
             val outcome = show(account, notification, timeoutMillis)
             when (outcome.result) {
                 ShowResult.SHOWN -> {
@@ -208,7 +233,7 @@ internal class TwoStepRoute<A>(
                     // `expiry` says whether Google's expiry was usable or the default timeout applied.
                     val expiryUsed = promptExpiryRemainingMillis(notification.expiryTime, reference) != null
                     diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMillis / 60_000, "expiry" to expiryUsed, "server_time" to (serverTimeMillis != null),
-                        "full_screen" to outcome.fullScreen, "opened_now" to outcome.openedNow)
+                        "full_screen" to outcome.fullScreen, "open_attempted" to outcome.openAttempted, "replaced" to replaced)
                     reportReadState(session, account, notification, NOTIFICATION_STATUS_SHOWN)
                 }
                 ShowResult.NOTIFICATIONS_BLOCKED -> diagnostics.event(TwoStepEvent.NOTIFICATIONS_BLOCKED, session)

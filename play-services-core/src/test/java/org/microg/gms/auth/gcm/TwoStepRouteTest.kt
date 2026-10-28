@@ -45,6 +45,7 @@ class TwoStepRouteTest {
         setReadState = { account, _, status -> readStates += account to status },
         show = { account, _, _ -> shownFor += account; ShowOutcome(showResult, fullScreen = showResult == ShowResult.SHOWN) },
         dismiss = { id -> dismissed += id; 1 },
+        retireOlder = { 0 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         sleep = { sleeps += it },
     )
@@ -292,6 +293,7 @@ class TwoStepRouteTest {
         setReadState = { _, _, _ -> },
         show = { _, _, timeout -> timeouts += timeout; ShowOutcome(ShowResult.SHOWN) },
         dismiss = { 0 },
+        retireOlder = { 0 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         now = { now },
     )
@@ -302,7 +304,7 @@ class TwoStepRouteTest {
         val timeouts = mutableListOf<Long>()
         routeWithClock(server, (server + 3 * 60_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
         assertEquals(listOf(3 * 60_000L), timeouts)
-        assertTrue(logs.last(), logs.last().endsWith("timeout_min=3 expiry=true server_time=true full_screen=false opened_now=false"))
+        assertTrue(logs.last(), logs.last().endsWith("timeout_min=3 expiry=true server_time=true full_screen=false open_attempted=false replaced=0"))
     }
 
     @Test

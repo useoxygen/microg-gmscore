@@ -24,24 +24,24 @@ Logs on both routes are redacted, down to the push transport: `McsInputStream`, 
 
 Google Play services opens its confirmation full screen when a prompt arrives. Cyclon does the same on the GNOTS route (useoxygen/cyclon#842, 2026-10-28). Before, the prompt was only a notification: it was heads-up for about 6 s and then stayed in the shade, and on the founders' Pixel 8a the owner never noticed it.
 
-- **Phone in use and unlocked:** GmsCore starts Google's page at once. Android blocks background activity starts. GmsCore is privileged and holds `START_ACTIVITIES_FROM_BACKGROUND`: the Cyclon image grants it in `privapp-permissions-cyclon-gmscore.xml`, and the manifest declares it. If the start is refused, the notification is still there.
-- **Locked or screen off:** the notification carries a full-screen intent (`USE_FULL_SCREEN_INTENT`, revocable by the owner on Android 14+). Android wakes the screen and opens the page **behind** the lock screen: the page does not set `showWhenLocked`, so the owner unlocks first. The lock screen shows only the generic public version.
-- **Always:** the notification is posted as before, so the prompt can be found again. On an unlocked phone, a notification with a full-screen intent stays heads-up until the owner handles it.
+- **Phone in use and unlocked:** GmsCore starts Google's page at once, but only if the prompt channel is high importance and Do Not Disturb is off. Android blocks background activity starts. GmsCore is privileged and holds `START_ACTIVITIES_FROM_BACKGROUND`: the Cyclon image grants it in `privapp-permissions-cyclon-gmscore.xml`, and the manifest declares it. Android can still refuse the start without an error. `event=shown ... open_attempted=true` records the request. `event=opened_direct` (written by the page) proves that the page opened.
+- **Locked or screen off (or no direct start):** the notification carries a full-screen intent (`USE_FULL_SCREEN_INTENT`, revocable by the owner on Android 14+). Android wakes the screen and opens the page **behind** the lock screen: the page does not set `showWhenLocked`, so the owner unlocks first. The lock screen shows only the generic public version. Android applies Do Not Disturb to it. No full-screen intent is attached when the page is opened directly, which avoids a second page and a heads-up that stays over it.
+- **Always:** the notification is posted as before, so the prompt can be found again.
+- **One page, one prompt per account:** prompt pages run in their own task (`PromptPageActivity`, affinity `org.microg.gms.twostep`), and every start clears that task, so a newer prompt's page replaces the older one. A newer prompt for an account also takes down the account's older prompt notification (`event=shown ... replaced=1`), so the owner never answers a stale prompt first. Nothing is reported to Google for the replaced one. Notification ids derive from the GNOTS unique id, so they do not repeat after a process restart.
 - **Never approves:** the page only asks; the owner decides on Google's page. A page opened without a tap does not report the prompt as opened, and the notification stays. Only a tap on the notification reports "opened" (read state 2) and takes the notification down, as before.
 - Blocked notifications (permission, app or channel off) still mean nothing is shown or opened.
-- `event=shown` records `full_screen` (a full-screen intent was attached) and `opened_now` (the page was started directly).
 
 ## Resend and several accounts
 
 On the dev 7a, each "Resend it" is a new GNOTS push that names a new unique id. Each one gets a new notification, and with this change the page opens again. The route deduplicates nothing. `event=matched index=N accounts=M` records which local account a prompt was for, by position only. `event=account_not_matched ... without_id=K` counts local accounts with no stored Google user id; such an account can never receive a prompt. Matching is by Google user id only, so a Workspace account or a non-first account is routed like any other (`TwoStepAccountsAndResendTest`).
 
-The field failure on the founders' 8a was that no notification followed a resend. It is not reproduced; its logs had rotated. The route's events are now also kept in a private journal (`noBackupFilesDir/two_step_journal.txt`, last 400 lines, enum-only lines with epoch-millisecond times). It survives logcat rotation and reboots:
+The field failure on the founders' 8a was that no notification followed a resend. It is not reproduced; its logs had rotated. The route's events are now also kept in a private journal (`noBackupFilesDir/two_step_journal.txt`, last 400 lines, enum-only lines with epoch-millisecond times). It survives logcat rotation and reboots. Its wall-clock times are kept on purpose, to line a field report up with Google's side; they can appear in a bugreport together with the event names, never with content or ids:
 
 ```sh
 adb shell dumpsys activity service com.google.android.gms/org.microg.gms.gcm.McsService
 ```
 
-`ReceiverService` (which runs this route and Find My Device's) used to call `stopSelf()` when its last message was done. A push arriving at that moment could be queued and then dropped by `onDestroy()`. It now stops only with the latest start id.
+`ReceiverService` (which runs this route and Find My Device's) used to call `stopSelf()` when its last message was done. A push arriving at that moment could be queued and then dropped by `onDestroy()`. It now stops like `IntentService`: each message carries its start id, and `stopSelfResult(thatId)` keeps the service if a newer start was already issued (`ReceiverServiceStopTest`).
 
 ## Default on: a deliberate Cyclon deviation
 

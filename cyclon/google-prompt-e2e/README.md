@@ -32,7 +32,7 @@ Google sends the prompt to every phone signed in to the account, not only the on
 
 `resend.mjs SERIAL 230 40 100` leaves one prompt unanswered and clicks Google's "Resend it" after 40 and 100 s. It prints the ids of the posted prompt notifications over time; read the `Gms2FA` events afterwards.
 
-With the full-screen change (`claude/google-prompt-fullscreen-resend`), an unlocked phone in use opens Google's page as soon as the prompt arrives. `e2e.mjs` still taps the notification, which opens the page a second time and reports the prompt as opened; either page can answer.
+With the full-screen change (`claude/google-prompt-fullscreen-resend`), an unlocked phone in use opens Google's page as soon as the prompt arrives (`event=opened_direct`). `e2e.mjs` still taps the notification; that page replaces the first one and reports the prompt as opened.
 
 The route's events are also kept in a journal that survives logcat rotation (last 400 lines, epoch-millisecond times):
 

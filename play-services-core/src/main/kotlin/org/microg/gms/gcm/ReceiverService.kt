@@ -1,5 +1,5 @@
-// Modified by Cyclon in 2026: stop only with the latest start id, so a message that arrives while the previous one
-// finishes is not dropped by onDestroy (useoxygen/cyclon#842).
+// Modified by Cyclon in 2026: stop like IntentService, with the start id of the message just handled, so a message
+// that arrives while the previous one finishes is not dropped by onDestroy (useoxygen/cyclon#842).
 /**
  * SPDX-FileCopyrightText: 2026 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -15,7 +15,6 @@ import android.os.IBinder
 import android.os.Message
 import android.util.Log
 import org.microg.gms.common.ForegroundServiceContext
-import java.util.concurrent.atomic.AtomicInteger
 
 abstract class ReceiverService(private val tag: String): Service() {
     @Volatile
@@ -23,20 +22,12 @@ abstract class ReceiverService(private val tag: String): Service() {
 
     @Volatile
     private var handler: Handler? = null
-    private val atomicFlag = AtomicInteger(0)
 
-    /** The latest start id; set on the main thread before its message is queued. */
-    @Volatile
-    private var lastStartId = 0
-
-    private fun release() {
-        if (atomicFlag.decrementAndGet() == 0) {
-            Log.d(tag, "release: ")
-            // stopSelf() would stop even if another start is already on its way; its message would then be queued
-            // and dropped by onDestroy(). With the latest start id, Android keeps the service for a newer start.
-            stopSelfResult(lastStartId)
-        }
-    }
+    /**
+     * Called after the message of start [startId] was handled. Like IntentService: Android stops the service only if
+     * [startId] is still the latest start, so a start that is already on its way keeps the service and its message.
+     */
+    internal open fun stopAfter(startId: Int): Boolean = stopSelfResult(startId)
 
     override fun onCreate() {
         if (!allowed()) {
@@ -53,7 +44,7 @@ abstract class ReceiverService(private val tag: String): Service() {
                 } catch (e: Exception) {
                     Log.w(tag, "handleMessage: ", e)
                 } finally {
-                    release()
+                    if (stopAfter(msg.arg1)) Log.d(tag, "release: ")
                 }
             }
         }
@@ -77,10 +68,9 @@ abstract class ReceiverService(private val tag: String): Service() {
             return START_NOT_STICKY
         }
         Log.d(tag, "onStartCommand: start ")
-        lastStartId = startId
-        atomicFlag.incrementAndGet()
         val messageObtain = Message.obtain()
         messageObtain.obj = intent
+        messageObtain.arg1 = startId
         handler?.sendMessage(messageObtain)
         return START_NOT_STICKY
     }

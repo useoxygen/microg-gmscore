@@ -1605,6 +1605,15 @@
             android:exported="false"
             android:process=":persistent"/>
 
+        <!-- Cyclon: Google's page for a sign-in prompt (useoxygen/cyclon#842), in its own task so a newer prompt
+             replaces the older page; internal only, opened by GmsCore or from the prompt notification. -->
+        <activity
+            android:name="org.microg.gms.accountsettings.ui.PromptPageActivity"
+            android:process=":ui"
+            android:exported="false"
+            android:taskAffinity="org.microg.gms.twostep"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
+
         <!-- Cyclon: native Google prompt confirmation (useoxygen/cyclon#842); internal only, opened from its notification. -->
         <activity
             android:name="org.microg.gms.auth.authzen.ui.AuthZenActivity"
