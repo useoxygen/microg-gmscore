@@ -19,6 +19,74 @@ class PasswordLocalProbeCleanupAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
 
+    @Test fun createOnlyExactLocalProbeCredentialForSignInAcceptance() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("passwordAcceptance") == SETUP_OPT_IN)
+        try { createExactLocalProbe() } catch (_: Throwable) {
+            // Includes failures during rollback. Never attach payloads or native exception text.
+            throw AssertionError("Exact local probe setup did not pass; no broader mutation was attempted")
+        }
+    }
+
+    private fun createExactLocalProbe() {
+        val identity = probeIdentity()
+        val vault = DevicePasswordVault(context)
+        val data = PasswordData.create(identity.realm, identity.realm, USERNAME, SEED, 0)
+        val tag = data.tag()
+        val canonical = Proto.field(1, data.encode())
+        var before = emptyList<PasswordView>()
+        var after = emptyList<PasswordView>()
+        var rollback = emptyList<PasswordView>()
+        var restored = emptyList<PasswordView>()
+        var beforeDigest: ByteArray? = null
+        var afterDigest: ByteArray? = null
+        var restoredDigest: ByteArray? = null
+        var attempted = false
+        var complete = false
+        try {
+            before = vault.list()
+            verify(identity)
+            check(before.none { it.id == tag || it.data.realm == identity.realm && it.data.username == USERNAME })
+            beforeDigest = unrelatedDigest(before, null)
+            verify(identity)
+            attempted = true
+            vault.insertIfAbsent(canonical)
+            after = vault.list()
+            verify(identity)
+            val selected = after.single { it.id == tag && it.data.realm == identity.realm && it.data.username == USERNAME }
+            check(MessageDigest.isEqual(selected.chromeBytes, canonical))
+            check(selected.data.origin == identity.realm && !selected.data.blocked && selected.data.password == SEED)
+            afterDigest = unrelatedDigest(after, tag)
+            check(MessageDigest.isEqual(beforeDigest, afterDigest))
+            instrumentation.sendStatus(2, Bundle().apply {
+                putBoolean("exactLocalProbeCreated", true)
+                putBoolean("unrelatedLocalEntriesUnchanged", true)
+            })
+            complete = true
+        } finally {
+            try {
+                if (attempted && !complete) {
+                    // Reconcile an interrupted insert, but delete only the exact canonical record.
+                    // A changed payload refuses rollback instead of overwriting somebody's edit.
+                    rollback = vault.list()
+                    val selected = rollback.singleOrNull { it.id == tag }
+                    if (selected != null) {
+                        check(MessageDigest.isEqual(selected.chromeBytes, canonical))
+                        vault.deleteIfUnchanged(canonical)
+                    }
+                    restored = vault.list()
+                    check(restored.none { it.id == tag || it.data.realm == identity.realm && it.data.username == USERNAME })
+                    restoredDigest = unrelatedDigest(restored, null)
+                    check(MessageDigest.isEqual(beforeDigest, restoredDigest))
+                }
+            } finally {
+                canonical.fill(0)
+                beforeDigest?.fill(0); afterDigest?.fill(0); restoredDigest?.fill(0)
+                before.forEach { it.chromeBytes.fill(0) }; after.forEach { it.chromeBytes.fill(0) }
+                rollback.forEach { it.chromeBytes.fill(0) }; restored.forEach { it.chromeBytes.fill(0) }
+            }
+        }
+    }
+
     @Test fun exactLocalProbeCredentialIsAbsentBeforeFrameworkSave() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("passwordAcceptance") == OPT_IN)
         var entries = emptyList<PasswordView>()
@@ -112,6 +180,7 @@ class PasswordLocalProbeCleanupAndroidTest {
 
     private companion object {
         const val OPT_IN = "cyc680-local-probe-cleanup"
+        const val SETUP_OPT_IN = "cyc779-local-probe-setup"
         const val PROBE = "ai.cyclon.dev.passwordprobe"
         const val USERNAME = "cyc680-native-fill-synthetic"
         const val SEED = "cyc680-synthetic-native-fill-only"

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.ContextWrapper
@@ -78,7 +79,7 @@ class PasswordAgentFillProviderTest {
     private val target = "ai.cyclon.dev.passwordprobe"
     private val coreUid = 12345
     private val targetUid = 12346
-    private val handle = "a".repeat(64)
+    private val handle = java.util.UUID.randomUUID().toString().replace("-", "").repeat(2)
     private val signature = Signature("01234567")
     private lateinit var context: Context
     private lateinit var provider: PasswordAgentFillProvider
@@ -127,6 +128,48 @@ class PasswordAgentFillProviderTest {
             override fun onReceiveResult(resultCode: Int, resultData: Bundle?) { if (resultCode == 0) cancelled++ }
         })
     }
+    private fun chromeSignature(): Signature = Signature(java.util.Base64.getMimeDecoder().decode(
+        javaClass.getResourceAsStream("/google-chrome-release-cert.base64")!!.bufferedReader().use { it.readText() }))
+
+    @Suppress("DEPRECATION")
+    private fun installChrome(cert: Signature) {
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+            packageName = "com.android.chrome"
+            applicationInfo = ApplicationInfo().apply { packageName = "com.android.chrome"; uid = targetUid }
+            signatures = arrayOf(cert)
+            signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(cert)) }
+        })
+    }
+
+    private fun chromeTarget(cert: Signature, uid: Int = targetUid, origin: String = "https://example.test:8443/") = Bundle().apply {
+        putString("package", "com.android.chrome"); putInt("uid", uid)
+        putByteArray("certificate", MessageDigest.getInstance("SHA-256").digest(cert.toByteArray()))
+        putString("web_origin", origin)
+    }
+
+    @Test fun googleSignedChromeAcceptsCoreAttestedExactHttpsOriginIncludingPort() {
+        val cert = chromeSignature()
+        assertEquals("f0fd6c5b410f25cb25c3b53346c8972fae30f8ee7411df910480ad6b2d60db83",
+            MessageDigest.getInstance("SHA-256").digest(cert.toByteArray()).joinToString("") { "%02x".format(it) })
+        installChrome(cert)
+        val target = PasswordAgentFillTarget.from(context, chromeTarget(cert))
+        assertEquals("https://example.test:8443/", target.realm)
+        assertTrue(target.valid(context))
+        assertNotEquals(target.realm, PasswordAgentFillTarget.from(context,
+            chromeTarget(cert, origin = "https://example.test:9443/")).realm)
+    }
+
+    @Test fun chromeWrongSignerOrClaimedUidCannotSelectAWebRealm() {
+        val cert = chromeSignature()
+        installChrome(signature)
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, chromeTarget(signature)) }
+        installChrome(cert)
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, chromeTarget(cert, uid = targetUid + 1)) }
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, chromeTarget(signature)) }
+        val target = PasswordAgentFillTarget.from(context, chromeTarget(cert))
+        installChrome(signature)
+        assertFalse(target.valid(context))
+    }
     @Suppress("DEPRECATION")
     private fun prepare(): PendingIntent = provider.call("prepare", null, input()).getParcelable("picker")!!
 
@@ -173,4 +216,107 @@ class PasswordAgentFillProviderTest {
         assertEquals(2, PasswordFillBinderIdentityShadow.clears)
         assertEquals(2, PasswordFillBinderIdentityShadow.restores)
     }
+    @Test fun cancellationBeforeRegistrationRevokesLatePrepare() {
+        provider.call("cancel", handle, null)
+        assertThrows(SecurityException::class.java) { prepare() }
+    }
+
+    @Test fun arbitraryAppsCannotAssertWebOrigins() {
+        val bundle = input().apply { putString("web_origin", "https://example.com") }
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, bundle) }
+    }
+
+    @Test fun jellyOriginRequiresInstalledSystemIdentityAndRejectsPathsAndUserInfo() {
+        val jelly = "org.lineageos.jelly"
+        fun install(system: Boolean) {
+            shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+                packageName = jelly
+                applicationInfo = ApplicationInfo().apply {
+                    packageName = jelly; uid = targetUid; flags = if (system) ApplicationInfo.FLAG_SYSTEM else 0
+                }
+                signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(signature)) }
+            })
+        }
+        val bundle = input().apply { putString("package", jelly); putString("web_origin", "https://example.com") }
+        install(false)
+        assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, bundle) }
+        install(true)
+        assertEquals("https://example.com/", PasswordAgentFillTarget.from(context, bundle).realm)
+        for (origin in listOf("http://example.com", "https://example.com/login", "https://owner@example.com", "https://example.com?x=1")) {
+            bundle.putString("web_origin", origin)
+            assertThrows(SecurityException::class.java) { PasswordAgentFillTarget.from(context, bundle) }
+        }
+        bundle.putString("web_origin", "https://example.com")
+        val target = PasswordAgentFillTarget.from(context, bundle)
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply {
+            packageName = jelly
+            applicationInfo = ApplicationInfo().apply { packageName = jelly; uid = targetUid; flags = ApplicationInfo.FLAG_SYSTEM }
+            signingInfo = SigningInfo().also { shadowOf(it).setSignatures(arrayOf(Signature("abcdef01"))) }
+        })
+        assertFalse(target.valid(context))
+    }
+
+    private fun authentication(fill: PasswordAgentFillRequest, use: (() -> Boolean) -> Unit = { fail("Must await native authentication") }): PendingIntent {
+        val identity = Binder.clearCallingIdentity()
+        return try { PasswordAgentAuthenticationRequests.prepare(context, fill, use = use) }
+        finally { Binder.restoreCallingIdentity(identity) }
+    }
+
+    @Test fun strictAuthenticationHasNoUnlockedOrNoScreenLockFallback() {
+        val lock = shadowOf(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+        lock.setIsDeviceSecure(false)
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(false)
+        val request = PasswordAgentFillRequest.from(context, input())
+        assertThrows(SecurityException::class.java) { authentication(request) }
+        lock.setIsDeviceSecure(true)
+        lock.setIsDeviceLocked(true)
+        assertThrows(SecurityException::class.java) { authentication(request) }
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(true)
+        assertThrows(SecurityException::class.java) { authentication(request) }
+    }
+
+    @Test fun strictAuthenticationIsImmutableOneShotRequestBoundAndCancelledWithFill() {
+        val lock = shadowOf(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+        lock.setIsDeviceSecure(true)
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(false)
+        val request = PasswordAgentFillRequest.from(context, input())
+        PasswordAgentFillRequests.put(request)
+        val pendingIntent = authentication(request)
+        val pending = shadowOf(pendingIntent)
+        assertTrue(pending.isImmutable)
+        assertEquals(PendingIntent.FLAG_ONE_SHOT, pending.flags and PendingIntent.FLAG_ONE_SHOT)
+        assertEquals(services, pending.savedIntent.component!!.packageName)
+        assertEquals(PasswordAgentAuthenticationActivity::class.java.name, pending.savedIntent.component!!.className)
+        assertNull(pending.savedIntent.extras)
+        assertEquals("microg-password-agent:/authenticate/$handle", pending.savedIntent.data.toString())
+        val nativeRequest = PasswordAgentAuthenticationRequests.find(pending.savedIntent.data)
+        assertSame(request, nativeRequest.fill)
+        assertEquals(target, nativeRequest.target)
+        assertSame(request, PasswordAgentFillRequests.find(Uri.parse("microg-password-agent:/fill/$handle")))
+        assertTrue(PasswordAgentAuthenticationRequests.claim(nativeRequest))
+        assertFalse(PasswordAgentAuthenticationRequests.claim(nativeRequest))
+        provider.call("cancel", handle, null)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertFalse(request.valid(context))
+        assertFalse(PasswordAgentAuthenticationRequests.claim(nativeRequest))
+        assertThrows(SecurityException::class.java) { PasswordAgentAuthenticationRequests.find(pending.savedIntent.data) }
+    }
+
+    @Test fun strictAuthenticationExpiresWithoutEverReturningPassword() {
+        val lock = shadowOf(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+        lock.setIsDeviceSecure(true)
+        lock.setIsDeviceLocked(false)
+        lock.setKeyguardLocked(false)
+        val request = PasswordAgentFillRequest.from(context, input())
+        PasswordAgentFillRequests.put(request)
+        val pendingIntent = authentication(request)
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(61))
+        assertFalse(request.valid(context))
+        assertThrows(SecurityException::class.java) { PasswordAgentAuthenticationRequests.find(shadowOf(pendingIntent).savedIntent.data) }
+        assertEquals(1, cancelled)
+    }
+
 }

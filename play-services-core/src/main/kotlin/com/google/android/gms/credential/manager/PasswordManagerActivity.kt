@@ -8,15 +8,22 @@ import android.net.Uri
 import android.content.Intent
 import android.os.SystemClock
 import android.view.View
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
@@ -43,12 +50,15 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     private var selected by mutableStateOf<Account?>(null)
     private var storageChosen by mutableStateOf(false)
     private var enabled by mutableStateOf(false)
+    private var assistantAccess by mutableStateOf<Map<String, AgentSignInAccess.State>>(emptyMap())
+    private var accessEditing by mutableStateOf<PasswordView?>(null)
     private var editing by mutableStateOf<PasswordView?>(null)
     private var editorOpen by mutableStateOf(false)
     private var deleting by mutableStateOf<PasswordView?>(null)
     private var passphrase by mutableStateOf("")
     private var query by mutableStateOf("")
-    private var showBlocked by mutableStateOf(false)
+    private var showSettings by mutableStateOf(false)
+    private var detailId by mutableStateOf<String?>(null)
     private var blockedSiteOpen by mutableStateOf(false)
     private var showCheckup by mutableStateOf(false)
     private var dismissedCheckup by mutableStateOf(false)
@@ -105,7 +115,10 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         if (android.os.Build.VERSION.SDK_INT < 26) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            BackHandler(enabled = detailId != null) { detailId = null }
+            val scroll = rememberScrollState()
+            LaunchedEffect(showSettings, showCheckup, detailId) { scroll.scrollTo(0) }
+            Column(Modifier.verticalScroll(scroll).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(R.string.passwords_title), style = MaterialTheme.typography.headlineSmall)
                 if (!unlocked) {
                     Text(stringResource(if (hasSecureScreenLock) R.string.passwords_unlock_description else R.string.passwords_no_lock_description))
@@ -121,7 +134,18 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                         }
                     }
                     TextButton(onClick = { choose(null) }, enabled = !busy) { Text(stringResource(R.string.passwords_on_device)) }
-                    if (storageChosen) {
+                    TabRow(selectedTabIndex = if (showSettings) 2 else if (showCheckup) 1 else 0) {
+                        Tab(selected = !showSettings && !showCheckup,
+                            onClick = { showSettings = false; showCheckup = false; detailId = null },
+                            text = { Text(stringResource(R.string.passwords_tab_passwords)) })
+                        Tab(selected = showCheckup, enabled = enabled,
+                            onClick = { showSettings = false; showCheckup = true; detailId = null },
+                            text = { Text(stringResource(R.string.passwords_tab_checkup)) })
+                        Tab(selected = showSettings,
+                            onClick = { showSettings = true; showCheckup = false; detailId = null },
+                            text = { Text(stringResource(R.string.passwords_tab_settings)) })
+                    }
+                    if (storageChosen && showSettings) {
                         if (selected != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Switch(checked = enabled, enabled = !busy, onCheckedChange = { value -> perform {
                                 repository().setEnabled(value)
@@ -195,9 +219,6 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                             }, enabled = !busy) { Text(stringResource(R.string.passwords_recover_account_keys)) }
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 OutlinedButton(onClick = { perform { repository().refresh() } }, enabled = !busy) { Text(stringResource(R.string.passwords_refresh)) }
-                                Button(onClick = {
-                                    if (showBlocked) blockedSiteOpen = true else { editing = null; editorOpen = true }
-                                }, enabled = !busy) { Text(stringResource(if (showBlocked) R.string.passwords_never_save_add else R.string.passwords_add)) }
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 TextButton(onClick = { archiveImport = false }, enabled = !busy) { Text(stringResource(R.string.passwords_export)) }
@@ -218,14 +239,18 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                             }
                         }
                     }
-                    OutlinedTextField(query, { query = it }, singleLine = true,
-                        label = { Text(stringResource(R.string.passwords_search)) }, modifier = Modifier.fillMaxWidth())
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        TextButton(onClick = { showCheckup = false; showBlocked = false }) { Text(stringResource(R.string.passwords_saved) + if (!showCheckup && !showBlocked) " ✓" else "") }
-                        TextButton(onClick = { showCheckup = false; showBlocked = true }) { Text(stringResource(R.string.passwords_never_saved) + if (!showCheckup && showBlocked) " ✓" else "") }
+                    if (!showSettings && detailId == null) {
+                        OutlinedTextField(query, { query = it }, singleLine = true,
+                            label = { Text(stringResource(R.string.passwords_search)) }, modifier = Modifier.fillMaxWidth())
+                        if (!showCheckup && enabled) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedButton(onClick = { perform { repository().refresh() } }, enabled = !busy) { Text(stringResource(R.string.passwords_refresh)) }
+                            Button(onClick = { editing = null; editorOpen = true }, enabled = !busy) { Text(stringResource(R.string.passwords_add)) }
+                        }
                     }
-                    TextButton(onClick = { showCheckup = true; showBlocked = false }, enabled = enabled) {
-                        Text(stringResource(R.string.passwords_checkup) + if (showCheckup) " ✓" else "")
+                    if (!showSettings && (trustedRecovery || remoteReset || message == R.string.passwords_locked || message == R.string.passwords_no_vault)) {
+                        TextButton(onClick = { showSettings = true; showCheckup = false; detailId = null }) {
+                            Text(stringResource(R.string.passwords_open_settings))
+                        }
                     }
                     if (showCheckup) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -238,23 +263,34 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                             onWebsite = { url -> requireOwner(); runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
                                 .onFailure { message = R.string.passwords_sync_failed } })
                     }
-                    if (showBlocked) Text(stringResource(R.string.passwords_never_saved_description))
-                    val visible = if (showCheckup) emptyList() else entries.filter { it.data.blocked == showBlocked && it.data.matchesSearch(query) }
-                    if (enabled && !showCheckup && visible.isEmpty()) Text(stringResource(R.string.passwords_no_results))
+                    if (showSettings) {
+                        HorizontalDivider()
+                        Text(stringResource(R.string.passwords_never_saved), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.passwords_never_saved_description))
+                        if (enabled) TextButton(onClick = { blockedSiteOpen = true }, enabled = !busy) {
+                            Text(stringResource(R.string.passwords_never_save_add))
+                        }
+                    }
+                    val detail = entries.singleOrNull { it.id == detailId && !it.data.blocked }
+                    if (!showSettings && !showCheckup && detail != null) PasswordDetails(detail, assistantAccess[detail.id], busy,
+                        onBack = { detailId = null }, onEdit = { editing = detail; editorOpen = true },
+                        onMove = { moving = detail }, onDelete = { deleting = detail }, onAccess = { accessEditing = detail })
+                    val visible = if (showCheckup || detail != null) emptyList() else entries.filter {
+                        it.data.blocked == showSettings && (showSettings || it.data.matchesSearch(query))
+                    }
+                    if (enabled && !showCheckup && detail == null && visible.isEmpty()) Text(stringResource(R.string.passwords_no_results))
                     visible.forEach { entry ->
                         HorizontalDivider()
-                        Text(entry.data.realm, style = MaterialTheme.typography.titleMedium)
-                        entry.brandName?.takeIf { it.isNotBlank() }?.let { Text(it) }
-                        if (!entry.data.blocked) {
-                            Text(entry.data.username)
-                            if (entry.data.displayName.isNotEmpty()) Text(entry.data.displayName)
-                        }
-                        Row {
-                            if (!entry.data.blocked) TextButton(onClick = { editing = entry; editorOpen = true }, enabled = !busy) { Text(stringResource(R.string.passwords_edit)) }
-                            if (!entry.data.blocked) TextButton(onClick = { moving = entry }, enabled = !busy) { Text(stringResource(R.string.passwords_move)) }
+                        if (entry.data.blocked) {
+                            Text(loginTitle(entry), style = MaterialTheme.typography.titleMedium)
                             TextButton(onClick = { deleting = entry }, enabled = !busy) {
-                                Text(stringResource(if (entry.data.blocked) R.string.passwords_allow_save else R.string.passwords_delete))
+                                Text(stringResource(R.string.passwords_allow_save))
                             }
+                        } else {
+                            ListItem(headlineContent = { Text(loginTitle(entry)) },
+                                supportingContent = { Text(entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) }) },
+                                trailingContent = { Text("›") },
+                                modifier = Modifier.clickable(enabled = !busy, role = Role.Button) { detailId = entry.id })
                         }
                     }
                     if (pendingChanges.isNotEmpty()) Text(stringResource(R.string.passwords_changes), style = MaterialTheme.typography.titleMedium)
@@ -288,8 +324,39 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 message?.let { Text(stringResource(it)) }
-                TextButton(onClick = { finish() }) { Text(stringResource(R.string.cyclon_back)) }
+                TextButton(onClick = { if (detailId != null) detailId = null else finish() }) { Text(stringResource(R.string.cyclon_back)) }
             }
+            accessEditing?.takeIf { unlocked }?.let { entry -> assistantAccess[entry.id]?.let { state ->
+                SignInAccessDialog(entry, state.level, state.requireDeviceAuthentication, hasSecureScreenLock, busy,
+                    onDismiss = { accessEditing = null },
+                    onSetScreenLock = {
+                        requireOwner()
+                        runCatching { startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)) }
+                            .onFailure { message = R.string.passwords_access_failed }
+                    }, onSave = { level, requireAuthentication ->
+                        requireOwner()
+                        if (requireAuthentication && !state.requireDeviceAuthentication && !hasSecureScreenLock)
+                            throw VaultLockedException()
+                        val account = selected
+                        val identity = ownerOperations.identity(account)
+                        accessEditing = null
+                        perform {
+                                if (!ownerOperations.identity(account).same(identity)) throw VaultLockedException()
+                                val repo = repository(account)
+                                fun set(current: PasswordData) {
+                                    if (current.realm != entry.data.realm || current.username != entry.data.username || current.blocked) throw VaultLockedException()
+                                    if (!ownerOperations.identity(account).same(identity)) throw VaultLockedException()
+                                    AgentSignInAccess(this@PasswordManagerActivity).setOwnerPolicy(
+                                        AgentSignInAccess.vaultKey(identity.userId), entry.id, state.incarnation, level, requireAuthentication)
+                                }
+                                when (repo) {
+                                    is PasswordRepository -> repo.withAgentEntry(entry.id, ::set)
+                                    is DevicePasswordVault -> repo.withAgentEntry(entry.id, ::set)
+                                    else -> throw VaultLockedException()
+                                }
+                        }
+                    })
+            } }
             if (editorOpen && unlocked) PasswordEditor(editing, onDismiss = { editorOpen = false; editing = null }) { data ->
                 val original = editing
                 editorOpen = false; editing = null
@@ -446,8 +513,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         message = R.string.passwords_access_failed
     }
     override fun onOwnerLocked() {
-        unlocked = false; entries = emptyList(); editing = null; deleting = null; editorOpen = false; passphrase = ""
-        query = ""; showBlocked = false; blockedSiteOpen = false
+        unlocked = false; entries = emptyList(); assistantAccess = emptyMap(); accessEditing = null; editing = null; deleting = null; editorOpen = false; passphrase = ""
+        query = ""; showSettings = false; detailId = null; blockedSiteOpen = false
         pendingChanges = emptyList(); transfers = emptyList(); resolving = null; moving = null
         resetOpen = false; archiveImport = null; droppingTransfer = null
         csvExportOpen = false; csvImportOpen = false
@@ -455,7 +522,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         if (!exportPending) clearExport()
     }
     private fun choose(account: Account?, initialQuery: String = "") {
-        requireOwner(); selected = account; storageChosen = true; entries = emptyList(); query = initialQuery; showBlocked = false
+        requireOwner(); selected = account; storageChosen = true; entries = emptyList(); query = initialQuery; detailId = null
         showCheckup = false; dismissedCheckup = false; checkupDismissal = null
         perform { }
     }
@@ -503,19 +570,39 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         } finally { buffer.fill(0) }
     } ?: throw ProtocolException()
     private class OwnerSnapshot(val enabled: Boolean, val entries: List<PasswordView>, val pending: List<PasswordPendingChange>,
-        val reset: Boolean, val transfers: List<PasswordTransferOperation>, val trustedRecovery: Boolean)
+        val reset: Boolean, val transfers: List<PasswordTransferOperation>, val trustedRecovery: Boolean,
+        val assistantAccess: Map<String, AgentSignInAccess.State>)
     private fun snapshot(repo: ManagedPasswordVault): OwnerSnapshot {
         val enabled = repo.enabled
         val reset = repo.hasRemoteReset()
         val trusted = (repo as? PasswordRepository)?.needsTrustedVaultRecovery() == true
         val entries = if (!enabled) emptyList() else if (reset || trusted) runCatching { repo.list() }.getOrDefault(emptyList()) else repo.list()
         val changes = if (!enabled) emptyList() else if (reset || trusted) runCatching { repo.pendingChanges() }.getOrDefault(emptyList()) else repo.pendingChanges()
-        return OwnerSnapshot(enabled, entries, changes, reset, ownerOperations.pending(), trusted)
+        val identity = ownerOperations.identity((repo as? PasswordRepository)?.account)
+        val access = AgentSignInAccess(this)
+        val levels = entries.filter { !it.data.blocked }.mapNotNull { entry ->
+            // Issue an incarnation only while the login still exists. A stale snapshot must
+            // never create a permission record for a deleted login that is recreated later.
+            runCatching {
+                fun read(current: PasswordData): Pair<String, AgentSignInAccess.State> {
+                    if (current.realm != entry.data.realm || current.username != entry.data.username) throw VaultLockedException()
+                    return entry.id to access.get(AgentSignInAccess.vaultKey(identity.userId), entry.id)
+                }
+                when (repo) {
+                    is PasswordRepository -> repo.withAgentEntry(entry.id, ::read)
+                    is DevicePasswordVault -> repo.withAgentEntry(entry.id, ::read)
+                    else -> throw VaultLockedException()
+                }
+            }.getOrNull()
+        }.toMap()
+        return OwnerSnapshot(enabled, entries, changes, reset, ownerOperations.pending(), trusted, levels)
     }
     private fun applySnapshot(snapshot: OwnerSnapshot) {
         enabled = snapshot.enabled; entries = snapshot.entries; pendingChanges = snapshot.pending
         remoteReset = snapshot.reset; transfers = snapshot.transfers
         trustedRecovery = snapshot.trustedRecovery
+        assistantAccess = snapshot.assistantAccess
+        if (entries.none { it.id == detailId }) detailId = null
     }
     private fun prepareExport() {
         requireOwner(); exportPending = true; exportCreatedMillis = SystemClock.elapsedRealtime()
@@ -524,6 +611,117 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     }
     private fun clearExport() { exportBytes?.fill(0); exportBytes = null; exportIdentity = null; exportPending = false; exportCreatedMillis = 0L }
     override fun onDestroy() { clearExport(); afterAuthentication = null; super.onDestroy() }
+}
+
+private fun accessLabel(level: AgentSignInAccess.Level) = when (level) {
+    AgentSignInAccess.Level.ASK -> R.string.passwords_assistant_ask
+    AgentSignInAccess.Level.ALWAYS -> R.string.passwords_assistant_always
+    AgentSignInAccess.Level.NEVER -> R.string.passwords_assistant_never
+}
+
+private fun loginTarget(entry: PasswordView): String =
+    if (entry.data.realm.startsWith("android://")) entry.data.realm.substringAfter('@').trimEnd('/')
+    else entry.data.realm
+
+private fun loginTitle(entry: PasswordView): String = entry.brandName?.takeIf { it.isNotBlank() }
+    ?: Uri.parse(loginTarget(entry)).host?.takeIf { it.isNotBlank() }
+    ?: loginTarget(entry)
+
+@Composable
+private fun PasswordDetails(entry: PasswordView, access: AgentSignInAccess.State?, busy: Boolean,
+                            onBack: () -> Unit, onEdit: () -> Unit, onMove: () -> Unit,
+                            onDelete: () -> Unit, onAccess: () -> Unit) {
+    TextButton(onClick = onBack) { Text(stringResource(R.string.passwords_back_to_passwords)) }
+    Text(loginTitle(entry), style = MaterialTheme.typography.headlineSmall)
+    if (loginTitle(entry) != loginTarget(entry)) Text(loginTarget(entry),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(stringResource(R.string.passwords_username), style = MaterialTheme.typography.labelMedium)
+    Text(entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) })
+    if (entry.data.displayName.isNotEmpty()) Text(entry.data.displayName)
+    Row {
+        TextButton(onClick = onEdit, enabled = !busy) { Text(stringResource(R.string.passwords_edit)) }
+        TextButton(onClick = onMove, enabled = !busy) { Text(stringResource(R.string.passwords_move)) }
+        TextButton(onClick = onDelete, enabled = !busy) { Text(stringResource(R.string.passwords_delete)) }
+    }
+    if (access != null) {
+        HorizontalDivider()
+        Text(stringResource(R.string.passwords_assistant_access), style = MaterialTheme.typography.titleMedium)
+        OutlinedButton(onClick = onAccess, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.passwords_assistant_access_status, stringResource(accessLabel(access.level))))
+        }
+        if (access.requireDeviceAuthentication) Text(stringResource(R.string.passwords_assistant_authentication_summary),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        access.lastUsed?.let { used -> Text(stringResource(R.string.passwords_assistant_last_used,
+            java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT)
+                .format(java.util.Date(used))), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@Composable
+private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.Level, currentRequireAuthentication: Boolean,
+                               hasSecureScreenLock: Boolean, busy: Boolean, onDismiss: () -> Unit,
+                               onSetScreenLock: () -> Unit, onSave: (AgentSignInAccess.Level, Boolean) -> Unit) {
+    var selected by remember(entry.id, current) { mutableStateOf(current) }
+    var requireAuthentication by remember(entry.id, currentRequireAuthentication) { mutableStateOf(currentRequireAuthentication) }
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.passwords_assistant_access)) },
+        text = {
+            PasswordDialogProtection()
+            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(loginTitle(entry), style = MaterialTheme.typography.titleMedium)
+                if (loginTitle(entry) != loginTarget(entry)) Text(loginTarget(entry), style = MaterialTheme.typography.bodySmall)
+                Text(entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) },
+                    style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.passwords_assistant_access_description), style = MaterialTheme.typography.bodySmall)
+                Column(Modifier.selectableGroup()) {
+                    AgentSignInAccess.Level.values().forEach { level ->
+                        val choiceEnabled = !busy && !(requireAuthentication && level == AgentSignInAccess.Level.ALWAYS)
+                        Row(Modifier.fillMaxWidth().selectable(selected == level, enabled = choiceEnabled, role = Role.RadioButton,
+                            onClick = { selected = level }).padding(vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            RadioButton(selected = selected == level, onClick = null, enabled = choiceEnabled)
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(accessLabel(level)), style = MaterialTheme.typography.bodyLarge)
+                                Text(stringResource(when (level) {
+                                    AgentSignInAccess.Level.ASK -> R.string.passwords_assistant_ask_description
+                                    AgentSignInAccess.Level.ALWAYS -> R.string.passwords_assistant_always_description
+                                    AgentSignInAccess.Level.NEVER -> R.string.passwords_assistant_never_description
+                                }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth().toggleable(value = requireAuthentication,
+                    enabled = !busy && (hasSecureScreenLock || requireAuthentication), role = Role.Switch,
+                    onValueChange = { enabled ->
+                        requireAuthentication = enabled
+                        if (enabled && selected == AgentSignInAccess.Level.ALWAYS) selected = AgentSignInAccess.Level.ASK
+                    }).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.passwords_assistant_require_authentication), style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.passwords_assistant_require_authentication_description),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = requireAuthentication, onCheckedChange = null,
+                        enabled = !busy && (hasSecureScreenLock || requireAuthentication))
+                }
+                if (!hasSecureScreenLock) {
+                    Text(stringResource(R.string.passwords_assistant_screen_lock_required), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = onSetScreenLock, enabled = !busy) {
+                        Text(stringResource(R.string.passwords_assistant_set_screen_lock))
+                    }
+                }
+                Text(stringResource(R.string.passwords_assistant_revoke_description), style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(selected, requireAuthentication) },
+            enabled = !busy && (selected != current || requireAuthentication != currentRequireAuthentication)) {
+            Text(stringResource(R.string.passwords_save))
+        } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } })
 }
 
 @Composable

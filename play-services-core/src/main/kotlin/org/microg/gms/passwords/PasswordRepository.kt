@@ -113,6 +113,21 @@ class PasswordRepository private constructor(context: Context, val account: Acco
         }
     }
 
+    /** Keep deletion, account reset and private assistant handover in the same vault transaction. */
+    internal fun <T> withAgentEntry(id: String, action: (PasswordData) -> T): T {
+        checkEnabled()
+        return store.locked { session ->
+            val state = session.load()
+            val metadata = state.metadata ?: throw VaultLockedException()
+            checkSnapshotParent(metadata)
+            val keys = unlock(metadata, state.customKey, state.trustedVaultKeys)
+            try {
+                val raw = visibleRecords(state)[id] ?: throw VaultLockedException()
+                action(PasswordResourceCodec.read(raw, keys))
+            } finally { keys.destroy() }
+        }
+    }
+
     override fun upsert(chromePassword: ByteArray) = upsert(chromePassword, false)
     override fun upsertAutomatic(chromePassword: ByteArray) = upsert(chromePassword, true)
     private fun upsert(chromePassword: ByteArray, automatic: Boolean) {

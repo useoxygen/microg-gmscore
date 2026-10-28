@@ -11,12 +11,41 @@ tasks.register('testVersionAllocation') {
     doLast {
         def release = new JsonSlurper().parse(file('../version.json'))
         def allocated = cyclonValidateVersion(release, 40226)
-        // Every shipped APK must be replaceable: 252432075/84022675 is the last 25.24 delivery.
-        assert allocated.gmsVersionCode > 252432075
-        assert allocated.vendingVersionCode > 84022675
+        // The immutable published pair must never be reused, even while the
+        // phone still runs the older installed pair. Source checks do not
+        // establish signing, installation or device acceptance.
+        def baselines = [
+            published: [gmsVersionCode: 254132102, vendingVersionCode: 84022702],
+            installed: [gmsVersionCode: 254132096, vendingVersionCode: 84022699]
+        ]
+        def assertUpgradeFrom = { Map candidate, Map baseline, String label ->
+            baseline.each { name, code ->
+                assert candidate[name] > code : "${name} must advance ${label} ${code}"
+            }
+        }
+        baselines.each { label, baseline ->
+            assertUpgradeFrom(allocated, baseline, label)
+            // These are valid range allocations but cannot advance this pair.
+            // Exercise each APK and baseline independently, including equality.
+            baseline.each { name, code ->
+                [code - 1, code].each { staleCode ->
+                    def stale = cyclonValidateVersion(release + [(name): staleCode], 40226)
+                    boolean rejected = false
+                    try {
+                        assertUpgradeFrom(stale, baseline, label)
+                    } catch (AssertionError expected) {
+                        rejected = true
+                    }
+                    assert rejected : "The ${label}-version floor accepted ${name}=${staleCode}"
+                }
+            }
+        }
         assert allocated.gmsCode == Integer.parseInt(release.reportedGmsVersion.replaceAll('\\.', ''))
         // Stay below Cloud Messaging's 26.12 gate until microG implements that service.
         assert allocated.gmsCode < 261200
+        // First delivery after the exhausted FakeStore block is valid; neither
+        // its compatibility version nor the reported GMS API version must rise.
+        assert cyclonValidateVersion(release + [vendingVersionCode: 84022700], 40226).vendingVersionCode == 84022700
         [
             [format: 1],
             [reportedGmsVersion: '25.41'],
@@ -35,7 +64,7 @@ tasks.register('testVersionAllocation') {
                 assert expected.message.contains('allocation')
             }
         }
-        println('Verified upgrade from the shipped APK versions, the Cloud Messaging ceiling and rejection of invalid allocations.')
+        println('Verified upgrade from the published and installed APK versions, the Cloud Messaging ceiling and rejection of invalid allocations.')
     }
 }
 
