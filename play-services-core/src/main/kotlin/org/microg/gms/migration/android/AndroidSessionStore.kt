@@ -10,7 +10,12 @@ import java.io.*
  * Files contain secrets and must not be copied into diagnostics or logged. */
 internal class AndroidSessionStore(private val directory: File, private val now: () -> Long = System::currentTimeMillis) {
     private fun file(uid: Int): AtomicFile { require(uid >= 0); return AtomicFile(File(directory,"session-$uid")) }
-    fun clear(uid: Int) = synchronized(LOCK) { file(uid).delete() }
+    fun clear(uid: Int) = synchronized(LOCK) { file(uid).delete(); launchedMarker(uid).delete() }
+    private fun launchedMarker(uid: Int) = File(directory,"launched-$uid")
+    /** Switch was started with this session. Its run has ended (copied or failed) by the time the owner opens the
+     * pairing screen again, so that screen pairs afresh instead of offering the old phone's spent pairing. */
+    fun markLaunched(uid: Int) = synchronized(LOCK) { runCatching { launchedMarker(uid).createNewFile() } }
+    fun launched(uid: Int): Boolean = synchronized(LOCK) { launchedMarker(uid).exists() }
     fun load(uid: Int): AndroidPostSetupState = synchronized(LOCK) {
         var expiryTime = 0L
         val retained = runCatching {
@@ -28,6 +33,7 @@ internal class AndroidSessionStore(private val directory: File, private val now:
     }
     fun commit(uid: Int, session: AndroidPostSetupState.VerifiedBootstrap) = synchronized(LOCK) {
         check(directory.exists() || directory.mkdirs())
+        launchedMarker(uid).delete()
         val hint = session.hint(); val secret = requireNotNull(hint.bytes(3)); val id = requireNotNull(hint.text(2)); require(id.toLong() > 0)
         val target = file(uid); val stream = target.startWrite()
         try {

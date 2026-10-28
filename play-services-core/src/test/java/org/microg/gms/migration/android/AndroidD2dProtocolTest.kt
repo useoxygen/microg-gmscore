@@ -137,6 +137,113 @@ class AndroidD2dProtocolTest {
         }
     }
 
+    /** The source's half of a classic connection up to both UKEY2 messages; returns its socket streams. */
+    private fun sourceUntilAcceptance(socket: Socket): Pair<DataInputStream, DataOutputStream> {
+        val input = DataInputStream(socket.getInputStream()); val out = DataOutputStream(socket.getOutputStream())
+        write(out, OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(V1Frame.newBuilder()
+            .setType(V1Frame.FrameType.CONNECTION_REQUEST).setConnectionRequest(ConnectionRequestFrame.newBuilder()
+                .setEndpointId("ABCD").setEndpointInfo(ByteString.copyFromUtf8("Source")))).build().toByteArray())
+        val source = Ukey2Handshake.forInitiator(Ukey2Handshake.HandshakeCipher.P256_SHA512)
+        write(out, source.nextHandshakeMessage); source.parseHandshakeMessage(read(input)); write(out, source.nextHandshakeMessage)
+        return input to out
+    }
+    private fun plainFrame(type: V1Frame.FrameType, build: V1Frame.Builder.() -> Unit = {}) = OfflineFrame.newBuilder()
+        .setVersion(OfflineFrame.Version.V1).setV1(V1Frame.newBuilder().setType(type).apply(build)).build().toByteArray()
+
+    /** 10-27 emulator run: the target dropped the link 30 s in, while the old phone's owner had not tapped Next yet. */
+    @Test fun anOwnerSlowerThanTheKeepAliveTimeoutStillConnects() {
+        ServerSocket(0).use { server ->
+            val pool = Executors.newFixedThreadPool(2); val timer = Executors.newSingleThreadScheduledExecutor()
+            try {
+                val peer = pool.submit<Int> {
+                    server.accept().use { socket ->
+                        val (input, out) = sourceUntilAcceptance(socket)
+                        socket.soTimeout = 100
+                        var keepAlives = 0; var accepted = false
+                        val until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(1_200) // three timeouts
+                        while (System.nanoTime() < until) {
+                            write(out, plainFrame(V1Frame.FrameType.KEEP_ALIVE) { keepAlive = KeepAliveFrame.getDefaultInstance() })
+                            try {
+                                val frame = ClassicNearbyChannel.parse(read(input))
+                                if (frame.type == V1Frame.FrameType.KEEP_ALIVE) keepAlives++
+                                if (frame.type == V1Frame.FrameType.CONNECTION_RESPONSE) accepted = true
+                            } catch (_: java.net.SocketTimeoutException) {}
+                        }
+                        assertTrue(accepted)
+                        write(out, plainFrame(V1Frame.FrameType.CONNECTION_RESPONSE) {
+                            connectionResponse = ConnectionResponseFrame.newBuilder().setStatus(0)
+                                .setResponse(ConnectionResponseFrame.ResponseStatus.ACCEPT).build() })
+                        keepAlives
+                    }
+                }
+                Socket("127.0.0.1", server.localPort).use { socket ->
+                    ClassicNearbyChannel(socket.getInputStream(), socket.getOutputStream()).use { target ->
+                        val (_, token) = target.receiveConnection()
+                        assertTrue(awaitAcceptance(target, { socket.close() }, timer, token, keepAliveMs = 100, timeoutMs = 400) { true })
+                        assertTrue(target.isConnected)
+                        assertFalse(target.sendPendingKeepAlive()) // never cleartext once encrypted
+                    }
+                }
+                assertTrue("the old phone must hear keep-alives while its owner decides", peer.get(10, TimeUnit.SECONDS) >= 3)
+            } finally { pool.shutdownNow(); timer.shutdownNow() }
+        }
+    }
+
+    @Test fun aPeerSilentPastTheKeepAliveTimeoutIsDropped() {
+        ServerSocket(0).use { server ->
+            val pool = Executors.newSingleThreadExecutor(); val timer = Executors.newSingleThreadScheduledExecutor()
+            try {
+                val peer = pool.submit { server.accept().use { socket -> sourceUntilAcceptance(socket); Thread.sleep(5_000) } }
+                Socket("127.0.0.1", server.localPort).use { socket ->
+                    ClassicNearbyChannel(socket.getInputStream(), socket.getOutputStream()).use { target ->
+                        val (_, token) = target.receiveConnection()
+                        val started = System.nanoTime()
+                        assertThrows(IOException::class.java) {
+                            awaitAcceptance(target, { socket.close() }, timer, token, keepAliveMs = 100, timeoutMs = 300) { true }
+                        }
+                        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3_000)
+                    }
+                }
+                peer.cancel(true)
+            } finally { pool.shutdownNow(); timer.shutdownNow() }
+        }
+    }
+
+    /** A keep-alive write that blocks on a stalled link must neither stop the silence watchdog nor the shared timer. */
+    @Test fun aStalledKeepAliveWriteClosesTheLinkAndLeavesTheTimerFree() {
+        ServerSocket(0).use { server ->
+            val pool = Executors.newSingleThreadExecutor(); val timer = Executors.newSingleThreadScheduledExecutor()
+            val release = java.util.concurrent.CountDownLatch(1); val closed = java.util.concurrent.CountDownLatch(1)
+            try {
+                pool.submit { server.accept().use { socket -> sourceUntilAcceptance(socket); release.await(10, TimeUnit.SECONDS) } }
+                Socket("127.0.0.1", server.localPort).use { socket ->
+                    var stall = false
+                    val out = object : FilterOutputStream(socket.getOutputStream()) {
+                        override fun write(b: ByteArray, off: Int, len: Int) {
+                            if (stall) { release.await(10, TimeUnit.SECONDS); throw IOException("stalled link closed") }
+                            out.write(b, off, len)
+                        }
+                        override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+                    }
+                    ClassicNearbyChannel(socket.getInputStream(), out).use { target ->
+                        val (_, token) = target.receiveConnection()
+                        stall = true
+                        val other = timer.schedule<Unit>({}, 600, TimeUnit.MILLISECONDS)
+                        val started = System.nanoTime()
+                        assertThrows(Exception::class.java) {
+                            awaitAcceptance(target, { closed.countDown(); release.countDown() }, timer, token,
+                                keepAliveMs = 100, timeoutMs = 400) {
+                                assertTrue(closed.await(5, TimeUnit.SECONDS)); false
+                            }
+                        }
+                        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 3_000)
+                        other.get(2, TimeUnit.SECONDS) // the timer ran other work during the stall
+                    }
+                }
+            } finally { release.countDown(); pool.shutdownNow(); timer.shutdownNow() }
+        }
+    }
+
     @Test fun unknownOfflineVersionIsRejected() {
         assertThrows(IllegalArgumentException::class.java) { ClassicNearbyChannel.parse(byteArrayOf(8, 0)) }
     }
