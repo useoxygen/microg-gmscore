@@ -142,20 +142,25 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
             return PlaySetupService.catalog(documents).apply { putAll(storeUpdateError()) }
         }
         val prepared = queue.control(6)
-        val calls = names.map { name -> lookups.submit<Bundle> { queue.bridge(1, name) } }
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45)
-        val documents = calls.mapIndexed { index, task ->
-            val result = try { task.get((deadline - System.nanoTime()).coerceAtLeast(1), TimeUnit.NANOSECONDS) }
-                catch (_: Exception) { task.cancel(true); MigrationInstallQueue.unavailable(names[index], "lookup_timeout").apply { putBoolean("recoverable", true) } }
+        fun preparationFailures(results: List<Bundle>) = results.onEach { result ->
             if (!prepared.getBoolean("ready") && result.getString("error") in setOf("anonymous_sign_in_required", "store_unavailable")) {
                 result.putBoolean("recoverable", true)
                 result.putString("error", prepared.getString("error", "store_unavailable"))
             }
-            result
+        }
+        val documents = preparationFailures(lookUp(names, deadline)).toMutableList()
+        // One more try for apps that failed for a passing reason (Play's 429, the network, a Google account still being
+        // set up, no anonymous session yet), while time is left: Switch drops whatever this batch does not list.
+        val retry = documents.indices.filter { documents[it].retryable() }
+        if (retry.isNotEmpty() && deadline - System.nanoTime() > TimeUnit.SECONDS.toNanos(RETRY_MIN_SECONDS)) {
+            preparationFailures(lookUp(retry.map { names[it] }, deadline)).forEachIndexed { at, result -> documents[retry[at]] = result }
         }
         queue.recordCatalog(documents)
         return PlaySetupService.catalog(documents).apply {
-            if (documents.any { it.getInt("availability") != 1 && it.getBoolean("recoverable") }) {
+            // Only a store outage fails the whole batch: Switch retries the operation and otherwise drops every app in
+            // it. One app the store could not check yet is left out on its own (its result stays retryable) instead.
+            if (documents.none { it.getInt("availability") == 1 } && documents.any { it.getBoolean("recoverable") }) {
                 // lqm.k/lqj consumes this operation-level error instead of filtering transient outages as incompatible apps.
                 putBundle("error", Bundle().apply {
                     putString("reason", "App Store is temporarily unavailable. Retry app matching.")
@@ -164,6 +169,14 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
             }
         }
     }
+    private fun lookUp(names: List<String>, deadline: Long): List<Bundle> {
+        val calls = names.map { name -> lookups.submit<Bundle> { queue.bridge(1, name) } }
+        return calls.mapIndexed { index, task ->
+            try { task.get((deadline - System.nanoTime()).coerceAtLeast(1), TimeUnit.NANOSECONDS) }
+            catch (_: Exception) { task.cancel(true); MigrationInstallQueue.unavailable(names[index], "lookup_timeout").apply { putBoolean("recoverable", true) } }
+        }
+    }
+    private fun Bundle.retryable() = getInt("availability") != 1 && getBoolean("recoverable") && getString("error") != "lookup_timeout"
     private fun select(documents: List<Bundle>) {
         validate(documents.map { requireNotNull(it.getString("package_name")) })
         queue.select(documents)
@@ -171,6 +184,8 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
     fun publish() = MigrationSetupReceivers.publish(queue)
     companion object {
         private val PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
+        /** Time left in the 45 s catalog deadline needed for a second lookup of apps that failed for a passing reason. */
+        private const val RETRY_MIN_SECONDS = 5L
         private fun validate(names: List<String>): List<String> {
             require(names.size <= 1000 && names.all { it.length <= 255 && PACKAGE.matches(it) })
             return names.distinct()

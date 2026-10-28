@@ -103,7 +103,10 @@ internal class MigrationInstallQueue(private val context: Context,
         val excluded = documents.filter { it.getInt("availability") != 1 }
         val names = documents.map { it.getString("package_name")!! }.toSet()
         edit.putStringSet("$id:excluded", (prefs.getStringSet("$id:excluded", emptySet()).orEmpty() - names) + excluded.map { it.getString("package_name")!! })
-        for (doc in documents) metadata(edit, id, doc)
+        for (doc in documents) {
+            metadata(edit, id, doc)
+            edit.putBoolean("$id:${doc.getString("package_name")}:recoverable", doc.getInt("availability") != 1 && doc.getBoolean("recoverable"))
+        }
         check(edit.commit())
     }
     private fun metadata(edit: android.content.SharedPreferences.Editor, id: String, doc: Bundle) {
@@ -164,10 +167,13 @@ internal class MigrationInstallQueue(private val context: Context,
             .putBoolean("$id:$name:acknowledged", true).putBoolean("$id:$name:owner_retry", false)
         check(edit.commit())
     }
-    fun retryDocuments(id: String = currentSessionId().orEmpty()): List<Bundle> = selected(id).filter { name ->
+    fun retryDocuments(id: String = currentSessionId().orEmpty()): List<Bundle> = (selected(id).filter { name ->
         prefs.getString("$id:$name:status", null) in setOf("failed", "cancelled", "unavailable", "owner_action_required") &&
             !prefs.getBoolean("$id:$name:ever_installed", false)
-    }.map { name -> document(id, name) }
+    } + recoverableExclusions(id)).map { name -> document(id, name) }
+    /** Apps Switch left out because the store could not check them in time; the owner may still add them here. */
+    private fun recoverableExclusions(id: String) = prefs.getStringSet("$id:excluded", emptySet()).orEmpty()
+        .filter { it !in selected(id) && prefs.getBoolean("$id:$it:recoverable", false) }.sorted()
     /** Whether Aurora can install with the phone's Google account, the fallback when the anonymous session fails. */
     fun ownerAccountSupported(): Boolean = control(7, Bundle()).getBoolean("owner_account_fallback")
     /** An owner Retry starts again with the anonymous session; the Google account fallback applies again after it. */
@@ -175,7 +181,11 @@ internal class MigrationInstallQueue(private val context: Context,
         require(id in sessions())
         val names = retryDocuments(id).map { it.getString("package_name")!! }.filter { packageName == null || it == packageName }
         if (names.isNotEmpty()) control(6, options(id).apply { putBoolean("force_refresh", true) })
+        // A left-out app joins the selection now; the install looks it up again, as for any selected app.
+        val added = recoverableExclusions(id).filter { it in names }
         val edit = prefs.edit().putStringSet("$id:pending", pending(id) + names)
+        if (added.isNotEmpty()) edit.putStringSet("$id:packages", selected(id) + added)
+            .putStringSet("$id:excluded", prefs.getStringSet("$id:excluded", emptySet()).orEmpty() - added.toSet())
         for (name in names) edit.putBoolean("$id:$name:terminal", false).putBoolean("$id:$name:uncertain", false)
             .putBoolean("$id:$name:owner_retry", true).putBoolean("$id:$name:owner_account", false)
             .putInt("$id:$name:throttle_count", 0)
@@ -218,6 +228,8 @@ internal class MigrationInstallQueue(private val context: Context,
         putBoolean("installed", false); putBoolean("terminal", true)
     }
     fun summary(id: String = currentSessionId().orEmpty()): Bundle = synchronized(LOCK) {
+        // Null when Aurora could not be asked: the refused download then waits for a later summary, not a failure.
+        val ownerFallback by lazy { control(7, Bundle()).takeUnless { it.getString("error") == "store_unavailable" }?.getBoolean("owner_account_fallback") }
         val results = selected(id).sorted().map { name ->
             val saved = document(id, name)
             if (saved.getBoolean("terminal") && name !in pending(id)) return@map saved
@@ -231,6 +243,21 @@ internal class MigrationInstallQueue(private val context: Context,
             val acknowledged = prefs.getBoolean("$id:$name:acknowledged", name !in pending(id) && prefs.contains("$id:$name:status"))
             val ownerRetry = prefs.getBoolean("$id:$name:owner_retry", false)
             val status = result.getString("status")
+            if (status == "failed" && result.getString("errorCode") in DOWNLOAD_REFUSALS && name !in pending(id) &&
+                !prefs.getBoolean("$id:$name:owner_account", false) && !prefs.getBoolean("$id:$name:ever_installed", false) &&
+                ownerFallback != false) {
+                if (ownerFallback == null) return@map result.apply { putBoolean("installed", false); putBoolean("terminal", false) }
+                // Play refused the anonymous session the download itself (run 6: "not purchased / unavailable in your
+                // country"). As on a Pixel, Play may install with the phone's Google account: queue it once more for that.
+                check(prefs.edit().putStringSet("$id:pending", pending(id) + name).putBoolean("$id:$name:owner_account", true)
+                    .putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:terminal", false)
+                    .putInt("$id:$name:throttle_count", 0).commit())
+                result.putString("status", "queued"); result.remove("error"); result.remove("errorCode")
+                result.putBoolean("installed", false); result.putBoolean("terminal", false)
+                save(name, result, id = id)
+                schedule()
+                return@map result
+            }
             if (removed(result) || (prefs.getBoolean("$id:$name:ever_installed", false) &&
                     !satisfies(name, result, id) && result.getString("error") != "store_unavailable")) {
                 result = removedResult(result)
@@ -333,6 +360,8 @@ internal class MigrationInstallQueue(private val context: Context,
                 putLong("minimum_version_code", prefs.getLong("$id:$name:expectedVersion", 0))
                 putBoolean("owner_approved_retry", ownerRetry)
                 putBoolean("owner_account_approved", prefs.getBoolean("$id:$name:owner_account", false))
+                // summary() queues a download Play refuses the anonymous session once more for the Google account.
+                putBoolean("owner_retry_on_refusal", !prefs.getBoolean("$id:$name:owner_account", false))
             })
         } else current
         if (result.getString("error") == "store_unavailable") return false
@@ -389,6 +418,8 @@ internal class MigrationInstallQueue(private val context: Context,
         private const val MAX_RATE_LIMITED = 3
         /** The anonymous session's own limits: Play throttling it, not listing the app in its country, or no session. */
         private val ANONYMOUS_FAILURES = setOf(RATE_LIMITED, "not_found", "anonymous_sign_in_required", "not_signed_in", "session_expired")
+        /** Aurora's codes for Play refusing the anonymous session a download it had queued (DownloadFailure). */
+        private val DOWNLOAD_REFUSALS = setOf("app_not_purchased", RATE_LIMITED)
         private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
         private val TERMINAL = setOf("failed", "cancelled", "unavailable", "removed", "owner_action_required")
         fun unavailable(name: String, reason: String) = Bundle().apply {
