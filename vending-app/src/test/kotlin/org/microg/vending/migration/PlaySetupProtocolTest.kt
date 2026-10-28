@@ -217,6 +217,23 @@ class PlaySetupProtocolTest {
         assertEquals(1, calls.count { it == 1 to APP })
     }
 
+    @Test fun theOwnerCanStillAddAnAppSwitchLeftOutForAPassingFailure() {
+        catalog[MISSING] = MigrationInstallQueue.unavailable(MISSING, "rate_limited").apply { putBoolean("recoverable", true) }
+        bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        select()
+        val id = queue.currentSessionId()!!
+        assertEquals(listOf(MISSING), queue.retryDocuments(id).map { it.getString("package_name") })
+        queue.retry(id, MISSING)
+        assertTrue(MISSING in queue.selected(id)); assertTrue(MISSING in queue.pending(id))
+    }
+
+    @Test fun anAppThatIsNotOnPlayCannotBeAddedLater() {
+        catalog[MISSING] = MigrationInstallQueue.unavailable(MISSING, "not_found")
+        bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        select()
+        assertTrue(queue.retryDocuments(queue.currentSessionId()!!).isEmpty())
+    }
+
     @Test fun anAppPlayRefusedForAMomentIsListedAfterItsSecondLookup() {
         lookups[MISSING] = ArrayDeque(listOf(MigrationInstallQueue.unavailable(MISSING, "rate_limited").apply { putBoolean("recoverable", true) }))
         val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }

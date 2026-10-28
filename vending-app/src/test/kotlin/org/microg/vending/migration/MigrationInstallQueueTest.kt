@@ -108,6 +108,32 @@ class MigrationInstallQueueTest {
             assertEquals(2, installs.size)
         }
     }
+    @Test fun anAuroraThatCannotBeAskedLeavesTheRefusedDownloadOpenUntilItCan() {
+        var reachable = false
+        var download = state("none")
+        val installs = mutableListOf<Boolean>()
+        val queue = MigrationInstallQueue(context, { _, _ ->
+            if (reachable) Bundle().apply { putBoolean("owner_account_fallback", true) } else throw IllegalStateException("restarting")
+        }) { operation, _ -> if (operation == 3) Bundle(download) else state("queued").also { download = it } }
+            .apply { sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") } }
+        queue.select(selected()); queue.dispatch("org.example.app")
+        download = state("failed").apply { putString("errorCode", "app_not_purchased") }
+        val waiting = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertFalse(waiting.getBoolean("terminal"))
+        reachable = true
+        val requeued = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertEquals("queued", requeued.getString("status"))
+        assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(false, true), installs)
+    }
+    @Test fun onlyTheAnonymousAttemptAsksAuroraToLeaveARefusalToFakeStore() {
+        val promises = mutableListOf<Boolean>()
+        val queue = fallbackQueue(true, mutableListOf()) { owner -> if (owner) state("queued") else MigrationInstallQueue.unavailable("org.example.app", "not_found") }
+            .apply { val sent = sentOptions; sentOptions = { operation, options -> sent?.invoke(operation, options); if (operation == 2) promises += options!!.getBoolean("owner_retry_on_refusal") } }
+        queue.select(selected())
+        queue.dispatch("org.example.app"); queue.dispatch("org.example.app")
+        assertEquals(listOf(true, false), promises)
+    }
     @Test fun aRefusedDownloadStaysAFailureWithoutAuroraSupportOrForOtherErrors() {
         for ((supported, code) in listOf(false to "app_not_purchased", true to "install_failed")) {
             clear()
