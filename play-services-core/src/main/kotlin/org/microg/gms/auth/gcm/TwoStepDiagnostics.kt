@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.gcm
 
+import java.io.File
 import java.util.Locale
 import kotlin.random.Random
 
@@ -27,6 +28,8 @@ internal enum class TwoStepEvent {
     MALFORMED,
     /** No single local account matches the notification's Google user id. */
     ACCOUNT_NOT_MATCHED,
+    /** Exactly one local account has the prompt's Google user id; `index` is its position among the local accounts. */
+    MATCHED,
     FETCH_FAILED,
     FETCHED,
     /** The fetched notification lacks the content or the confirmation page's intent. */
@@ -40,6 +43,8 @@ internal enum class TwoStepEvent {
     READ_STATE_FAILED,
     /** The owner opened a prompt; it was reported as opened and taken down. */
     OPENED,
+    /** Google's page opened without the owner's tap, as GmsCore asked while the phone was in use (nothing reported). */
+    OPENED_DIRECT,
     /** The owner swiped a prompt away; it was reported as dismissed. */
     DISMISSED,
     /** Google asked to take a prompt down (answered elsewhere or withdrawn); `count` is how many were removed. */
@@ -120,5 +125,51 @@ internal data class TwoStepReadiness(
         )
         diagnostics.event(TwoStepEvent.READINESS, null, *details)
         if (prefOn && !registered) diagnostics.event(TwoStepEvent.NOT_REGISTERED, null, *details)
+    }
+}
+
+/** How many diagnostic lines the journal keeps. A prompt with two resends writes about fifteen. */
+internal const val TWO_STEP_JOURNAL_LINES = 400
+
+/**
+ * The last [maxLines] diagnostic lines, kept in a private file so a field failure can still be read after logcat has
+ * rotated (useoxygen/cyclon#842: an unnoticed prompt's resends could not be traced a few hours later). Lines come
+ * from [TwoStepDiagnostics], so they hold only event names, numbers, booleans and enum constants; each gets the
+ * wall-clock time in milliseconds. Read it with `adb shell dumpsys activity service
+ * com.google.android.gms/org.microg.gms.gcm.McsService`. A failed write is ignored: diagnostics never stop a prompt.
+ */
+internal class TwoStepJournal(private val file: File, private val maxLines: Int = TWO_STEP_JOURNAL_LINES, private val now: () -> Long = { System.currentTimeMillis() }) {
+    /** The last readiness snapshot written; readiness is logged on every push connection and mostly unchanged. */
+    private val lastSnapshot = mutableMapOf<String, String>()
+
+    fun append(line: String) {
+        synchronized(LOCK) {
+            // An unchanged readiness snapshot is not written again, so reconnects cannot push prompt events out.
+            val snapshot = line.substringBefore(' ').takeIf { it == "event=readiness" || it == "event=not_registered" }
+            if (snapshot != null) {
+                if (lastSnapshot[snapshot] == line) return
+                lastSnapshot[snapshot] = line
+            }
+            try {
+                val kept = (read() + "${now()} $line").takeLast(maxLines)
+                val temp = File(file.parentFile, file.name + ".tmp")
+                temp.writeText(kept.joinToString("\n", postfix = "\n"))
+                if (!temp.renameTo(file)) temp.delete()
+            } catch (e: Exception) {
+                // Diagnostics must never get in the way of a prompt.
+            }
+        }
+    }
+
+    fun read(): List<String> = synchronized(LOCK) {
+        try {
+            if (file.exists()) file.readLines().filter { it.isNotBlank() } else emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private companion object {
+        val LOCK = Any()
     }
 }

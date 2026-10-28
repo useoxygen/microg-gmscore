@@ -1,5 +1,6 @@
 // Modified by Cyclon in 2026: log extra names only; prompt extras and account names stay out of logs; a Google prompt
-// is reported as opened once, when its page opens.
+// is reported as opened once, when its page opens from a tap; a page opened directly records that it opened; prompt
+// pages get their own task (PromptPageActivity).
 /*
  * SPDX-FileCopyrightText: 2023 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -51,6 +52,10 @@ import org.microg.gms.accountsettings.ui.bridge.OcUiBridge
 import org.microg.gms.auth.AuthConstants
 import org.microg.gms.auth.gcm.ACTION_GCM_NOTIFY_COMPLETE
 import org.microg.gms.auth.gcm.EXTRA_GNOTS_IDENTIFIER
+import org.microg.gms.auth.gcm.EXTRA_PROMPT_OPENED_DIRECT
+import org.microg.gms.auth.gcm.TwoStepEvent
+import org.microg.gms.auth.gcm.twoStepDiagnostics
+import org.microg.gms.auth.gcm.twoStepJournal
 import org.microg.gms.common.Constants
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.gcm.EXTRA_NOTIFICATION_ACCOUNT
@@ -169,7 +174,7 @@ private val ACTION_TO_SCREEN_ID = hashMapOf(
     ACTION_LOCATION_SHARING to 210,
 )
 
-class MainActivity : AppCompatActivity() {
+open class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
 
@@ -216,6 +221,11 @@ class MainActivity : AppCompatActivity() {
         // Opened from a Google prompt notification: report it as opened now, as Google Play services does on tap.
         verifyNotificationReported = savedInstanceState?.getBoolean(STATE_VERIFY_NOTIFICATION_REPORTED) ?: false
         intent.getStringExtra(EXTRA_ACCOUNT_NAME)?.let { updateVerifyNotification(it) }
+        // Opened by GmsCore without a tap: proof for diagnostics that Android allowed the start. Nothing is reported.
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_PROMPT_OPENED_DIRECT, false)) {
+            twoStepJournal()
+            twoStepDiagnostics.event(TwoStepEvent.OPENED_DIRECT)
+        }
 
         if (screenId in SCREEN_ID_TO_URL) {
             val screenUrl = screenUrl ?: SCREEN_ID_TO_URL[screenId]?.run {

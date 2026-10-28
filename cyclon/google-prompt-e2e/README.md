@@ -30,6 +30,16 @@ Modes:
 
 Google sends the prompt to every phone signed in to the account, not only the one under test. A phone that is still on a build before #40 reports "dismissed" as soon as it shows a prompt, and Google then withdraws the prompt from all devices about 1.5 s later (`dismissed_remote`). For tests of expiry or of prompts staying up, keep the test account only on phones with #40.
 
+`resend.mjs SERIAL 230 40 100` leaves one prompt unanswered and clicks Google's "Resend it" after 40 and 100 s. It prints the ids of the posted prompt notifications over time; read the `Gms2FA` events afterwards.
+
+With the full-screen change (`claude/google-prompt-fullscreen-resend`), an unlocked phone in use opens Google's page as soon as the prompt arrives (`event=opened_direct`). `e2e.mjs` still taps the notification; that page replaces the first one and reports the prompt as opened.
+
+The route's events are also kept in a journal that survives logcat rotation (last 400 lines, epoch-millisecond times):
+
+```sh
+adb -s SERIAL shell dumpsys activity service com.google.android.gms/org.microg.gms.gcm.McsService
+```
+
 Many recoveries or denials in a row make Google pause prompts for the account for a few hours ("Too many failed attempts"). Wrong passwords count too. The script then fails with a clear message. Keep runs few, for example before a microG release.
 
 ## Reading a failure
@@ -54,3 +64,10 @@ The phone is located by screenshot OCR because Cyclon phones block `uiautomator 
   - An unanswered prompt stayed up until Google's expiry (`timeout_min=2`), then was removed and reported as dismissed.
   - Approve and deny passed; the phone reported "opened" when the page opened.
   - A push delivered 4 minutes late was not shown (`event=expired`).
+
+## Results on 2026-10-28 (resend)
+
+Dev 7a (GmsCore 254132101, before the full-screen change), one Google account, `resend.mjs` with two resends:
+- Each "Resend it" reached the phone about 3 s later as a new push with a **new GNOTS unique id**. Each was fetched and shown as a new notification (`received`, `fetched count=1`, `shown timeout_min=2`). Nothing was deduplicated or removed.
+- Each notification was heads-up for about 5.7 s (`airtimeMs` in `dumpsys notification`) and then stayed only in the shade. This matches the field report from the founders' Pixel 8a, where the owner did not notice the prompt.
+- Google named the recipients as "your Android, Pixel 7a, and 2 more", so the test account is signed in on other phones too.

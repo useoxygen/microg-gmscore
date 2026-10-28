@@ -1,4 +1,5 @@
-// Modified by Cyclon in 2026: transport logs name message types and sizes only, never content (useoxygen/cyclon#842).
+// Modified by Cyclon in 2026: transport logs name message types and sizes only, never content; dumpsys prints the Google
+// prompt route journal (useoxygen/cyclon#842).
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -233,6 +234,12 @@ public class McsService extends Service implements Handler.Callback {
         closeAll();
         database.close();
         super.onDestroy();
+    }
+
+    // Cyclon: the Google prompt route's diagnostics journal survives logcat rotation (useoxygen/cyclon#842).
+    @Override
+    protected void dump(java.io.FileDescriptor fd, java.io.PrintWriter writer, String[] args) {
+        org.microg.gms.auth.gcm.GcmReceiverServiceKt.dumpTwoStepJournal(this, writer);
     }
 
     @Override

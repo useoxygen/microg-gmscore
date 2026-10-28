@@ -1,6 +1,6 @@
 // Modified by Cyclon in 2026: deliver GmsCore messages before registration upkeep, allow GmsCore's own registration
 // while the owner's two-step setting is on, prompt registrations only while it is on, redacted logs and two-step
-// readiness diagnostics.
+// readiness diagnostics, also kept in the route's journal.
 /**
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -37,6 +37,7 @@ import org.microg.gms.auth.gcm.admitTwoStepMessage
 import org.microg.gms.auth.gcm.mayGrantOwnPushPermission
 import org.microg.gms.auth.gcm.twoStepChannelAllowed
 import org.microg.gms.auth.gcm.twoStepDiagnostics
+import org.microg.gms.auth.gcm.twoStepJournal
 import org.microg.gms.auth.gcm.twoStepNotificationsAllowed
 import org.microg.gms.checkin.LastCheckinInfo
 import org.microg.gms.common.Constants
@@ -137,6 +138,7 @@ class GcmInGmsService : LifecycleService() {
     /** Logs whether Google's two-step prompts can reach this phone; booleans and counts only. */
     private suspend fun logTwoStepReadiness() = withContext(Dispatchers.IO) {
         if (!AuthPrefs.shouldReceiveTwoStepVerification(this@GcmInGmsService)) return@withContext
+        twoStepJournal()
         val database = GcmDatabase(this@GcmInGmsService)
         val app = try { database.getApp(Constants.GMS_PACKAGE_NAME) } finally { database.close() }
         TwoStepReadiness(

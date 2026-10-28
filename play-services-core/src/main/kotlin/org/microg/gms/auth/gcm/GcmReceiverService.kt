@@ -1,5 +1,6 @@
-// Modified by Cyclon in 2026: redacted route diagnostics, tap-to-open prompt notification instead of a background activity start,
-// SecureGcm messages handed to the native AuthZen route, Google Play services' read states, expiry and remote dismissal.
+// Modified by Cyclon in 2026: redacted route diagnostics kept in a private journal, a prompt notification with a full-screen
+// intent and Google's page opened at once while the phone is in use, SecureGcm messages handed to the native AuthZen
+// route, Google Play services' read states, expiry and remote dismissal.
 /**
  * SPDX-FileCopyrightText: 2026 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -10,6 +11,7 @@ package org.microg.gms.auth.gcm
 import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +21,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Base64
 import android.util.DisplayMetrics
 import android.util.Log
@@ -26,11 +29,12 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.PendingIntentCompat
+import androidx.core.content.ContextCompat
 import androidx.legacy.content.WakefulBroadcastReceiver
 import com.google.android.gms.R
 import org.microg.gms.accountsettings.ui.EXTRA_ACCOUNT_NAME
 import org.microg.gms.accountsettings.ui.KEY_NOTIFICATION_ID
-import org.microg.gms.accountsettings.ui.MainActivity
+import org.microg.gms.accountsettings.ui.PromptPageActivity
 import org.microg.gms.auth.AuthConstants
 import org.microg.gms.auth.AuthPrefs
 import org.microg.gms.auth.authzen.dispatchAuthZenMessage
@@ -56,6 +60,7 @@ import org.microg.gms.gcm.ReadStateList
 import org.microg.gms.gcm.ReceiverService
 import org.microg.gms.gcm.createGrpcClient
 import org.microg.gms.profile.Build.VERSION.SDK_INT
+import java.io.File
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.atomic.AtomicInteger
@@ -63,6 +68,8 @@ import java.util.concurrent.atomic.AtomicInteger
 private const val TAG = "Gms2FA"
 private const val CHANNEL_ID = "gcm_notification"
 private const val NOTIFICATION_TAG = "two_step_verification"
+/** Privileged; lets GmsCore open Google's page while another app is in front, like Google Play services. */
+private const val PERMISSION_START_ACTIVITIES_FROM_BACKGROUND = "android.permission.START_ACTIVITIES_FROM_BACKGROUND"
 
 const val ACTION_GCM_NOTIFY_COMPLETE = "org.microg.gms.gcm.NOTIFY_COMPLETE"
 /** Sent by a prompt notification's delete intent when the owner swipes it away. */
@@ -71,11 +78,46 @@ const val ACTION_TWO_STEP_DISMISSED = "org.microg.gms.gcm.TWO_STEP_DISMISSED"
 const val EXTRA_GNOTS_IDENTIFIER = "org.microg.gms.gcm.GNOTS_IDENTIFIER"
 /** The prompt's GNOTS unique id in the notification's extras, so a remote dismissal finds it after a restart. */
 private const val EXTRA_GNOTS_UNIQUE_ID = "org.microg.gms.gcm.GNOTS_UNIQUE_ID"
+/** The prompt's local account in the notification's extras, so a newer prompt for it can replace this one. */
+private const val EXTRA_PROMPT_ACCOUNT = "org.microg.gms.gcm.PROMPT_ACCOUNT"
+/** Set on a page GmsCore opened without the owner's tap, so the page can record that it really opened. */
+const val EXTRA_PROMPT_OPENED_DIRECT = "org.microg.gms.gcm.PROMPT_OPENED_DIRECT"
 
-internal val twoStepDiagnostics = TwoStepDiagnostics { Log.i(TAG, it) }
+/**
+ * Google's page for a prompt, opened for the account the prompt was routed to, whatever the fetched extras name. All
+ * prompt pages share one task (PromptPageActivity's own affinity), and each start clears it: a newer prompt's page
+ * replaces the older one instead of piling up tasks, and the owner cannot answer a stale prompt first.
+ */
+internal fun Context.promptPageIntent(accountName: String, extras: List<Pair<String?, String?>>): Intent =
+    Intent(this, PromptPageActivity::class.java).apply {
+        `package` = Constants.GMS_PACKAGE_NAME
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        extras.forEach { (key, value) -> if (key != null) putExtra(key, value) }
+        putExtra(EXTRA_ACCOUNT_NAME, accountName)
+    }
+
+@Volatile
+private var twoStepJournalInstance: TwoStepJournal? = null
+
+/** The process's diagnostics journal (see [TwoStepJournal]); diagnostics written before it exists go to logcat only. */
+internal fun Context.twoStepJournal(): TwoStepJournal = twoStepJournalInstance ?: synchronized(TwoStepJournal::class.java) {
+    twoStepJournalInstance ?: TwoStepJournal(File(ContextCompat.getNoBackupFilesDir(applicationContext ?: this), "two_step_journal.txt")).also { twoStepJournalInstance = it }
+}
+
+/** Prints the journal for `dumpsys` (McsService runs in the same persistent process); times are epoch milliseconds. */
+internal fun Context.dumpTwoStepJournal(writer: java.io.PrintWriter) {
+    writer.println("Google prompt route journal (Gms2FA), oldest first:")
+    twoStepJournal().read().forEach { writer.println("  $it") }
+}
+
+internal val twoStepDiagnostics = TwoStepDiagnostics { line ->
+    Log.i(TAG, line)
+    twoStepJournalInstance?.append(line)
+}
 
 class GcmReceiver : WakefulBroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        context.twoStepJournal()
         // SecureGcm (`P`) messages belong to the native AuthZen route, which is off by default and only logs them.
         if (intent.isSecureGcmCandidate()) {
             val pending = goAsync()
@@ -99,6 +141,7 @@ class GcmReceiverService : ReceiverService(TAG) {
 
     override fun onCreate() {
         super.onCreate()
+        twoStepJournal()
         registerTwoStepNotificationChannel()
     }
 
@@ -144,6 +187,7 @@ class GcmReceiverService : ReceiverService(TAG) {
             setReadState = { account, notification, status -> notification.identifier?.let { sendReadState(accountManager, account, it, status) } },
             show = { account, notification, timeoutMillis -> showNotification(account, notification, timeoutMillis) },
             dismiss = { uniqueId -> cancelPrompts(uniqueId) },
+            retireOlder = { account -> retireOlderPrompts(account) },
             decodeBase64 = { Base64.decode(it, DEFAULT_FLAGS) },
         ).route(
             intent.getStringExtra(GcmConstants.EXTRA_GCM_BODY),
@@ -153,26 +197,33 @@ class GcmReceiverService : ReceiverService(TAG) {
     }
 
     /**
-     * Posts a high-importance notification that opens Google's confirmation page on tap. Nothing in it approves the
-     * sign-in, and nothing is started in the background: Android blocks background activity starts, and the owner
-     * should choose when to look. The owner's notification permission and channel settings are respected.
+     * Shows a prompt the way Google Play services does: Google's confirmation page opens at once, and a high-importance
+     * notification keeps the prompt findable in the shade. While the owner uses the unlocked phone (and the prompt
+     * channel and Do Not Disturb let it interrupt), the page is started directly; GmsCore is privileged and holds
+     * START_ACTIVITIES_FROM_BACKGROUND (the Cyclon image grants it in privapp-permissions-cyclon-gmscore.xml), since
+     * Android blocks other background activity starts. Otherwise, locked or dark, the notification's full-screen intent
+     * wakes the screen; the page is not shown over the lock screen, so the owner unlocks first and the lock screen only
+     * shows the generic public version. With notifications blocked, nothing is shown or opened.
+     *
+     * All prompt pages share one task ([promptPageIntent]); a newer prompt's page replaces the older one.
+     *
+     * Nothing here approves the sign-in; the owner decides on Google's page. A page opened without the owner's tap
+     * (directly or by the full-screen intent) does not report the prompt as opened and leaves the notification up;
+     * only a tap on the notification does, as before.
      */
-    private fun showNotification(account: Account, notificationData: NotificationData, timeoutMillis: Long): ShowResult {
-        val content = notificationData.content ?: return ShowResult.NOT_SHOWABLE
-        val intentExtras = notificationData.intentActions?.primaryPayload?.extras ?: return ShowResult.NOT_SHOWABLE
-        if (!twoStepNotificationsAllowed()) return ShowResult.NOTIFICATIONS_BLOCKED
-        val notificationId = notificationIdGenerator.incrementAndGet()
+    private fun showNotification(account: Account, notificationData: NotificationData, timeoutMillis: Long): ShowOutcome {
+        val content = notificationData.content ?: return ShowOutcome(ShowResult.NOT_SHOWABLE)
+        val intentExtras = notificationData.intentActions?.primaryPayload?.extras ?: return ShowOutcome(ShowResult.NOT_SHOWABLE)
+        if (!twoStepNotificationsAllowed()) return ShowOutcome(ShowResult.NOTIFICATIONS_BLOCKED)
+        val notificationId = promptNotificationId(notificationData.identifier?.uniqueId) { notificationIdGenerator.incrementAndGet() }
         val identifier = notificationData.identifier?.let { Base64.encodeToString(it.encode(), DEFAULT_FLAGS) }
-        val intent = Intent(this, MainActivity::class.java).apply {
-            `package` = Constants.GMS_PACKAGE_NAME
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
-            intentExtras.forEach { putExtra(it.key, it.value_) }
-            // The page opens for the account the notification was routed to, whatever the fetched extras name.
-            putExtra(EXTRA_ACCOUNT_NAME, account.name)
+        val pageExtras = intentExtras.map { it.key to it.value_ }
+        // Tapping the notification reports the prompt as opened and takes the notification down (MainActivity).
+        val tapIntent = promptPageIntent(account.name, pageExtras).apply {
             putExtra(KEY_NOTIFICATION_ID, notificationId)
             putExtra(EXTRA_GNOTS_IDENTIFIER, identifier)
         }
-        val pendingIntent = PendingIntentCompat.getActivity(this, notificationId, intent, PendingIntent.FLAG_UPDATE_CURRENT, false)
+        val pendingIntent = PendingIntentCompat.getActivity(this, notificationId, tapIntent, PendingIntent.FLAG_UPDATE_CURRENT, false)
         val dismissIntent = Intent(ACTION_TWO_STEP_DISMISSED).apply {
             setClass(this@GcmReceiverService, GcmReceiver::class.java)
             putExtra(KEY_NOTIFICATION_ID, notificationId)
@@ -180,6 +231,18 @@ class GcmReceiverService : ReceiverService(TAG) {
             putExtra(EXTRA_GNOTS_IDENTIFIER, identifier)
         }
         val deletePendingIntent = PendingIntentCompat.getBroadcast(this, notificationId, dismissIntent, PendingIntent.FLAG_UPDATE_CURRENT, false)
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        val presentation = promptPresentation(
+            interactive = getSystemService(PowerManager::class.java)?.isInteractive == true,
+            keyguardLocked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false,
+            fullScreenAllowed = fullScreenIntentAllowed(),
+            backgroundStartAllowed = checkSelfPermission(PERMISSION_START_ACTIVITIES_FROM_BACKGROUND) == PackageManager.PERMISSION_GRANTED,
+            channelAlerts = Build.VERSION.SDK_INT < 26 ||
+                (notificationManager?.getNotificationChannel(CHANNEL_ID)?.importance ?: 0) >= NotificationManager.IMPORTANCE_HIGH,
+            interruptionsAllowed = notificationManager?.currentInterruptionFilter.let {
+                it == NotificationManager.INTERRUPTION_FILTER_ALL || it == NotificationManager.INTERRUPTION_FILTER_UNKNOWN
+            },
+        )
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.cyclon_two_step_notification_public_title))
             .setContentText(getString(R.string.cyclon_two_step_notification_public_text))
@@ -193,19 +256,46 @@ class GcmReceiverService : ReceiverService(TAG) {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
             .setLocalOnly(true)
-            .setOnlyAlertOnce(true)
             .setContentIntent(pendingIntent)
             .setDeleteIntent(deletePendingIntent)
-            .addExtras(Bundle().apply { putString(EXTRA_GNOTS_UNIQUE_ID, notificationData.identifier?.uniqueId) })
+            .addExtras(Bundle().apply {
+                putString(EXTRA_GNOTS_UNIQUE_ID, notificationData.identifier?.uniqueId)
+                putString(EXTRA_PROMPT_ACCOUNT, account.name)
+            })
             .setAutoCancel(true)
             .setTimeoutAfter(timeoutMillis)
             .setSmallIcon(R.drawable.ic_google_logo)
+        if (presentation.fullScreen) {
+            // Its own request code (negative ids), so it does not replace the tap intent's extras.
+            val fullScreenIntent = PendingIntentCompat.getActivity(this, -notificationId, promptPageIntent(account.name, pageExtras), PendingIntent.FLAG_UPDATE_CURRENT, false)
+            builder.setFullScreenIntent(fullScreenIntent, true)
+        }
         try {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_TAG, notificationId, builder.build())
         } catch (e: SecurityException) {
-            return ShowResult.NOTIFICATIONS_BLOCKED
+            return ShowOutcome(ShowResult.NOTIFICATIONS_BLOCKED)
         }
-        return ShowResult.SHOWN
+        // Android may still refuse the start without an error; the page records `opened_direct` when it really opens.
+        val openAttempted = presentation.openNow && try {
+            startActivity(promptPageIntent(account.name, pageExtras).putExtra(EXTRA_PROMPT_OPENED_DIRECT, true))
+            true
+        } catch (e: Exception) {
+            false
+        }
+        return ShowOutcome(ShowResult.SHOWN, fullScreen = presentation.fullScreen, openAttempted = openAttempted)
+    }
+
+    /**
+     * Takes down the shown prompts for [account], before a newer one for it is posted. Cancelling does not run their
+     * delete intents, so nothing is reported to Google for them.
+     */
+    private fun retireOlderPrompts(account: Account): Int {
+        val manager = getSystemService(NotificationManager::class.java) ?: return 0
+        val matches = manager.activeNotifications.filter {
+            it.tag == NOTIFICATION_TAG && it.notification.extras.getString(EXTRA_PROMPT_ACCOUNT) == account.name
+        }
+        matches.forEach { manager.cancel(it.tag, it.id) }
+        return matches.size
     }
 
     /** Takes down the shown prompts with this GNOTS unique id, found by their extras so it works after a restart. */
@@ -305,6 +395,12 @@ internal fun Context.twoStepNotificationsAllowed(): Boolean {
     if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
     if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return false
     return twoStepChannelAllowed() != false
+}
+
+/** Whether a prompt notification may carry a full-screen intent (Android 14+ lets the owner revoke it per app). */
+internal fun Context.fullScreenIntentAllowed(): Boolean {
+    if (Build.VERSION.SDK_INT < 34) return true
+    return getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() == true
 }
 
 /** Whether the prompt channel is on, or null when it does not exist yet (or before Android 8). */
