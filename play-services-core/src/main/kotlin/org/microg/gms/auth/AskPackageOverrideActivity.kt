@@ -84,13 +84,15 @@ class AskPackageOverrideActivity : AppCompatActivity(), OnCancelListener, OnClic
             organization.trim().trimEnd('.')
         }.getOrNull() ?: return finishResult(RESULT_CANCELED)
         val requestingPackageLabel = runCatching { packageManager.getApplicationLabel(requestingPackage) }.getOrNull() ?: requestingPackage
+        // The store wording only fits a request to act as the Play Store; any other identity gets its own.
+        val store = overridePackage == "com.android.vending"
         val alertDialog = buildAlertDialog()
             .setOnCancelListener(this)
             .setPositiveButton(R.string.allow, this)
             .setNegativeButton(R.string.deny, this)
             .setIcon(R.drawable.ic_manage_accounts)
-            .setTitle(HtmlCompat.fromHtml(getString(R.string.auth_package_override_store_title, Html.escapeHtml(requestingPackageLabel), Html.escapeHtml(accountName), Html.escapeHtml(overridePackageLabel)), HtmlCompat.FROM_HTML_MODE_COMPACT))
-            .setMessage(HtmlCompat.fromHtml(getString(R.string.auth_package_override_store_message, Html.escapeHtml(requestingPackageLabel), Html.escapeHtml(accountName), Html.escapeHtml(overridePackageLabel)), HtmlCompat.FROM_HTML_MODE_COMPACT))
+            .setTitle(HtmlCompat.fromHtml(getString(if (store) R.string.auth_package_override_store_title else R.string.auth_package_override_app_title, Html.escapeHtml(requestingPackageLabel), Html.escapeHtml(accountName), Html.escapeHtml(overridePackageLabel)), HtmlCompat.FROM_HTML_MODE_COMPACT))
+            .setMessage(HtmlCompat.fromHtml(getString(if (store) R.string.auth_package_override_store_message else R.string.auth_package_override_app_message, Html.escapeHtml(requestingPackageLabel), Html.escapeHtml(accountName), Html.escapeHtml(overridePackageLabel)), HtmlCompat.FROM_HTML_MODE_COMPACT))
             .create()
         alertDialog.setCanceledOnTouchOutside(false)
         alertDialog.show()

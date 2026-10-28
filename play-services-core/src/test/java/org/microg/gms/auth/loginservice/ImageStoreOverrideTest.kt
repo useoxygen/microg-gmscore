@@ -37,6 +37,10 @@ class ImageStoreOverrideTest {
         assertFalse(AccountAuthenticator.isImageStore(context, "org.example.missing", "com.android.vending"))
     }
 
+    @Test fun anImageWithoutTheStoreAsksForThatName() {
+        assertFalse(AccountAuthenticator.isImageStore(context, "com.aurora.store", "com.android.vending")) // not installed
+    }
+
     @Test fun theImagesStoreStillAsksToActAsAnyOtherApp() {
         install("com.aurora.store", system = true)
         assertFalse(AccountAuthenticator.isImageStore(context, "com.aurora.store", "com.google.android.gm"))

@@ -114,7 +114,8 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
 
     /**
      * Whether [requestingPackage] is an app store the image ships, asking to act as the Play Store. A system app can
-     * only be updated with its image signing key, so the package name of a system app identifies the image's own copy.
+     * only be updated with the signing identity of its preinstalled APK, so the package name of a system app identifies
+     * the image's own copy.
      */
     static boolean isImageStore(Context context, String requestingPackage, String overridePackage) {
         if (!IMAGE_STORES.contains(requestingPackage) || !"com.android.vending".equals(overridePackage)) return false;
