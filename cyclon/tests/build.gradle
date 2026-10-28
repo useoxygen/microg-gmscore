@@ -24,7 +24,7 @@ tasks.register('testVersionAllocation') {
             [gmsVersionCode: 252432076],
             [gmsVersionCode: (allocated.gmsCode * 1000 + 1000)],
             [vendingVersionCode: 84022634],
-            [vendingVersionCode: 84022700],
+            [vendingVersionCode: 84022800],
             [gmsVersionCode: "${allocated.gmsVersionCode}"],
             [upstreamTag: 'v0.3.17']
         ].each { change ->
