@@ -28,6 +28,16 @@ class RetainedSessionUseTest {
         assertFalse(RetainedSessionUse.inUse(switch, now = 1))
     }
 
+    /** Round 3 of #61: Switch reconnects while the old transport's worker is still winding down. */
+    @Test fun anOldTransportsCleanupLeavesANewerReconnectsLease() {
+        RetainedSessionUse.called(switch, now = 0)
+        val old = RetainedSessionUse.transport(switch)
+        RetainedSessionUse.called(switch, now = 1_000) // tx13 for the replacement connection
+        old.close()
+        assertTrue(RetainedSessionUse.inUse(switch, now = 1_001))
+        assertFalse(RetainedSessionUse.inUse(switch, now = 1_000 + RetainedSessionUse.LEASE_MS))
+    }
+
     @Test fun aCallWithoutATransportHoldsThePairingOnlyForTheLease() {
         RetainedSessionUse.called(switch, now = 1_000)
         assertTrue(RetainedSessionUse.inUse(switch, now = 1_000 + RetainedSessionUse.LEASE_MS - 1))
