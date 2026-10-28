@@ -176,6 +176,12 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Cyclon: Google sign-in prompts open Google's page at once (useoxygen/cyclon#842): a full-screen intent while
+         locked or dark, a direct start while the phone is in use. The second is privileged; the Cyclon image grants it
+         in privapp-permissions-cyclon-gmscore.xml. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>

@@ -24,6 +24,28 @@ internal const val NOTIFICATION_FETCH_DELAY_MILLIS = 500L
 
 internal enum class ShowResult { SHOWN, NOTIFICATIONS_BLOCKED, NOT_SHOWABLE }
 
+/**
+ * What showing a prompt did. [fullScreen]: the notification carries a full-screen intent, so Android opens Google's
+ * page by itself while the phone is locked or its screen is off (behind the lock screen: the owner unlocks first), and
+ * keeps it as a heads-up that stays until handled while the phone is in use. [openedNow]: Google's page was opened
+ * right away because the owner is using the unlocked phone.
+ */
+internal data class ShowOutcome(val result: ShowResult, val fullScreen: Boolean = false, val openedNow: Boolean = false)
+
+/**
+ * How a prompt is presented, like Google Play services, which opens its confirmation full screen when a prompt arrives.
+ * The notification is always posted, so the prompt can be found again in the shade. Nothing here answers the prompt:
+ * Google's page only asks, and the owner decides there.
+ *
+ * - [fullScreen]: attach a full-screen intent whenever Android allows it ([fullScreenAllowed]).
+ * - [openNow]: start the page directly only while the screen is on and unlocked. Locked or dark, the full-screen
+ *   intent wakes the screen; starting it directly as well would open the page twice.
+ */
+internal data class PromptPresentation(val fullScreen: Boolean, val openNow: Boolean)
+
+internal fun promptPresentation(interactive: Boolean, keyguardLocked: Boolean, fullScreenAllowed: Boolean, backgroundStartAllowed: Boolean) =
+    PromptPresentation(fullScreen = fullScreenAllowed, openNow = interactive && !keyguardLocked && backgroundStartAllowed)
+
 /** A prompt without a usable expiry stays this long; Google's own prompts expire within minutes. */
 internal const val PROMPT_DEFAULT_TIMEOUT_MILLIS = 10 * 60 * 1000L
 internal const val PROMPT_MIN_TIMEOUT_MILLIS = 60 * 1000L
@@ -119,7 +141,7 @@ internal class TwoStepRoute<A>(
     private val accounts: () -> List<Pair<A, String?>>,
     private val fetch: (A, NotificationData) -> GnotsFetch,
     private val setReadState: (A, NotificationData, Int) -> Unit,
-    private val show: (A, NotificationData, Long) -> ShowResult,
+    private val show: (A, NotificationData, Long) -> ShowOutcome,
     private val dismiss: (String) -> Int,
     private val decodeBase64: (String) -> ByteArray,
     private val sleep: (Long) -> Unit = { Thread.sleep(it) },
@@ -157,9 +179,13 @@ internal class TwoStepRoute<A>(
         val candidates = accounts()
         val (account, failure) = selectAccountByUserId(candidates, tickle.userInfo?.userId)
         if (account == null) {
-            diagnostics.event(TwoStepEvent.ACCOUNT_NOT_MATCHED, session, "reason" to failure, "accounts" to candidates.size)
+            // `without_id`: local Google accounts with no stored Google user id, which can never match a prompt.
+            diagnostics.event(TwoStepEvent.ACCOUNT_NOT_MATCHED, session, "reason" to failure, "accounts" to candidates.size,
+                "without_id" to candidates.count { it.second.isNullOrEmpty() })
             return
         }
+        // Which local account (by position, not name) the prompt was for, so multi-account phones can be checked.
+        diagnostics.event(TwoStepEvent.MATCHED, session, "index" to candidates.indexOfFirst { it.first == account }, "accounts" to candidates.size)
         val fetched = fetchWithRetries(session, account, tickle) ?: return
         val serverTimeMillis = fetched.serverTimeMillis ?: pushTimeMillis
         diagnostics.event(TwoStepEvent.FETCHED, session, "count" to fetched.notifications.size)
@@ -175,12 +201,14 @@ internal class TwoStepRoute<A>(
             }
             val reference = serverTimeMillis ?: now()
             val timeoutMillis = promptTimeoutMillis(notification.expiryTime, reference)
-            when (show(account, notification, timeoutMillis)) {
+            val outcome = show(account, notification, timeoutMillis)
+            when (outcome.result) {
                 ShowResult.SHOWN -> {
                     // Whole minutes until the notification times out, so a device test can see the expiry was used.
                     // `expiry` says whether Google's expiry was usable or the default timeout applied.
                     val expiryUsed = promptExpiryRemainingMillis(notification.expiryTime, reference) != null
-                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMillis / 60_000, "expiry" to expiryUsed, "server_time" to (serverTimeMillis != null))
+                    diagnostics.event(TwoStepEvent.SHOWN, session, "timeout_min" to timeoutMillis / 60_000, "expiry" to expiryUsed, "server_time" to (serverTimeMillis != null),
+                        "full_screen" to outcome.fullScreen, "opened_now" to outcome.openedNow)
                     reportReadState(session, account, notification, NOTIFICATION_STATUS_SHOWN)
                 }
                 ShowResult.NOTIFICATIONS_BLOCKED -> diagnostics.event(TwoStepEvent.NOTIFICATIONS_BLOCKED, session)

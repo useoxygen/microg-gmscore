@@ -43,7 +43,7 @@ class TwoStepRouteTest {
         accounts = { accounts },
         fetch = { account, _ -> fetchedFor += account; GnotsFetch(fetchResults.removeAt(0)(), null) },
         setReadState = { account, _, status -> readStates += account to status },
-        show = { account, _, _ -> shownFor += account; showResult },
+        show = { account, _, _ -> shownFor += account; ShowOutcome(showResult, fullScreen = showResult == ShowResult.SHOWN) },
         dismiss = { id -> dismissed += id; 1 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         sleep = { sleeps += it },
@@ -73,7 +73,7 @@ class TwoStepRouteTest {
         assertEquals(listOf(ownerEmail), shownFor)
         // Like Google Play services: one "shown" report; upstream's 2 then 5 told Google the prompt was dismissed.
         assertEquals(listOf(ownerEmail to NOTIFICATION_STATUS_SHOWN), readStates)
-        assertEquals(listOf("received", "fetched", "shown"), events())
+        assertEquals(listOf("received", "matched", "fetched", "shown"), events())
         val session = logs.first().substringAfter("session=").substringBefore(' ')
         assertTrue(logs.all { it.contains("session=$session") })
     }
@@ -142,7 +142,7 @@ class TwoStepRouteTest {
         assertEquals(3, fetchedFor.size)
         assertEquals(listOf(NOTIFICATION_FETCH_DELAY_MILLIS, NOTIFICATION_FETCH_DELAY_MILLIS), sleeps)
         assertTrue(shownFor.isEmpty())
-        assertEquals(listOf("received", "fetch_failed", "fetch_failed", "fetch_failed", "fetch_failed"), events())
+        assertEquals(listOf("received", "matched", "fetch_failed", "fetch_failed", "fetch_failed", "fetch_failed"), events())
         assertTrue(logs.last().contains("final=true"))
         assertFalse(logs.any { it.contains("ya29") })
     }
@@ -153,7 +153,7 @@ class TwoStepRouteTest {
         fetchResults += { listOf(fetched) }
         route.route(GMS_GCM_NOTIFICATIONS, tickle())
         assertEquals(2, fetchedFor.size)
-        assertEquals(listOf("received", "fetch_failed", "fetched", "shown"), events())
+        assertEquals(listOf("received", "matched", "fetch_failed", "fetched", "shown"), events())
     }
 
     @Test
@@ -162,7 +162,7 @@ class TwoStepRouteTest {
         showResult = ShowResult.NOTIFICATIONS_BLOCKED
         route.route(GMS_GCM_NOTIFICATIONS, tickle())
         assertTrue(readStates.isEmpty())
-        assertEquals(listOf("received", "fetched", "notifications_blocked"), events())
+        assertEquals(listOf("received", "matched", "fetched", "notifications_blocked"), events())
     }
 
     @Test
@@ -290,7 +290,7 @@ class TwoStepRouteTest {
         accounts = { accounts },
         fetch = { _, _ -> GnotsFetch(listOf(fetched.copy(expiryTime = expiryUs)), fetchServerTime) },
         setReadState = { _, _, _ -> },
-        show = { _, _, timeout -> timeouts += timeout; ShowResult.SHOWN },
+        show = { _, _, timeout -> timeouts += timeout; ShowOutcome(ShowResult.SHOWN) },
         dismiss = { 0 },
         decodeBase64 = { Base64.getUrlDecoder().decode(it) },
         now = { now },
@@ -302,7 +302,7 @@ class TwoStepRouteTest {
         val timeouts = mutableListOf<Long>()
         routeWithClock(server, (server + 3 * 60_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
         assertEquals(listOf(3 * 60_000L), timeouts)
-        assertTrue(logs.last(), logs.last().endsWith("timeout_min=3 expiry=true server_time=true"))
+        assertTrue(logs.last(), logs.last().endsWith("timeout_min=3 expiry=true server_time=true full_screen=false opened_now=false"))
     }
 
     @Test
@@ -336,7 +336,7 @@ class TwoStepRouteTest {
         val timeouts = mutableListOf<Long>()
         routeWithClock(server, (server + 5_000) * 1000, timeouts).route(GMS_GCM_NOTIFICATIONS, tickle(), server)
         assertTrue(timeouts.isEmpty())
-        assertEquals(listOf("received", "fetched", "expired"), events())
+        assertEquals(listOf("received", "matched", "fetched", "expired"), events())
     }
 
     @Test

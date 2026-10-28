@@ -1,3 +1,5 @@
+// Modified by Cyclon in 2026: stop only with the latest start id, so a message that arrives while the previous one
+// finishes is not dropped by onDestroy (useoxygen/cyclon#842).
 /**
  * SPDX-FileCopyrightText: 2026 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -23,10 +25,16 @@ abstract class ReceiverService(private val tag: String): Service() {
     private var handler: Handler? = null
     private val atomicFlag = AtomicInteger(0)
 
+    /** The latest start id; set on the main thread before its message is queued. */
+    @Volatile
+    private var lastStartId = 0
+
     private fun release() {
         if (atomicFlag.decrementAndGet() == 0) {
             Log.d(tag, "release: ")
-            stopSelf()
+            // stopSelf() would stop even if another start is already on its way; its message would then be queued
+            // and dropped by onDestroy(). With the latest start id, Android keeps the service for a newer start.
+            stopSelfResult(lastStartId)
         }
     }
 
@@ -69,6 +77,7 @@ abstract class ReceiverService(private val tag: String): Service() {
             return START_NOT_STICKY
         }
         Log.d(tag, "onStartCommand: start ")
+        lastStartId = startId
         atomicFlag.incrementAndGet()
         val messageObtain = Message.obtain()
         messageObtain.obj = intent
