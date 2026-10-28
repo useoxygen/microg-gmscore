@@ -37,7 +37,8 @@ internal const val POST_DESCRIPTOR = "com.google.android.gms.smartdevice.postset
 internal fun switchSupportFeatures(service: GmsService): Array<Feature> = when (service) {
     GmsService.SMARTDEVICE_D2D_TARGET_DEVICE -> arrayOf(
         Feature("post_setup_restore_api", 1L), Feature("post_setup_pair", 4L),
-        Feature("post_setup_clean_restore_api", 1L), Feature("managed_account_setup", 2L)
+        Feature("post_setup_clean_restore_api", 1L), Feature("managed_account_setup", 2L),
+        Feature("post_setup_start_restore", 1L)
     )
     GmsService.SMARTDEVICE_POST_SETUP -> arrayOf(Feature("post_setup_3p_restore_api", 1L), Feature("post_setup_api", 1L))
     else -> emptyArray()

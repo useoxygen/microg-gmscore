@@ -55,6 +55,33 @@ internal fun reportConnection(connect: () -> Unit, report: (Int) -> Unit, failed
     try { report(status) } catch (_: Exception) { failed() }
 }
 
+// GMS's classic Nearby options for SmartDevice: keep-alive every 5 s, peer dropped after 30 s of silence. Our own
+// app accepts (Switch) within moments; the old phone's owner may take minutes, bounded only by the keep-alives.
+internal const val SETUP_SECONDS = 30L
+internal const val KEEP_ALIVE_MS = 5_000L
+internal const val KEEP_ALIVE_TIMEOUT_MS = 30_000L
+internal const val DECISION_SECONDS = 120L
+
+/**
+ * Both acceptances, after setup: [decide] is our app's choice, then [channel] waits for the peer's, which comes when
+ * the old phone's owner taps Next. Meanwhile cleartext keep-alives go out every [keepAliveMs], and the link is
+ * closed only after [timeoutMs] without a frame from the peer, as Nearby's keep-alive manager does. False if our
+ * app declined.
+ */
+internal fun awaitAcceptance(channel: ClassicNearbyChannel, close: () -> Unit,
+    timer: java.util.concurrent.ScheduledExecutorService, token: ByteArray,
+    keepAliveMs: Long = KEEP_ALIVE_MS, timeoutMs: Long = KEEP_ALIVE_TIMEOUT_MS, decide: () -> Boolean): Boolean {
+    val alive = timer.scheduleAtFixedRate({
+        val silent = channel.peerHeardNanos?.let { TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-it) } ?: 0
+        if (silent > timeoutMs) close()
+        else runCatching { channel.sendPendingKeepAlive() }.onFailure { close() }
+    },keepAliveMs,keepAliveMs,TimeUnit.MILLISECONDS)
+    try {
+        if (!decide()) { channel.reject(); return false }
+        channel.accept(token); return true
+    } finally { alive.cancel(false) }
+}
+
 internal class ClassicNearbyBinder(private val context: Context, uid: Int) : MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
     private val closed = AtomicBoolean(false)
     private val ownerUid=uid
@@ -108,7 +135,9 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
         if (closed.get() || !connectionSlots.tryAcquire()) { link.close(); return }
         try { workers.execute {
             val channel = ClassicNearbyChannel(link.input,link.output); val session = Session(link,channel); var endpoint: String? = null
-            val deadline = timer.schedule({ runCatching { link.close() } },30,TimeUnit.SECONDS)
+            // The deadline covers connection setup (request and UKEY2) only. Waiting for both sides to accept can take
+            // as long as the owner needs to tap Next on the old phone; then, as in Nearby, keep-alives keep the link.
+            val deadline = timer.schedule({ runCatching { link.close() } },SETUP_SECONDS,TimeUnit.SECONDS)
             try {
                 val info: ByteArray
                 val incoming = peer == null
@@ -121,9 +150,13 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int) : Mig
                 val ep = requireNotNull(endpoint)
                 check(sessions.putIfAbsent(ep,session) == null)
                 event(lifecycle,"IConnectionLifecycleListener",2,DctRecord(ClassicSchemas.initiated,mapOf(1 to ep,2 to info.toString(Charsets.UTF_8),3 to Base64.encodeToString(session.token,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING).take(5).uppercase(java.util.Locale.ROOT),4 to incoming,6 to session.token.copyOf(),7 to info,9 to 0)))
-                check(session.decision.await(25,TimeUnit.SECONDS)) { "Application did not accept peer" }
-                if (!session.accepted) { channel.reject(); return@execute }
-                channel.accept(session.token); session.token.fill(0); session.connected = true; deadline.cancel(false)
+                deadline.cancel(false)
+                val accepted = awaitAcceptance(channel,{ runCatching { link.close() } },timer,session.token) {
+                    check(session.decision.await(DECISION_SECONDS,TimeUnit.SECONDS)) { "Application did not accept peer" }
+                    session.accepted
+                }
+                if (!accepted) return@execute
+                session.token.fill(0); session.connected = true
                 session.receiver = receiver(session,ep)
                 event(lifecycle,"IConnectionLifecycleListener",3,DctRecord(ClassicSchemas.connected,mapOf(1 to ep,2 to 0,4 to 0)))
                 val keepAlive = timer.scheduleAtFixedRate({ runCatching { channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.KEEP_ALIVE).setKeepAlive(KeepAliveFrame.getDefaultInstance()).build()) }.onFailure { runCatching { link.close() } } },5,5,TimeUnit.SECONDS)

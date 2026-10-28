@@ -25,7 +25,12 @@ class AndroidD2dBootstrapActivity : Activity() {
         super.onCreate(state)
         message=TextView(this).apply { textSize=22f; text=getString(com.google.android.gms.R.string.android_d2d_prepare) }
         proceed=Button(this).apply { text=getString(com.google.android.gms.R.string.android_d2d_continue); isEnabled=false; setOnClickListener { continueCopy() } }
-        val cancel=Button(this).apply { text=getString(android.R.string.cancel); setOnClickListener { finish() } }
+        // Cancel forgets a pairing this screen holds, so trying again pairs afresh instead of reusing it.
+        val cancel=Button(this).apply { text=getString(android.R.string.cancel); setOnClickListener {
+            bootstrap?.close(); bootstrap=null
+            if(targetUid>=0)sessions.clear(targetUid)
+            finish()
+        } }
         setContentView(LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(40,80,40,40); addView(message); addView(proceed); addView(cancel) })
         sessions=AndroidSessionStore(File(noBackupFilesDir,"migration-android"))
         try {
@@ -33,6 +38,7 @@ class AndroidD2dBootstrapActivity : Activity() {
             // is fixed to the installed Switch package, never an Intent-supplied UID.
             check(org.microg.gms.utils.ExtendedPackageInfo(this,SWITCH_PACKAGE).hasGooglePackagePermission(org.microg.gms.common.GooglePackagePermission.ACCOUNT))
             targetUid=packageManager.getApplicationInfo(SWITCH_PACKAGE,0).uid
+            if(sessions.launched(targetUid))sessions.clear(targetUid) // that copy already ran, copied or failed
             if(sessions.load(targetUid).use { it.hint()!=null }) {
                 ready(); return
             }
@@ -75,6 +81,7 @@ class AndroidD2dBootstrapActivity : Activity() {
             startActivity(Intent("com.google.android.apps.restore.ACTION_LAUNCH_WIFI_D2D").setPackage(SWITCH_PACKAGE)
                 .addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
                 .putExtra("is_quick_start",true).putExtra("after_account",true))
+            sessions.markLaunched(targetUid)
             finish()
         } catch(_: Exception) { message.setText(com.google.android.gms.R.string.android_d2d_missing_switch) }
     }

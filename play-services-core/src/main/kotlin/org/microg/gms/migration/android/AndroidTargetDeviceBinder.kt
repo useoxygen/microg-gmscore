@@ -118,7 +118,13 @@ internal class AndroidTargetDeviceBinder(
             }
             22 -> {
                 data.skipApiMetadata(); data.requireEnd()
-                pair(callback, 7, 10590)
+                // startRestore. GMS foig asks the old phone over its quick-start session to start copying, and answers
+                // 13 without such a session. A legacy Android source starts its copy by itself once the bootstrap
+                // completes, so a verified retained session is that request already made; Switch fails the whole
+                // connection unless this succeeds.
+                val hint = state.hint()
+                pair(callback, 7, if (hint == null) 13 else 0)
+                hint?.bytes(3)?.fill(0)
             }
             23 -> {
                 data.skipApiMetadata(); data.requireEnd()
