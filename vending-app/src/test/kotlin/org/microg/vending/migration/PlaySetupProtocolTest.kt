@@ -241,6 +241,15 @@ class PlaySetupProtocolTest {
         assertEquals(setOf(APP, MISSING), resultDocuments(result, "document_groups").map { it.getString("package_name") }.toSet())
     }
 
+    @Test fun anAppTheAnonymousSessionWasNotReadyForIsAskedAgainInAMixedBatch() {
+        ready = false
+        lookups[MISSING] = ArrayDeque(listOf(MigrationInstallQueue.unavailable(MISSING, "anonymous_sign_in_required")))
+        val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+        assertNull(result.getBundle("error"))
+        assertEquals(2, calls.count { it == 1 to MISSING })
+        assertEquals(setOf(APP, MISSING), resultDocuments(result, "document_groups").map { it.getString("package_name") }.toSet())
+    }
+
     @Test fun anAppThatIsNotOnPlayIsNotAskedAgain() {
         catalog[MISSING] = MigrationInstallQueue.unavailable(MISSING, "not_found")
         val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }

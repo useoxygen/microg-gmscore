@@ -143,18 +143,18 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
         }
         val prepared = queue.control(6)
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45)
-        val documents = lookUp(names, deadline).toMutableList()
-        // One more try for apps that failed for a passing reason (Play's 429, the network, a Google account still being
-        // set up), while time is left: Switch drops whatever this batch does not list.
-        val retry = documents.indices.filter { documents[it].retryable() }
-        if (retry.isNotEmpty() && deadline - System.nanoTime() > TimeUnit.SECONDS.toNanos(RETRY_MIN_SECONDS)) {
-            lookUp(retry.map { names[it] }, deadline).forEachIndexed { at, result -> documents[retry[at]] = result }
-        }
-        for (result in documents) {
+        fun preparationFailures(results: List<Bundle>) = results.onEach { result ->
             if (!prepared.getBoolean("ready") && result.getString("error") in setOf("anonymous_sign_in_required", "store_unavailable")) {
                 result.putBoolean("recoverable", true)
                 result.putString("error", prepared.getString("error", "store_unavailable"))
             }
+        }
+        val documents = preparationFailures(lookUp(names, deadline)).toMutableList()
+        // One more try for apps that failed for a passing reason (Play's 429, the network, a Google account still being
+        // set up, no anonymous session yet), while time is left: Switch drops whatever this batch does not list.
+        val retry = documents.indices.filter { documents[it].retryable() }
+        if (retry.isNotEmpty() && deadline - System.nanoTime() > TimeUnit.SECONDS.toNanos(RETRY_MIN_SECONDS)) {
+            preparationFailures(lookUp(retry.map { names[it] }, deadline)).forEachIndexed { at, result -> documents[retry[at]] = result }
         }
         queue.recordCatalog(documents)
         return PlaySetupService.catalog(documents).apply {
