@@ -13,6 +13,8 @@ import android.accounts.NetworkErrorException;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Base64;
@@ -97,12 +99,31 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
     public boolean isPackageOverrideAllowed(Account account, String requestingPackage, String overridePackage, CertData overrideCertificate) {
         // Always allow for self package
         if (requestingPackage.equals(context.getPackageName())) return true;
+        // The image's own app store, as the Play Store needs no approval on a Pixel.
+        if (isImageStore(context, requestingPackage, overridePackage)) return true;
 //        if (requestingPackage.equals("org.microg.example.authwithoverride")) return true;
         String requestingDigestString = PackageManagerUtilsKt.toHexString(PackageManagerUtilsKt.digest(PackageManagerUtilsKt.getCertificates(context.getPackageManager(), requestingPackage).get(0), "SHA-256"), "");
         String overrideCertificateDigestString = PackageManagerUtilsKt.toHexString(PackageManagerUtilsKt.digest(overrideCertificate, "SHA-256"), "");
         String overrideUserDataKey = "override." + requestingPackage + ":" + requestingDigestString + ":" + overridePackage + ":" + overrideCertificateDigestString;
         String hasOverride = AccountManager.get(context).getUserData(account, overrideUserDataKey);
         return "1".equals(hasOverride);
+    }
+
+    /** App stores the Cyclon image ships, which act as the Play Store with the phone's account (CYC-838 fallback). */
+    static final List<String> IMAGE_STORES = Arrays.asList("com.aurora.store");
+
+    /**
+     * Whether [requestingPackage] is an app store the image ships, asking to act as the Play Store. A system app can
+     * only be updated with its image signing key, so the package name of a system app identifies the image's own copy.
+     */
+    static boolean isImageStore(Context context, String requestingPackage, String overridePackage) {
+        if (!IMAGE_STORES.contains(requestingPackage) || !"com.android.vending".equals(overridePackage)) return false;
+        try {
+            ApplicationInfo info = context.getPackageManager().getApplicationInfo(requestingPackage, 0);
+            return (info.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
     }
 
     @Override
