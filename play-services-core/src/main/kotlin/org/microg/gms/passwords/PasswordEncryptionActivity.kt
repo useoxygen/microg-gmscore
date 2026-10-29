@@ -123,7 +123,8 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     override fun onOwnerLocked() {
         if (!ownerSessionStarted) return
         invalidate()
-        if (recovering) showText(R.string.passwords_unlock_description) else finish()
+        // Back from the unlock, the owner is asked again as on first open: that prompt must not close the page.
+        if (recovering) { ownerSessionStarted = false; showText(R.string.passwords_unlock_description) } else finish()
     }
     override fun onResume() {
         super.onResume()
