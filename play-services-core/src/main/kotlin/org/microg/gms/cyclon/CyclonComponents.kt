@@ -3,8 +3,8 @@
 package org.microg.gms.cyclon
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,8 +24,12 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.Switch
@@ -33,17 +37,26 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -53,6 +66,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.R
@@ -90,8 +104,8 @@ fun CyclonVoice(text: String, modifier: Modifier = Modifier, color: Color = Cycl
 /** A section's label above its rows, with the hairline that starts the section. */
 @Composable
 fun CyclonSectionLabel(text: String, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(top = 28.dp)) {
-        CyclonVoice(text.lowercase(), Modifier.padding(horizontal = 20.dp, vertical = 8.dp).semantics { heading() })
+    Column(modifier.fillMaxWidth().padding(top = 16.dp)) {
+        CyclonVoice(text.lowercase(), Modifier.padding(horizontal = 20.dp, vertical = 6.dp).semantics { heading() })
         CyclonHairline()
     }
 }
@@ -103,8 +117,8 @@ fun CyclonHairline(modifier: Modifier = Modifier) {
 
 /** Muted explanatory text under a section label or a page title. */
 @Composable
-fun CyclonNote(text: String, modifier: Modifier = Modifier, color: Color = Cyclon.palette.muted) {
-    Text(text, modifier.padding(horizontal = 20.dp, vertical = 12.dp), style = MaterialTheme.typography.bodySmall, color = color)
+fun CyclonNote(text: String, modifier: Modifier = Modifier, color: Color = Cyclon.palette.muted, inset: Dp = 20.dp) {
+    Text(text, modifier.padding(horizontal = inset, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = color)
 }
 
 /**
@@ -207,29 +221,30 @@ fun CyclonTextAction(text: String, modifier: Modifier = Modifier, enabled: Boole
 @Composable
 fun CyclonChevron() = CyclonVoice("›", color = Cyclon.palette.muted, size = 20)
 
-/** The "‹  Back" action at the top of a page; [label] is the back target's name. */
+/**
+ * A page's compact top bar: a 48dp "‹" back target (read as [backLabel]), optional [leading] (an icon), the title as the
+ * page's heading in [titleSize] and an optional Space Mono [status] under it (the account a page is about), and
+ * optional [trailing] at the end of the title line (a count). Titles wrap rather than truncate.
+ */
 @Composable
-fun CyclonBack(label: String, onBack: () -> Unit) {
+fun CyclonTopBar(title: String, backLabel: String, onBack: () -> Unit, status: String? = null, titleSize: Int = 24,
+                 leading: (@Composable () -> Unit)? = null, trailing: (@Composable () -> Unit)? = null) {
     val p = Cyclon.palette
-    Row(Modifier.padding(start = 4.dp).clip(PillShape).clickable(role = Role.Button, onClick = onBack).heightIn(min = 48.dp)
-        .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("‹", style = MaterialTheme.typography.labelLarge, color = p.ink)
-        Text(label, style = MaterialTheme.typography.labelLarge, color = p.ink)
-    }
-}
-
-/** A page's large title (Assistant access's size) with an optional Space Mono status line under it. */
-@Composable
-fun CyclonTitle(title: String, status: String? = null, leading: (@Composable () -> Unit)? = null) {
-    val p = Cyclon.palette
-    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        leading?.invoke()
-        Column(Modifier.weight(1f)) {
-            Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall.copy(fontSize = 30.sp, lineHeight = 36.sp), color = p.ink)
-            status?.let { CyclonVoice(it, Modifier.padding(top = 6.dp), color = p.ink, size = 14) }
+    val style = MaterialTheme.typography.headlineSmall.copy(fontSize = titleSize.sp, lineHeight = (titleSize + 6).sp)
+    // Back, icon and count line up with the title's first line, also when a long title wraps.
+    val band = 48.dp
+    val firstLine = with(LocalDensity.current) { style.lineHeight.toDp() }
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
+        Box(Modifier.size(band).clip(CircleShape).clickable(role = Role.Button, onClick = onBack)
+            .semantics { contentDescription = backLabel }, contentAlignment = Alignment.Center) {
+            Text("‹", style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 32.sp), color = p.ink)
         }
+        leading?.let { Box(Modifier.height(band).padding(end = 10.dp), contentAlignment = Alignment.Center) { it() } }
+        Column(Modifier.weight(1f).padding(top = ((band - firstLine) / 2).coerceAtLeast(0.dp))) {
+            Text(title, Modifier.semantics { heading() }, style = style, color = p.ink)
+            status?.let { CyclonVoice(it, Modifier.padding(top = 2.dp), size = 12) }
+        }
+        trailing?.let { Box(Modifier.height(band).padding(start = 12.dp), contentAlignment = Alignment.Center) { it() } }
     }
 }
 
@@ -240,7 +255,7 @@ fun CyclonTitle(title: String, status: String? = null, leading: (@Composable () 
 @Composable
 fun CyclonTabs(labels: List<String>, selected: Int, enabled: (Int) -> Boolean = { true }, onSelect: (Int) -> Unit) {
     val p = Cyclon.palette
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).selectableGroup(),
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         labels.forEachIndexed { index, label ->
             val on = index == selected
@@ -248,7 +263,7 @@ fun CyclonTabs(labels: List<String>, selected: Int, enabled: (Int) -> Boolean = 
             Box(Modifier.weight(1f).clip(PillShape).background(if (on) p.ink else Color.Transparent)
                 .border(BorderStroke(1.dp, if (on) p.ink else p.line), PillShape)
                 .selectable(on, enabled = usable, role = Role.Tab, onClick = { onSelect(index) })
-                .heightIn(min = 40.dp).padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                .heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                 Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center, color = if (on) p.paper else if (usable) p.ink else p.muted)
             }
@@ -264,13 +279,15 @@ fun CyclonTabs(labels: List<String>, selected: Int, enabled: (Int) -> Boolean = 
 fun CyclonMonogram(label: String, packageName: String? = null, size: Dp = 36.dp) {
     val context = LocalContext.current
     val px = with(LocalDensity.current) { size.roundToPx() }
-    val icon by produceState<ImageBitmap?>(null, packageName, px) {
-        if (packageName != null) value = withContext(Dispatchers.IO) {
+    // Keyed, so a row reused for another app or a website starts from the letter again, never the old icon.
+    var icon by remember(packageName, px) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(packageName, px) {
+        if (packageName != null) icon = withContext(Dispatchers.IO) {
             runCatching {
                 val drawable = context.packageManager.getApplicationIcon(packageName)
                 Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888).also {
                     drawable.setBounds(0, 0, px, px)
-                    drawable.draw(Canvas(it))
+                    drawable.draw(android.graphics.Canvas(it))
                 }.asImageBitmap()
             }.getOrNull()
         }
@@ -282,6 +299,46 @@ fun CyclonMonogram(label: String, packageName: String? = null, size: Dp = 36.dp)
         else Box(Modifier.size(size).clip(CircleShape).background(p.cell), contentAlignment = Alignment.Center) {
             Text(label.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium, color = p.muted)
         }
+    }
+}
+
+/** The search field of a list page: one line, a search glyph and [placeholder] in place of a floating label. */
+@Composable
+fun CyclonSearchField(query: String, onQuery: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier) {
+    OutlinedTextField(query, onQuery, modifier, singleLine = true, colors = cyclonFieldColors(),
+        textStyle = MaterialTheme.typography.bodyMedium,
+        placeholder = { Text(placeholder, style = MaterialTheme.typography.bodyMedium) },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Cyclon.palette.muted) })
+}
+
+/**
+ * A round 48dp icon action beside a field: [filled] with ink for the primary one, outlined otherwise. [label] is what
+ * TalkBack reads, as the icon has no text.
+ */
+@Composable
+fun CyclonIconAction(icon: ImageVector, label: String, filled: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    val p = Cyclon.palette
+    Box(Modifier.size(48.dp).clip(CircleShape).background(if (filled) (if (enabled) p.ink else p.cell) else Color.Transparent)
+        .then(if (filled) Modifier else Modifier.border(BorderStroke(1.dp, p.mid), CircleShape))
+        .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick)
+        .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = null, tint = if (!enabled) p.muted else if (filled) p.paper else p.ink)
+    }
+}
+
+/** A phone outline in muted ink, 24dp: "this device" where an account would show its monogram. */
+@Composable
+fun CyclonDeviceGlyph() {
+    val color = Cyclon.palette.muted
+    Canvas(Modifier.size(24.dp)) {
+        val stroke = 1.5.dp.toPx()
+        val w = 12.dp.toPx(); val h = 19.dp.toPx()
+        val left = (size.width - w) / 2; val top = (size.height - h) / 2
+        drawRoundRect(color, Offset(left, top), Size(w, h),
+            CornerRadius(2.dp.toPx()), style = Stroke(stroke))
+        val y = top + h - 3.dp.toPx()
+        drawLine(color, Offset(size.width / 2 - 2.dp.toPx(), y),
+            Offset(size.width / 2 + 2.dp.toPx(), y), stroke)
     }
 }
 

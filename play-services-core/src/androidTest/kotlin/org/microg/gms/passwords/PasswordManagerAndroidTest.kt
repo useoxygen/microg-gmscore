@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inspector.WindowInspector
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.window.DialogWindowProvider
@@ -52,6 +53,7 @@ class PasswordManagerAndroidTest {
     private val arguments get() = InstrumentationRegistry.getArguments()
     private val open get() = context.getString(R.string.passwords_open)
     private val onDevice get() = context.getString(R.string.passwords_on_device)
+    private val storageCollapsed get() = context.getString(R.string.passwords_storage_collapsed)
     private val touchFlags = CopyOnWriteArrayList<Int>()
     private val touchPoints = CopyOnWriteArrayList<String>()
     private var tapBounds = "unavailable"
@@ -110,7 +112,9 @@ class PasswordManagerAndroidTest {
         tap(compose.onNodeWithText(open))
         try {
             compose.waitUntil(timeoutMillis = 30_000) {
-                compose.onAllNodes(hasText(onDevice) and isEnabled()).fetchSemanticsNodes().size == 1
+                // Unlocked with storage chosen: the storage line is collapsed, and nothing is loading any more.
+                compose.onAllNodes(hasStateDescription(storageCollapsed)).fetchSemanticsNodes().size == 1 &&
+                    compose.onAllNodes(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate)).fetchSemanticsNodes().isEmpty()
             }
         } catch (failure: ComposeTimeoutException) {
             var state = "unavailable"
@@ -191,10 +195,10 @@ class PasswordManagerAndroidTest {
         try {
             launch(selected).use { scenario ->
                 openManager(scenario)
-                // The storage choice is a radio row; the selected account is its selected node.
-                compose.onNode(hasText(selected) and isSelected()).assertExists()
+                // The collapsed storage line names the selected account.
+                compose.onNode(hasText(selected) and hasStateDescription(storageCollapsed)).assertExists()
                 if (!wasEnabled) tap(compose.onNode(isToggleable()))
-                else tap(compose.onNodeWithText(context.getString(R.string.passwords_refresh)))
+                else tap(compose.onNodeWithContentDescription(context.getString(R.string.passwords_refresh)))
                 compose.waitUntil(timeoutMillis = 30_000) {
                     compose.onAllNodesWithText("https://cyc651.example.invalid/").fetchSemanticsNodes().size == 1
                 }

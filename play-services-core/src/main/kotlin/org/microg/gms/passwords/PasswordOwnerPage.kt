@@ -25,16 +25,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.R
 import org.microg.gms.cyclon.Cyclon
-import org.microg.gms.cyclon.CyclonBack
 import org.microg.gms.cyclon.CyclonInkButton
 import org.microg.gms.cyclon.CyclonProgress
 import org.microg.gms.cyclon.CyclonTextAction
-import org.microg.gms.cyclon.CyclonTitle
+import org.microg.gms.cyclon.CyclonTopBar
 
 /*
  * The frame of the pages Passwords' Settings opens (encryption, recovery, breach check, passkeys, sharing, Wi-Fi) and of
- * the recovery pages that Recovery's rows open: the manager's own Back, title and Space Mono account line, then the page in Cyclon rows and pills. Use inside
- * CyclonMaterialTheme.
+ * the recovery pages that Recovery's rows open: the manager's compact top bar (‹, title, Space Mono account line), then
+ * the page in Cyclon rows and pills. Use inside CyclonMaterialTheme.
  */
 
 /** Paper under the system bars, for a page that scrolls itself (a LazyColumn). */
@@ -45,11 +44,10 @@ internal fun PasswordOwnerSurface(content: @Composable () -> Unit) {
     }
 }
 
-/** ‹ Back, the page's title and the Google account it is about. */
+/** ‹ Back beside the page's title, and the Google account it is about under it. */
 @Composable
 internal fun PasswordOwnerHeader(title: String, account: String?, onBack: () -> Unit) {
-    CyclonBack(stringResource(R.string.cyclon_back), onBack)
-    CyclonTitle(title, status = account?.takeIf { it.isNotBlank() })
+    CyclonTopBar(title, stringResource(R.string.cyclon_back), onBack, status = account?.takeIf { it.isNotBlank() })
 }
 
 /** A whole scrolling page: [PasswordOwnerHeader], then [content]. */
@@ -89,7 +87,7 @@ internal fun PasswordOwnerText(text: String, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun PasswordOwnerActions(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    FlowRow(modifier.padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
+    FlowRow(modifier.padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
 }
 
