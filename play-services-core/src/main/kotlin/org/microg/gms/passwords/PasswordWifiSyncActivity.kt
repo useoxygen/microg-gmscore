@@ -52,7 +52,7 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); userId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(glass = true) {
             PasswordOwnerPage(stringResource(R.string.passwords_wifi_title), account.name, onBack = ::finish) {
                 if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
                 CyclonNote(stringResource(R.string.passwords_wifi_description))
@@ -65,7 +65,7 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
                     }))
                     if (access in setOf(PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED,
                             PasswordWifiAccess.LOCATION_DISABLED, PasswordWifiAccess.APP_OP_DENIED)) PasswordOwnerActions {
-                        CyclonLineButton(stringResource(when (access) {
+                        CyclonGlassButton(stringResource(when (access) {
                             PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED -> R.string.passwords_wifi_allow_location
                             PasswordWifiAccess.LOCATION_DISABLED -> R.string.passwords_wifi_open_location
                             else -> R.string.passwords_wifi_open_permissions
@@ -75,15 +75,17 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
                     }
                 }
                 CyclonSectionLabel(stringResource(R.string.passwords_section_sync))
-                CyclonSwitchRow(stringResource(R.string.passwords_wifi_enable), stringResource(R.string.passwords_wifi_state, pending, conflicts),
-                    enabled, enabled = !busy && (available || enabled), onChange = { value ->
-                        if (value) prompt = R.string.passwords_wifi_enable_warning else perform { it.setEnabled(false) }
-                    })
-                CyclonRow(stringResource(R.string.passwords_refresh), onClick = { perform { it.synchronizeIfEnabled() } },
-                    enabled = enabled && available && !busy)
-                if (uncertain > 0) CyclonRow(stringResource(R.string.passwords_retry_owner), onClick = { prompt = R.string.passwords_wifi_retry_warning },
-                    enabled = !busy && enabled && available)
-                CyclonRow(stringResource(R.string.passwords_wifi_forget), onClick = { prompt = R.string.passwords_wifi_forget_warning }, enabled = !busy)
+                CyclonGroup {
+                    CyclonSwitchRow(stringResource(R.string.passwords_wifi_enable), stringResource(R.string.passwords_wifi_state, pending, conflicts),
+                        enabled, enabled = !busy && (available || enabled), onChange = { value ->
+                            if (value) prompt = R.string.passwords_wifi_enable_warning else perform { it.setEnabled(false) }
+                        })
+                    CyclonRow(stringResource(R.string.passwords_refresh), onClick = { perform { it.synchronizeIfEnabled() } },
+                        enabled = enabled && available && !busy)
+                    if (uncertain > 0) CyclonRow(stringResource(R.string.passwords_retry_owner), onClick = { prompt = R.string.passwords_wifi_retry_warning },
+                        enabled = !busy && enabled && available)
+                    CyclonRow(stringResource(R.string.passwords_wifi_forget), onClick = { prompt = R.string.passwords_wifi_forget_warning }, enabled = !busy)
+                }
                 PasswordOwnerStatus(busy, message?.let { stringResource(it) })
             }
             prompt?.takeIf { unlocked }?.let { question -> AlertDialog(onDismissRequest = { prompt = null },

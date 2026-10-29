@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -229,13 +228,14 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
                         }
                     }
                 }
-                PasswordEncryptionRepository.Status.ON -> {
+                PasswordEncryptionRepository.Status.ON -> CyclonGroup(Modifier.padding(top = 4.dp)) {
                     CyclonRow(stringResource(R.string.passwords_encryption_on), stringResource(R.string.passwords_encryption_on_summary),
-                        divider = false, trailing = { CyclonVoice("✓", color = Cyclon.palette.ink, size = 18) })
+                        trailing = { CyclonVoice("✓", color = Cyclon.palette.ink, size = 18) })
                 }
                 PasswordEncryptionRepository.Status.ON_LOCKED -> {
-                    CyclonRow(stringResource(R.string.passwords_encryption_on), stringResource(R.string.passwords_encryption_verify_summary),
-                        divider = false)
+                    CyclonGroup(Modifier.padding(top = 4.dp)) {
+                        CyclonRow(stringResource(R.string.passwords_encryption_on), stringResource(R.string.passwords_encryption_verify_summary))
+                    }
                     PasswordOwnerActions {
                         CyclonInkButton(stringResource(R.string.passwords_encryption_verify)) { unlessBusy { verifyIdentity() } }
                     }
@@ -243,12 +243,14 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
                 PasswordEncryptionRepository.Status.OTHER ->
                     PasswordOwnerText(stringResource(R.string.passwords_encryption_passphrase))
             }
-            CyclonSectionLabel(stringResource(R.string.passwords_encryption_reset_section), Modifier.padding(top = 16.dp))
-            // Google's reset turns off on-device encryption; it doesn't apply to keystore or passphrase accounts.
-            if (status == PasswordEncryptionRepository.Status.ON || status == PasswordEncryptionRepository.Status.ON_LOCKED) CyclonRow(stringResource(R.string.passwords_encryption_clear),
-                onClick = { unlessBusy { confirm(PasswordEncryptionOperation.CLEAR_PASSWORDS) } }, trailing = { CyclonChevron() })
-            CyclonRow(stringResource(R.string.passwords_encryption_passkeys),
-                onClick = { unlessBusy { confirm(PasswordEncryptionOperation.RESET_PASSKEYS) } }, trailing = { CyclonChevron() })
+            CyclonSectionLabel(stringResource(R.string.passwords_encryption_reset_section))
+            CyclonGroup {
+                // Google's reset turns off on-device encryption; it doesn't apply to keystore or passphrase accounts.
+                if (status == PasswordEncryptionRepository.Status.ON || status == PasswordEncryptionRepository.Status.ON_LOCKED) CyclonRow(stringResource(R.string.passwords_encryption_clear),
+                    onClick = { unlessBusy { confirm(PasswordEncryptionOperation.CLEAR_PASSWORDS) } }, trailing = { CyclonChevron() })
+                CyclonRow(stringResource(R.string.passwords_encryption_passkeys),
+                    onClick = { unlessBusy { confirm(PasswordEncryptionOperation.RESET_PASSKEYS) } }, trailing = { CyclonChevron() })
+            }
         }
     }
 
@@ -449,10 +451,10 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     private fun composed(scrolls: Boolean = true, onBack: () -> Unit = { unlessBusy { closeOwnerScreen() } },
                          content: @Composable ColumnScope.() -> Unit) = ComposeView(this).apply {
         val accountName = if (::account.isInitialized) account.name else null
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(glass = true) {
             if (scrolls) PasswordOwnerPage(stringResource(R.string.passwords_encryption_manage), accountName, onBack, content)
             // Above the WebView: only as tall as the header, so Google's page keeps the rest of the screen.
-            else Surface(Modifier.fillMaxWidth()) { Column { PasswordOwnerHeader(stringResource(R.string.passwords_encryption_manage), accountName, onBack); content() } }
+            else CyclonGlassPage(Modifier.fillMaxWidth()) { Column { PasswordOwnerHeader(stringResource(R.string.passwords_encryption_manage), accountName, onBack); content() } }
             question?.let { asked -> AlertDialog(onDismissRequest = { question = null },
                 title = { Text(stringResource(asked.title)) },
                 text = { PasswordDialogProtection(); PasswordDialogText(stringResource(asked.message), scrolls = true) },

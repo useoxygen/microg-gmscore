@@ -72,7 +72,7 @@ class RecoveryPagesFixtureAndroidTest {
         val host = instrumentation.startActivitySync(Intent(context, PasswordBreachActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as PasswordBreachActivity
         try {
-            instrumentation.runOnMainSync { host.setContent { CyclonMaterialTheme { state.content() } } }
+            instrumentation.runOnMainSync { host.setContent { CyclonMaterialTheme(glass = true) { state.content() } } }
             check()
         } catch (e: Throwable) { throw AssertionError("State ${state.name}", e) }
         finally { instrumentation.runOnMainSync { host.finish() }; instrumentation.waitForIdleSync() }

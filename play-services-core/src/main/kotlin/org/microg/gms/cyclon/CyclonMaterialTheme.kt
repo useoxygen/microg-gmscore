@@ -18,6 +18,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
@@ -34,10 +35,12 @@ import com.google.android.gms.R
  * cyclon_* colours, the owner's highlight as primary for on/selected states and progress only.
  * Text uses the bundled Manrope with Core's type scale (OwnerTheme.kt), as Theme.CyclonServices
  * does for the XML screens. Content without a Surface (Cyclon Services screens draw their own
- * paper) still gets ink, and cards and fields have 8dp corners.
+ * paper) still gets ink, and cards and fields have 8dp corners. With [glass] (pages built of
+ * CyclonComponents' islands) dialogs are Chat only's solid card: Home's violet or warm white,
+ * 30dp corners.
  */
 @Composable
-fun CyclonMaterialTheme(content: @Composable () -> Unit) {
+fun CyclonMaterialTheme(glass: Boolean = false, content: @Composable () -> Unit) {
     val paper = colorResource(R.color.cyclon_paper)
     val ink = colorResource(R.color.cyclon_ink)
     val muted = colorResource(R.color.cyclon_muted)
@@ -60,7 +63,8 @@ fun CyclonMaterialTheme(content: @Composable () -> Unit) {
         surfaceContainerLow = paper, surfaceContainer = paper, surfaceContainerHigh = raised,
         surfaceContainerHighest = cell
     )
-    MaterialTheme(colorScheme = colors, shapes = CyclonShapes, typography = CyclonTypography) {
+    MaterialTheme(colorScheme = if (glass) colors.copy(surfaceContainerHigh = cyclonGlass(paper.luminance() < .5f).dialog) else colors,
+        shapes = if (glass) CyclonShapes.copy(extraLarge = RoundedCornerShape(30.dp)) else CyclonShapes, typography = CyclonTypography) {
         CompositionLocalProvider(LocalContentColor provides ink, content = content)
     }
 }

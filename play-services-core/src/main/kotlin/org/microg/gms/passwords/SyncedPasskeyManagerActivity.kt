@@ -8,7 +8,6 @@ import android.view.View
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -53,57 +52,62 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { PasswordOwnerSurface {
+        setContent { CyclonMaterialTheme(glass = true) { PasswordOwnerSurface {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
                 item {
                     PasswordOwnerHeader(stringResource(R.string.passwords_synced_passkeys), account.name, onBack = ::finish)
                     if (!unlocked) PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner)
                     else {
                         CyclonNote(stringResource(R.string.passwords_passkey_management_description))
-                        PasswordOwnerActions { CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(refresh = true) } }
+                        PasswordOwnerActions { CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(refresh = true) } }
                     }
                     PasswordOwnerStatus(busy, message?.let { stringResource(it) })
                 }
                 if (unlocked) screen?.let { state ->
                     if (state.reset) item { PasswordOwnerText(stringResource(R.string.passwords_passkey_management_reset)) }
-                    if (state.pendingCreate || state.operation != null) item { CyclonSectionLabel(stringResource(R.string.passwords_changes)) }
-                    if (state.pendingCreate) item {
-                        CyclonRow(stringResource(R.string.passwords_passkey_management_pending_create), divider = false)
-                        Row(Modifier.padding(horizontal = 4.dp)) {
-                            CyclonTextAction(stringResource(R.string.passwords_passkey_management_close_create), enabled = !busy) { closeCreate = true }
+                    if (state.pendingCreate || state.operation != null) item {
+                        CyclonSectionLabel(stringResource(R.string.passwords_changes))
+                        CyclonGroup {
+                            // The actions' words in line with the row's (an action pads its words 16dp).
+                            val actions = Modifier.padding(start = LocalCyclonInset.current - 16.dp, bottom = 4.dp)
+                            if (state.pendingCreate) Column {
+                                CyclonRow(stringResource(R.string.passwords_passkey_management_pending_create))
+                                Row(actions) {
+                                    CyclonTextAction(stringResource(R.string.passwords_passkey_management_close_create), enabled = !busy) { closeCreate = true }
+                                }
+                            }
+                            state.operation?.let { operation -> Column {
+                                val conflict = operation.steps.any { it.phase == PasskeyOwnerPhase.CONFLICT }
+                                CyclonRow(stringResource(R.string.passwords_passkey_management_progress,
+                                    operation.steps.count { it.phase == PasskeyOwnerPhase.COMMITTED }, operation.steps.size),
+                                    listOfNotNull(stringResource(R.string.passwords_passkey_management_pending),
+                                        stringResource(R.string.passwords_passkey_management_conflict).takeIf { conflict }).joinToString("\n"))
+                                Row(actions) {
+                                    if (!state.reset && operation.kind != PasskeyOwnerKind.SECRET_UPDATE && !conflict)
+                                        CyclonTextAction(stringResource(R.string.passwords_retry_owner), enabled = !busy) { resolving = true }
+                                    CyclonTextAction(stringResource(R.string.passwords_passkey_management_close), enabled = !busy) { resolving = false }
+                                }
+                            } }
                         }
-                        CyclonHairline(Modifier.padding(start = 20.dp))
                     }
-                    state.operation?.let { operation -> item {
-                        val conflict = operation.steps.any { it.phase == PasskeyOwnerPhase.CONFLICT }
-                        CyclonRow(stringResource(R.string.passwords_passkey_management_progress,
-                            operation.steps.count { it.phase == PasskeyOwnerPhase.COMMITTED }, operation.steps.size),
-                            listOfNotNull(stringResource(R.string.passwords_passkey_management_pending),
-                                stringResource(R.string.passwords_passkey_management_conflict).takeIf { conflict }).joinToString("\n"), divider = false)
-                        Row(Modifier.padding(horizontal = 4.dp)) {
-                            if (!state.reset && operation.kind != PasskeyOwnerKind.SECRET_UPDATE && !conflict)
-                                CyclonTextAction(stringResource(R.string.passwords_retry_owner), enabled = !busy) { resolving = true }
-                            CyclonTextAction(stringResource(R.string.passwords_passkey_management_close), enabled = !busy) { resolving = false }
-                        }
-                        CyclonHairline(Modifier.padding(start = 20.dp))
-                    } }
                     if (!state.reset) item { CyclonSectionLabel(stringResource(R.string.passwords_synced_passkeys)) }
                     if (!state.reset && state.entries.isEmpty()) item { CyclonNote(stringResource(R.string.passwords_passkey_management_empty)) }
-                    items(state.entries, key = { it.data.tag }) { entry ->
+                    // One island: a list of passkeys is short, and an island cannot span lazy items.
+                    if (state.entries.isNotEmpty()) item { CyclonGroup { state.entries.forEach { entry -> key(entry.data.tag) { Column {
                         CyclonRow(entry.data.rpId, listOfNotNull(entry.data.username.ifEmpty { null }, entry.data.displayName.ifEmpty { null },
                             stringResource(R.string.passwords_passkey_management_hidden).takeIf { entry.data.hidden },
                             stringResource(R.string.passwords_passkey_management_shadowed).takeIf { entry.shadowed },
                             stringResource(R.string.passwords_passkey_management_record, entry.data.tag.take(12))).joinToString("\n"),
-                            divider = false, leading = { CyclonMonogram(entry.data.rpId) })
-                        Row(Modifier.padding(start = 54.dp)) {
+                            leading = { CyclonMonogram(entry.data.rpId) })
+                        // The actions line up with the relying party, after the monogram.
+                        Row(Modifier.padding(start = LocalCyclonInset.current + 50.dp - 16.dp, bottom = 4.dp)) {
                             CyclonTextAction(stringResource(R.string.passwords_passkey_management_edit), enabled = !busy && !entry.data.hidden &&
                                 state.operation == null && !state.pendingCreate) { editing = entry }
                             CyclonTextAction(stringResource(R.string.passwords_delete), enabled = !busy && state.operation == null && !state.pendingCreate) {
                                 deleting = entry
                             }
                         }
-                        CyclonHairline(Modifier.padding(start = 20.dp))
-                    }
+                    } } } } }
                 }
             }
             editing?.takeIf { unlocked }?.let { entry ->

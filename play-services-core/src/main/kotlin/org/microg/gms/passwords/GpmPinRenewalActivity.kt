@@ -39,7 +39,7 @@ class GpmPinRenewalActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(glass = true) {
             GpmPinRenewalScreen(account.name, unlocked, hasSecureScreenLock, busy, failed, status, confirmation,
                 onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner, onAsk = { confirmation = it },
                 onRefresh = { perform(GpmPinRenewalAction.REFRESH) }, onConfirm = { action -> confirmation = null; perform(action) })
@@ -111,7 +111,7 @@ internal fun GpmPinRenewalScreen(
                 CyclonInkButton(stringResource(R.string.passwords_pin_renewal_start), enabled = !busy) { onAsk(GpmPinRenewalAction.PREPARE) }
             if (status?.phase in setOf(GpmPinRenewalPhase.PREPARED, GpmPinRenewalPhase.VAULT_CONFIRMED))
                 CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_continue), enabled = !busy) { onAsk(GpmPinRenewalAction.CONTINUE) }
-            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
             if (status?.id != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
                 onAsk(GpmPinRenewalAction.CLOSE)
             }

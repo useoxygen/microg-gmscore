@@ -59,7 +59,7 @@ class EnclavePinActivity : PasswordOwnerActivity() {
         render()
         authenticateOwner()
     }
-    private fun render() = setContent { CyclonMaterialTheme {
+    private fun render() = setContent { CyclonMaterialTheme(glass = true) {
         EnclavePinScreen(account.name, unlocked, hasSecureScreenLock, busy, failed, status, change, arbitrary, pin, repeated,
             validInput(), confirmation,
             onBack = { cancel(); clearInput(); finish() }, onUnlock = ::authenticateOwner,
@@ -162,7 +162,7 @@ internal fun EnclavePinScreen(
         if (status != null && status.id == null && status.hasPin != null) {
             CyclonSectionLabel(stringResource(if (change) R.string.passwords_enclave_pin_change_action else R.string.passwords_enclave_pin_create_action))
             if (change) CyclonNote(stringResource(R.string.passwords_enclave_pin_change))
-            CyclonSwitchRow(stringResource(R.string.passwords_enclave_pin_arbitrary), null, arbitrary, onChange = onArbitrary, enabled = !busy)
+            CyclonGroup { CyclonSwitchRow(stringResource(R.string.passwords_enclave_pin_arbitrary), null, arbitrary, onChange = onArbitrary, enabled = !busy) }
             EnclavePinField(pin, R.string.passwords_enclave_pin_new, busy, arbitrary, onPin)
             EnclavePinField(repeated, R.string.passwords_enclave_pin_repeat, busy, arbitrary, onRepeated)
         }
@@ -172,7 +172,7 @@ internal fun EnclavePinScreen(
                     enabled = !busy && inputValid) { onAsk(EnclavePinAction.SET) }
             if (status?.phase in setOf(EnclavePinPhase.VAULT_PREPARED, EnclavePinPhase.VAULT_CONFIRMED))
                 CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_continue), enabled = !busy) { onAsk(EnclavePinAction.CONTINUE) }
-            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
             if (status?.id != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
                 onAsk(EnclavePinAction.CLOSE)
             }
@@ -193,5 +193,5 @@ private fun EnclavePinField(value: CharArray, label: Int, busy: Boolean, arbitra
     }, enabled = !busy, singleLine = true, label = { Text(stringResource(label)) },
         visualTransformation = PasswordVisualTransformation(), colors = cyclonFieldColors(),
         keyboardOptions = KeyboardOptions(keyboardType = if (arbitrary) KeyboardType.Password else KeyboardType.NumberPassword),
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp).fillMaxWidth().semantics { password() })
+        modifier = Modifier.padding(horizontal = CyclonFieldInset, vertical = 6.dp).fillMaxWidth().semantics { password() })
 }
