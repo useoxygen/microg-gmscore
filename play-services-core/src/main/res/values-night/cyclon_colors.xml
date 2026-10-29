@@ -7,6 +7,8 @@
     <color name="cyclon_muted">#8E8E96</color>
     <color name="cyclon_panel">#1C1C20</color>
     <color name="cyclon_line">#242427</color>
+    <!-- Unchecked switches, radio rings and secondary-button outlines (ShellColors.Mid). -->
+    <color name="cyclon_mid">#3B3B42</color>
     <!-- Dialogs, sheets and popups. -->
     <color name="cyclon_raised">#121214</color>
     <color name="cyclon_error">#D9453D</color>

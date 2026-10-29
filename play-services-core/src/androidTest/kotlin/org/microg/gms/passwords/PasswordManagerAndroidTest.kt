@@ -191,7 +191,8 @@ class PasswordManagerAndroidTest {
         try {
             launch(selected).use { scenario ->
                 openManager(scenario)
-                compose.onNodeWithText(selected + " ✓").assertExists()
+                // The storage choice is a radio row; the selected account is its selected node.
+                compose.onNode(hasText(selected) and isSelected()).assertExists()
                 if (!wasEnabled) tap(compose.onNode(isToggleable()))
                 else tap(compose.onNodeWithText(context.getString(R.string.passwords_refresh)))
                 compose.waitUntil(timeoutMillis = 30_000) {
