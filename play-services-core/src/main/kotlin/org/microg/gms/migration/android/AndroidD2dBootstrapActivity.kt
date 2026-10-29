@@ -81,12 +81,16 @@ class AndroidD2dBootstrapActivity : Activity() {
         // transport secret is not a transferred Google account or restore receipt.
         bootstrap?.close(); bootstrap=null
         try {
-            startActivity(Intent("com.google.android.apps.restore.ACTION_LAUNCH_WIFI_D2D").setPackage(SWITCH_PACKAGE)
-                .addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
-                .putExtra("is_quick_start",true).putExtra("after_account",true))
+            startActivity(copyStep())
             sessions.markLaunched(targetUid)
             finish()
         } catch(_: Exception) { message.setText(com.google.android.gms.R.string.android_d2d_missing_switch) }
     }
     override fun onDestroy() { bootstrap?.close(); bootstrap=null; super.onDestroy() }
 }
+
+/** Switch's copy step, as D2dWizardManager opens it: Switch then holds it until the copy ends instead of leaving after
+ * 3 s of copying (Quick Start's TransferringFragment), so its result means the copy is over (CYC-925). */
+internal fun copyStep(): Intent = Intent("com.google.android.apps.restore.ACTION_LAUNCH_WIFI_D2D").setPackage(SWITCH_PACKAGE)
+    .addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT)
+    .putExtra("is_quick_start",true).putExtra("after_account",true).putExtra("is_from_d2d_wizard_manager",true)

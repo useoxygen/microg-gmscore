@@ -18,6 +18,10 @@ internal object MigrationSwitchImport {
             if (setup.hasExtra("suw_session_id")) putExtra("suw_session_id", setup.getLongExtra("suw_session_id", -1))
             putExtra("is_quick_start", true)
             putExtra("after_account", true)
+            // As D2dWizardManager opens it: Switch then holds this step until the copy ends. Without it Switch's
+            // Quick Start leaves after 3 s of copying (TransferringFragment), and closing this session then cuts the
+            // iPhone copy short (CYC-925).
+            putExtra("is_from_d2d_wizard_manager", true)
             putExtra("suw_supports_ios_wifi_migration_state", true)
             putExtra("is_ios_wifi_d2d", true)
             putExtra("is_os_migration_import", true)
