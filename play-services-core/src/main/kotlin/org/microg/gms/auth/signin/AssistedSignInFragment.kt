@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.signin
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Dialog
@@ -91,7 +92,7 @@ class AssistedSignInFragment : BottomSheetDialogFragment() {
     }
 
     fun initView() {
-        accounts = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+        accounts = DeviceAccount.visible(requireContext(), accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
         lifecycleScope.launch {
             runCatching {
                 if (accounts.isEmpty()) {

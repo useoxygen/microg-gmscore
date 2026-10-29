@@ -15,7 +15,7 @@ tasks.register('testVersionAllocation') {
         // phone still runs the older installed pair. Source checks do not
         // establish signing, installation or device acceptance.
         def baselines = [
-            published: [gmsVersionCode: 254132103, vendingVersionCode: 84022703],
+            published: [gmsVersionCode: 254132104, vendingVersionCode: 84022704],
             installed: [gmsVersionCode: 254132096, vendingVersionCode: 84022699]
         ]
         def assertUpgradeFrom = { Map candidate, Map baseline, String label ->

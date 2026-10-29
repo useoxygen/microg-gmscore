@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.os.CancellationSignal
 import android.service.autofill.*
@@ -26,7 +27,7 @@ class PasswordAutofillService : AutofillService() {
                 val tickets = PasswordRequestTickets(this@PasswordAutofillService)
                 var canSave = false
                 val vaults: List<Pair<android.accounts.Account?, PasswordVault>> = listOf(null to DevicePasswordVault(this@PasswordAutofillService)) +
-                    AccountManager.get(this@PasswordAutofillService).getAccountsByType("com.google").mapNotNull { account ->
+                    DeviceAccount.visible(this@PasswordAutofillService, AccountManager.get(this@PasswordAutofillService).getAccountsByType("com.google")).mapNotNull { account ->
                         runCatching { account to PasswordRepository(this@PasswordAutofillService, account) }.getOrNull()
                     }
                 vaults.forEach { (account, repo) ->

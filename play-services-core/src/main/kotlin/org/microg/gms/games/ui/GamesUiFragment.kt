@@ -5,6 +5,7 @@
 
 package org.microg.gms.games.ui
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Activity.RESULT_OK
@@ -116,7 +117,8 @@ class GamesUiFragment : BottomSheetDialogFragment() {
         kotlin.runCatching {
             clientPackageName = arguments?.getString(KEY_PACKAGE_NAME)!!
             callerIntent = arguments?.getParcelable(KEY_CALLER_INTENT)!!
-            account = AccountManager.get(context).accounts.filter {
+            // Never Cyclon's device account, whichever key the caller passes (CYC-927).
+            account = DeviceAccount.visible(requireContext(), AccountManager.get(context).accounts).filter {
                 it.type == AuthConstants.DEFAULT_ACCOUNT_TYPE && Integer.toHexString(it.name.hashCode()) == arguments?.getString(KEY_ACCOUNT_KEY)
             }.getOrNull(0)
         }.onFailure {

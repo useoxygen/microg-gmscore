@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.credentials.identity
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.PendingIntent
@@ -108,7 +109,7 @@ class AuthorizationServiceImpl(val context: Context, val packageName: String, ov
             return buildPendingIntentResult(request)
         }
 
-        val account = AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).firstOrNull { it == candidate } ?: run {
+        val account = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)).firstOrNull { it == candidate } ?: run {
             AccountUtils.get(context).removeSelectedAccount(packageName)
             return buildPendingIntentResult(request)
         }

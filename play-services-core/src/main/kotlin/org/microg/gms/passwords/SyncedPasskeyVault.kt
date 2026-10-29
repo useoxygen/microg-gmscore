@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
@@ -271,7 +272,7 @@ class SyncedPasskeyVault(context: Context, val account: Account, val accountId: 
         }
         fun purgeRemovedAccounts(context: Context) = AndroidPasskeyStore.purge(context) {
             val manager = AccountManager.get(context)
-            manager.getAccountsByType("com.google").map { account ->
+            DeviceAccount.visible(context, manager.getAccountsByType("com.google")).map { account ->
                 val id = manager.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
                 "google:$id"
             }.toSet()

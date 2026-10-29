@@ -4,6 +4,7 @@
  */
 package com.google.android.gms.locationsharingreporter.service
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.content.Context
 import android.content.Intent
@@ -92,6 +93,9 @@ class LocationSharingReporterApiServiceImpl(
         override val lifecycle: Lifecycle
 ) : ILocationSharingReporterService.Stub(), LifecycleOwner {
     private val activePermissionRequestLock = Mutex()
+    /** Cyclon's device account has no location sharing (CYC-927): refused before any stored state, prompt, broadcast
+     *  or scheduled work, so it can never become the reporting account in the owner's place. */
+    private fun deviceAccount(account: Account) = !DeviceAccount.mayShow(context, account)
 
     override fun uploadLocation(callback: ILocationUploadCallbacks, account: Account, request: LocationUploadRequest, apiMetadata: ApiMetadata?) {
         Log.d(TAG, "Not yet implemented: uploadLocation called with account: ${account.name}")
@@ -111,6 +115,7 @@ class LocationSharingReporterApiServiceImpl(
 
     override fun startLocationReporting(callback: IStatusCallback, account: Account, request: StartLocationReportingRequest, apiMetadata: ApiMetadata?) {
         Log.d(TAG, "startLocationReporting called with account: ${account.name}, request: $request")
+        if (deviceAccount(account)) return callback.onResult(Status(CommonStatusCodes.INVALID_ACCOUNT))
         try {
             validateGoogleAccount(account)
             validateMakePrimaryOption(request.makePrimary)
@@ -190,6 +195,7 @@ class LocationSharingReporterApiServiceImpl(
 
     override fun stopLocationReporting(callback: IStatusCallback?, account: Account, request: StopLocationReportingRequest, apiMetadata: ApiMetadata?) {
         Log.d(TAG, "stopLocationReporting called with account: ${account.name}, request: $request")
+        if (deviceAccount(account)) { callback?.onResult(Status(CommonStatusCodes.INVALID_ACCOUNT)); return }
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -212,6 +218,7 @@ class LocationSharingReporterApiServiceImpl(
 
     override fun updateNoticeState(callback: IStatusCallback?, account: Account, request: NoticeAckedUpdateRequest, apiMetadata: ApiMetadata?) {
         Log.d(TAG, "updateNoticeState called with account: ${account.name}, request: $request")
+        if (deviceAccount(account)) { callback?.onResult(Status(CommonStatusCodes.INVALID_ACCOUNT)); return }
         try {
             callback?.onResult(Status.SUCCESS)
         } catch (e: NullPointerException) {
@@ -225,6 +232,7 @@ class LocationSharingReporterApiServiceImpl(
 
     override fun getReportingIssues(callback: ILocationReportingIssuesCallback, account: Account, apiMetadata: ApiMetadata?) {
         Log.d(TAG, "getReportingIssues called with account: ${account.name}")
+        if (deviceAccount(account)) return callback.onPeriodicLocationReportingIssues(Status(CommonStatusCodes.INVALID_ACCOUNT), null, ApiMetadata.SKIP)
         try {
             updateDeviceLocationSettingState(context)
             updateDeviceBatterySaverState(context)

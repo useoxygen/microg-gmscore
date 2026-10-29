@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.people
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -16,7 +17,7 @@ class ContactSyncAccountsReceiver : BroadcastReceiver() {
         worker.execute {
             try {
                 val accounts = AccountManager.get(context).getAccountsByType("com.google")
-                accounts.forEach { ContactSyncPreferences(context, it).ensureDefaults() }
+                DeviceAccount.visible(context, accounts).forEach { ContactSyncPreferences(context, it).ensureDefaults() }
                 // The automatic device-contacts opt-in belongs to one account; it ends when that account is removed.
                 DeviceContacts.autoAccount(context)?.let { name -> if (accounts.none { it.name == name }) DeviceContacts.setAutoAccount(context, null) }
             }

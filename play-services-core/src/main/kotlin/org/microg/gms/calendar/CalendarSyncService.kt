@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.calendar
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.*
 import android.app.Service
 import android.content.*
@@ -20,6 +21,8 @@ class CalendarSyncService : Service() {
     private val adapter by lazy { object : AbstractThreadedSyncAdapter(this, true) {
         override fun onPerformSync(account: Account, extras: Bundle, authority: String,
             provider: ContentProviderClient, result: SyncResult) {
+            // Cyclon's device account is only for registration: nothing is synced for it (CYC-927).
+            if (DeviceAccount.isDevice(this@CalendarSyncService, account)) return
             val prefs = CalendarSyncPreferences(this@CalendarSyncService, account)
             if (!prefs.enabled) return
             val twoWay = prefs.twoWay

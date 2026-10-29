@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.KeyguardManager
@@ -100,7 +101,7 @@ internal class AgentSignInBroker(private val context: Context) {
 
     private fun candidates(target: PasswordAgentFillTarget): Bundle {
         val rows = arrayListOf<Bundle>()
-        val owners: List<Account?> = listOf(null) + accounts.getAccountsByType("com.google").take(20)
+        val owners: List<Account?> = listOf(null) + DeviceAccount.visible(context, accounts.getAccountsByType("com.google")).take(20)
         for (account in owners) {
             // A locked/disabled account must not prevent using a separate available vault.
             try {

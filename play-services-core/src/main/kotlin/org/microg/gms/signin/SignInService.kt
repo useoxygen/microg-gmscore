@@ -5,6 +5,7 @@
 
 package org.microg.gms.signin
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
@@ -72,8 +73,10 @@ class SignInServiceImpl(val context: Context, override val lifecycle: Lifecycle,
                     SignInConfigurationService.getDefaultAccount(context, packageName)
                 }
                 val accountManager = AccountManager.get(context)
+                // Cyclon's device account is never signed in to or handed out, even when an app names it (CYC-927).
                 val account = request?.request?.account?.let { if (it.name == AuthConstants.DEFAULT_ACCOUNT) defaultAccount else it }
-                val result = if (account == null || !accountManager.getAccountsByType(account.type).contains(account)){
+                    ?.takeIf { DeviceAccount.mayShow(context, it) }
+                val result = if (account == null || !DeviceAccount.visible(context, accountManager.getAccountsByType(account.type)).contains(account)){
                     ConnectionResult(ConnectionResult.SIGN_IN_REQUIRED)
                 } else if (defaultAccount != null && account.name != defaultAccount.name) {
                     ConnectionResult(ConnectionResult.INVALID_ACCOUNT)

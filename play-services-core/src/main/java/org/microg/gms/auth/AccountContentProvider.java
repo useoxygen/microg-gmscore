@@ -20,6 +20,7 @@ import static android.accounts.AccountManager.VISIBILITY_VISIBLE;
 
 import android.Manifest;
 import android.accounts.Account;
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.AccountManager;
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -76,7 +77,8 @@ public class AccountContentProvider extends ContentProvider {
                 Account[] accounts = null;
                 if (arg != null && (arg.equals(DEFAULT_ACCOUNT_TYPE) || arg.startsWith(DEFAULT_ACCOUNT_TYPE + "."))) {
                     AccountManager am = AccountManager.get(getContext());
-                    accounts = am.getAccountsByTypeForPackage(arg, packageName);
+                    // Never Cyclon's device account, even where Android's visibility was not set yet (CYC-927).
+                    accounts = DeviceAccount.INSTANCE.visible(getContext(), am.getAccountsByTypeForPackage(arg, packageName));
                     if (SDK_INT >= 26 && accounts != null && arg.equals(DEFAULT_ACCOUNT_TYPE)) {
                         for (Account account : accounts) {
                             if (am.getAccountVisibility(account, packageName) == AccountManager.VISIBILITY_UNDEFINED &&
@@ -99,7 +101,8 @@ public class AccountContentProvider extends ContentProvider {
             } else if (PROVIDER_METHOD_CLEAR_PASSWORD.equals(method) && hasGooglePackagePermission
                     && !"com.google.android.apps.restore".equals(packageName)) {
                 Account a = extras.getParcelable(PROVIDER_EXTRA_CLEAR_PASSWORD);
-                AccountManager.get(getContext()).clearPassword(a);
+                // Cyclon's device account keeps its token: microG needs it to register the phone (CYC-927).
+                if (a != null && DeviceAccount.INSTANCE.mayShow(getContext(), a)) AccountManager.get(getContext()).clearPassword(a);
                 return null;
             }
             throw new UnsupportedOperationException(String.format("Unsupported method call %s(%s).", method, arg));

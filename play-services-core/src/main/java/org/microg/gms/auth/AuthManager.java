@@ -5,7 +5,9 @@
 
 package org.microg.gms.auth;
 
+import org.microg.gms.people.PeopleManager;
 import android.accounts.Account;
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.AccountManager;
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -118,15 +120,32 @@ public class AuthManager {
         return "perm." + buildTokenKey();
     }
 
+    /**
+     * Cyclon's device account is only for microG's device registration (CYC-927). For it, AuthManager serves microG's
+     * own registration services (its ac2dm token and profile at sign-in, the weblogin of the registration page) and refuses
+     * everything else to everyone: no app gets a token, an account ID or a sign-in for it, even with an earlier grant,
+     * by naming it directly or through microG's own identity, and no account-backed microG feature (sync, passwords,
+     * Find My Device, family, games, per-account push) runs for it. Check-in does not go through AuthManager.
+     */
+    private boolean refusedForCaller() {
+        if (DeviceAccount.INSTANCE.mayShow(context, getAccount())) return false;
+        // Its profile too (PeopleManager at sign-in): every Google account keeps its GoogleUserId, which microG relies on.
+        boolean registration = "ac2dm".equals(service) || PeopleManager.USERINFO_SCOPE.equals(service)
+                || (service != null && service.startsWith("weblogin:"));
+        return packageName == null || !packageName.equals(context.getPackageName()) || !registration;
+    }
+
     public void setPermitted(boolean value) {
+        if (refusedForCaller()) return;
         setUserData(buildPermKey(), value ? "1" : "0");
-        if (SDK_INT >= 26 && value && packageName != null) {
-            // Make account persistently visible as we already granted access
+        if (SDK_INT >= 26 && value && packageName != null && DeviceAccount.INSTANCE.mayShow(context, getAccount())) {
+            // Make account persistently visible as we already granted access (never Cyclon's device account, CYC-927)
             accountManager.setAccountVisibility(getAccount(), packageName, AccountManager.VISIBILITY_VISIBLE);
         }
     }
 
     public boolean isPermitted() {
+        if (refusedForCaller()) return false;
         if (!service.startsWith("oauth")) {
             if (context.getPackageManager().checkPermission(PERMISSION_TREE_BASE + service, packageName) == PackageManager.PERMISSION_GRANTED) {
                 return true;
@@ -182,6 +201,7 @@ public class AuthManager {
     }
 
     public boolean accountExists() {
+        if (refusedForCaller()) return false;
         for (Account refAccount : getAccountManager().getAccountsByType(accountType)) {
             if (refAccount.name.equalsIgnoreCase(accountName)) return true;
         }
@@ -189,7 +209,7 @@ public class AuthManager {
     }
 
     public String peekAuthToken() {
-        if (service.startsWith("weblogin:")) return null;
+        if (service.startsWith("weblogin:") || refusedForCaller()) return null;
         Log.d(TAG, "peekAuthToken: " + buildTokenKey());
         return getAccountManager().peekAuthToken(getAccount(), buildTokenKey());
     }
@@ -220,8 +240,8 @@ public class AuthManager {
     public void setAuthToken(String service, String auth) {
         if (service.startsWith("weblogin:")) return;
         getAccountManager().setAuthToken(getAccount(), buildTokenKey(service), auth);
-        if (SDK_INT >= 26 && packageName != null && auth != null) {
-            // Make account persistently visible as we already granted access
+        if (SDK_INT >= 26 && packageName != null && auth != null && DeviceAccount.INSTANCE.mayShow(context, getAccount())) {
+            // Make account persistently visible as we already granted access (never Cyclon's device account, CYC-927)
             accountManager.setAccountVisibility(getAccount(), packageName, AccountManager.VISIBILITY_VISIBLE);
         }
     }
@@ -317,6 +337,7 @@ public class AuthManager {
 
     @NonNull
     public AuthResponse requestAuth(boolean legacy) throws IOException {
+        if (refusedForCaller()) throw new IOException("Account unavailable");
         if (service.equals(AuthConstants.SCOPE_GET_ACCOUNT_ID)) {
             AuthResponse response = new AuthResponse();
             response.accountId = response.auth = getAccountManager().getUserData(getAccount(), "GoogleUserId");

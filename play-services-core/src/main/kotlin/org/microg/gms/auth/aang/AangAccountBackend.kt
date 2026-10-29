@@ -19,6 +19,7 @@ import org.microg.gms.auth.aang.AangParcelables.*
 import org.microg.gms.auth.capabilities.CapabilityStore
 import org.microg.gms.auth.capabilities.HasCapabilitiesResult
 import org.microg.gms.auth.capabilities.UserDataKeys
+import org.microg.gms.cyclon.DeviceAccount
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -93,7 +94,7 @@ internal class AangAccountBackend(
         return capabilityResult(account, capabilities)
     }
 
-    private fun visibleAccounts(): List<Account> = accounts.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).filter {
+    private fun visibleAccounts(): List<Account> = DeviceAccount.visible(context, accounts.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE).toList()).filter {
         // Match account-provider visibility without changing the owner's choices. A privileged ACCOUNT caller
         // may use default visibility, but an explicit hidden account stays hidden.
         accounts.getAccountVisibility(it, caller) !in setOf(AccountManager.VISIBILITY_NOT_VISIBLE, AccountManager.VISIBILITY_USER_MANAGED_NOT_VISIBLE)

@@ -17,6 +17,7 @@
 package org.microg.gms.auth;
 
 import android.accounts.Account;
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.AccountManager;
 import android.annotation.SuppressLint;
 import android.app.NotificationManager;
@@ -217,7 +218,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
             accounts = AccountManager.get(context).getAccountsByType(accountType);
         }
         Bundle res = new Bundle();
-        res.putParcelableArray(KEY_ACCOUNTS, accounts);
+        res.putParcelableArray(KEY_ACCOUNTS, DeviceAccount.INSTANCE.visible(context, accounts));
         return res;
     }
 
@@ -234,7 +235,7 @@ public class AuthManagerServiceImpl extends IAuthManagerService.Stub {
             Map<Account, Integer> visibilityForPackage = get(context).getAccountsAndVisibilityForPackage(packageName, AuthConstants.DEFAULT_ACCOUNT_TYPE);
             for (Account account : get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)) {
                 Integer visibility = visibilityForPackage.get(account);
-                if (visibility != null && visibility != VISIBILITY_VISIBLE) {
+                if (visibility != null && visibility != VISIBILITY_VISIBLE && DeviceAccount.INSTANCE.mayShow(context, account)) {
                     get(context).setAccountVisibility(account, packageName, VISIBILITY_VISIBLE);
                 }
             }

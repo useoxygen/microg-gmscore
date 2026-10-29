@@ -5,6 +5,7 @@
 
 package org.microg.gms.accountsettings.ui
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.content.Intent
 import android.content.Intent.*
@@ -71,7 +72,7 @@ class LoaderActivity : AppCompatActivity() {
     private fun launchMain() {
         val requestedAccountName = intent.getStringExtra(EXTRA_ACCOUNT_NAME)
         val ignoreAccount = intent?.getBooleanExtra(EXTRA_IGNORE_ACCOUNT, false) ?: false
-        val accounts = AccountManager.get(this).getAccountsByType(DEFAULT_ACCOUNT_TYPE)
+        val accounts = DeviceAccount.visible(this, AccountManager.get(this).getAccountsByType(DEFAULT_ACCOUNT_TYPE))
         val account = if (requestedAccountName != null) {
             val account = accounts.find { it.name == requestedAccountName }
             if (account == null) {

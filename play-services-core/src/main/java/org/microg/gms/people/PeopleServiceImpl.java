@@ -16,6 +16,7 @@
 
 package org.microg.gms.people;
 
+import org.microg.gms.cyclon.DeviceAccount;
 import android.Manifest;
 import android.accounts.Account;
 import android.accounts.AccountManager;
@@ -50,6 +51,21 @@ public class PeopleServiceImpl extends IPeopleService.Stub {
     }
 
     @SuppressWarnings("MissingPermission")
+    /** The owner profiles apps never get: Cyclon's device accounts on this phone and its known addresses (CYC-927). */
+    private java.util.Set<String> hiddenOwners() {
+        java.util.Set<String> hidden = new java.util.HashSet<>();
+        if (DeviceAccount.INSTANCE.shown()) return hidden;
+        hidden.addAll(DeviceAccount.INSTANCE.getADDRESSES());
+        for (Account account : AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)) {
+            if (DeviceAccount.INSTANCE.isDevice(context, account)) hidden.add(account.name);
+        }
+        return hidden;
+    }
+
+    private boolean hiddenOwner(String accountName) {
+        return !DeviceAccount.INSTANCE.shown() && DeviceAccount.INSTANCE.isDevice(context, accountName);
+    }
+
     @Override
     public void loadOwners(final IPeopleCallbacks callbacks, boolean var2, boolean var3, final String accountName, String var5, int sortOrder) {
         Log.d(TAG, "loadOwners: " + var2 + ", " + var3 + ", " + accountName + ", " + var5 + ", " + sortOrder);
@@ -59,7 +75,7 @@ public class PeopleServiceImpl extends IPeopleService.Stub {
         AccountManager accountManager = AccountManager.get(context);
         Bundle accountMetadata = new Bundle();
         String accountType = AuthConstants.DEFAULT_ACCOUNT_TYPE;
-        for (Account account : accountManager.getAccountsByType(accountType)) {
+        for (Account account : DeviceAccount.INSTANCE.visible(context, accountManager.getAccountsByType(accountType))) {
             if (accountName == null || account.name.equals(accountName)) {
                 accountMetadata.putParcelable(account.name, new AccountMetadata());
             }
@@ -68,7 +84,7 @@ public class PeopleServiceImpl extends IPeopleService.Stub {
         extras.putBundle("account_metadata", accountMetadata);
         try {
             DatabaseHelper databaseHelper = new DatabaseHelper(context);
-            DataHolder dataHolder = new DataHolder(databaseHelper.getOwners(), 0, extras);
+            DataHolder dataHolder = new DataHolder(databaseHelper.getOwnersExcept(hiddenOwners()), 0, extras);
             Log.d(TAG, "loadOwners[result]: " + dataHolder);
             callbacks.onDataHolder(0, extras, dataHolder);
             databaseHelper.close();
@@ -94,6 +110,10 @@ public class PeopleServiceImpl extends IPeopleService.Stub {
     public void loadCircles(IPeopleCallbacks callbacks, String account, String pageGaiaId, String circleId, int type, String var6, boolean var7) throws RemoteException {
         Log.d(TAG, "loadCircles: " + account + ", " + pageGaiaId + ", " + circleId + ", " + type + ", " + var6 + ", " + var7);
         PackageUtils.assertGooglePackagePermission(context, GooglePackagePermission.PEOPLE);
+        if (hiddenOwner(account)) {
+            callbacks.onDataHolder(0, new Bundle(), null); // Cyclon's device account has no circles for apps (CYC-927).
+            return;
+        }
         try {
             DatabaseHelper databaseHelper = new DatabaseHelper(context);
             Cursor owner = databaseHelper.getOwner(account);
@@ -128,7 +148,8 @@ public class PeopleServiceImpl extends IPeopleService.Stub {
                 extras.putBoolean("rewindable", false);
                 extras.putInt("width", 0);
                 extras.putInt("height", 0);
-                File avaterFile = PeopleManager.getOwnerAvatarFile(context, account, true);
+                // Cyclon's device account has no avatar for apps (CYC-927).
+                File avaterFile = hiddenOwner(account) ? null : PeopleManager.getOwnerAvatarFile(context, account, true);
                 try {
                     ParcelFileDescriptor fileDescriptor = null;
                     if (avaterFile != null) {

@@ -6,6 +6,7 @@
 
 package org.microg.gms.ui
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
@@ -100,7 +101,7 @@ class AccountsFragment : PreferenceFragmentCompat() {
         val context = requireContext()
 
         val accountManager = AccountManager.get(context)
-        val accounts = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+        val accounts = DeviceAccount.visible(requireContext(), accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
 
         findPreference<Preference>(PREF_ACCOUNTS_NONE)?.isVisible = accounts.isEmpty()
         val preferenceCategory = findPreference<PreferenceCategory>(PREFCAT_ACCOUNTS) ?: return

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.people
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
@@ -122,7 +123,7 @@ class ContactsSyncActivity : ComponentActivity() {
                         Header()
                         @Suppress("UNUSED_EXPRESSION")
                         revision
-                        val accounts = AccountManager.get(this@ContactsSyncActivity).getAccountsByType("com.google")
+                        val accounts = DeviceAccount.visible(this@ContactsSyncActivity, AccountManager.get(this@ContactsSyncActivity).getAccountsByType("com.google"))
                         // Platform settings aren't observable: read them here, on every revision tick, and pass them down.
                         val privacy = ContactMigrationPrivacy(this@ContactsSyncActivity)
                         if (com.google.android.gms.BuildConfig.DEBUG) DeveloperControls(privacy.developerControlsEnabled)
@@ -243,7 +244,7 @@ class ContactsSyncActivity : ComponentActivity() {
             dismissButton = { CyclonTextButton(onClick = { autoSyncConfirmation = false }) { Text(stringResource(R.string.contacts_sync_cancel)) } })
     }
 
-    private fun syncTargets() = AccountManager.get(this).getAccountsByType("com.google")
+    private fun syncTargets() = DeviceAccount.visible(this, AccountManager.get(this).getAccountsByType("com.google"))
         .filter { ContactSyncPreferences(this, it).mode == SyncMode.TWO_WAY }
 
     private var deviceEntries by mutableStateOf<List<DeviceContacts.Entry>?>(null)

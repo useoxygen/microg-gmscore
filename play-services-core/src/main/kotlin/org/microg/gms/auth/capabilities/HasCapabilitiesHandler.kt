@@ -4,6 +4,7 @@
  */
 package org.microg.gms.auth.capabilities
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
@@ -29,6 +30,8 @@ class HasCapabilitiesHandler(private val context: Context) {
      */
     fun handle(request: HasCapabilitiesRequest): Int {
         val account: Account = request.account ?: return HasCapabilitiesResult.NOT_IN_CACHE
+        // Cyclon's device account answers as an unknown account does, before any cache or service lookup (CYC-927).
+        if (!DeviceAccount.mayShow(context, account)) return HasCapabilitiesResult.NOT_IN_CACHE
         val caps = request.capabilities?.toSet().orEmpty()
         if (caps.isEmpty()) return HasCapabilitiesResult.ALLOWED
 

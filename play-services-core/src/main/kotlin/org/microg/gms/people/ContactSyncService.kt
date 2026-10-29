@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.people
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.accounts.AuthenticatorException
@@ -28,6 +29,8 @@ class ContactSyncService : Service() {
         object : AbstractThreadedSyncAdapter(this, true) {
             override fun onPerformSync(account: Account, extras: Bundle, authority: String,
                 provider: ContentProviderClient, result: SyncResult) {
+                // Cyclon's device account is only for registration: nothing is synced for it (CYC-927).
+                if (DeviceAccount.isDevice(this@ContactSyncService, account)) return
                 val prefs = ContactSyncPreferences(this@ContactSyncService, account)
                 prefs.ensureDefaults()
                 if (prefs.mode == SyncMode.OFF) return

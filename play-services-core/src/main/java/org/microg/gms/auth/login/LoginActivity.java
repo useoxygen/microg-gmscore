@@ -16,6 +16,7 @@
 
 package org.microg.gms.auth.login;
 
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.Account;
 import android.accounts.AccountAuthenticatorResponse;
 import android.accounts.AccountManager;
@@ -177,14 +178,24 @@ public class LoginActivity extends AssistantActivity {
         }
         if (getIntent().hasExtra(EXTRA_RE_AUTH_ACCOUNT)) {
             reAuthAccount = getIntent().getParcelableExtra(EXTRA_RE_AUTH_ACCOUNT);
+            // Cyclon's device account is never signed in again through this exported screen (CYC-927).
+            if (reAuthAccount != null && !DeviceAccount.INSTANCE.mayShow(this, reAuthAccount)) reAuthAccount = null;
             isReAuth = reAuthAccount != null;
         }
         if (getIntent().hasExtra(EXTRA_TOKEN)) {
             if (getIntent().hasExtra(EXTRA_EMAIL)) {
                 AccountManager accountManager = AccountManager.get(this);
                 Account account = new Account(getIntent().getStringExtra(EXTRA_EMAIL), accountType);
-                accountManager.addAccountExplicitly(account, getIntent().getStringExtra(EXTRA_TOKEN), null);
-                if (isAuthVisible(this) && SDK_INT >= 26) {
+                // Only an account this intent adds goes on: an existing one (Cyclon's device account above all, CYC-927) is
+                // never signed in again with its stored token for a caller of this exported screen, nor confirmed to it.
+                if (!accountManager.addAccountExplicitly(account, getIntent().getStringExtra(EXTRA_TOKEN), null)) {
+                    if (response != null) response.onError(AccountManager.ERROR_CODE_BAD_ARGUMENTS, "Account unavailable");
+                    setResult(RESULT_CANCELED);
+                    finish();
+                    return;
+                }
+                if (isAuthVisible(this) && SDK_INT >= 26 && DeviceAccount.INSTANCE.mayShow(this, account)) {
+                    // Never Cyclon's device account (CYC-927): it stays hidden from every app.
                     accountManager.setAccountVisibility(account, PACKAGE_NAME_KEY_LEGACY_NOT_VISIBLE, VISIBILITY_USER_MANAGED_VISIBLE);
                 }
                 retrieveGmsToken(account);
@@ -414,6 +425,8 @@ public class LoginActivity extends AssistantActivity {
             bd.putString(AccountManager.KEY_ACCOUNT_TYPE,accountType);
             response.onResult(bd);
         }
+        // Cyclon's device account is hidden from FakeStore too, which could not find it (CYC-927).
+        if (!DeviceAccount.INSTANCE.mayShow(this, account)) return;
         Intent intent = new Intent(ACTION_UPDATE_ACCOUNT);
         intent.setPackage(VENDING_PACKAGE_NAME);
         intent.putExtra(AccountManager.KEY_ACCOUNT_NAME, account.name);
@@ -440,7 +453,8 @@ public class LoginActivity extends AssistantActivity {
                         String accountId = PeopleManager.loadUserInfo(LoginActivity.this, account);
                         if (!TextUtils.isEmpty(accountId))
                             accountManager.setUserData(account, "GoogleUserId", accountId);
-                        if (isAuthVisible(LoginActivity.this) && SDK_INT >= 26) {
+                        if (isAuthVisible(LoginActivity.this) && SDK_INT >= 26 && DeviceAccount.INSTANCE.mayShow(LoginActivity.this, account)) {
+                            // Never Cyclon's device account (CYC-927): it stays hidden from every app.
                             accountManager.setAccountVisibility(account, PACKAGE_NAME_KEY_LEGACY_NOT_VISIBLE, VISIBILITY_USER_MANAGED_VISIBLE);
                         }
                         checkin(true);
@@ -552,7 +566,7 @@ public class LoginActivity extends AssistantActivity {
         @JavascriptInterface
         public final String getAccounts() {
             Log.d(TAG, "JSBridge: getAccounts");
-            Account[] accountsByType = accountManager.getAccountsByType(accountType);
+            Account[] accountsByType = DeviceAccount.INSTANCE.visible(LoginActivity.this, accountManager.getAccountsByType(accountType));
             JSONArray json = new JSONArray();
             for (Account account : accountsByType) {
                 json.put(account.name);

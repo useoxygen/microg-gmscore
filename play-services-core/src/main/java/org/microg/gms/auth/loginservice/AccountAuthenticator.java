@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.loginservice;
 
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.AbstractAccountAuthenticator;
 import android.accounts.Account;
 import android.accounts.AccountAuthenticatorResponse;
@@ -138,6 +139,14 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         if (app == null) {
             Bundle result = new Bundle();
             result.putInt(KEY_ERROR_CODE, ERROR_CODE_BAD_REQUEST);
+            return result;
+        }
+        if (!app.equals(context.getPackageName()) && !DeviceAccount.INSTANCE.mayShow(context, account)) {
+            // Cyclon's device account belongs to microG alone (CYC-927), whatever package the caller says it acts
+            // for: decided on the verified caller, before any package override, consent screen or earlier grant.
+            Bundle result = new Bundle();
+            result.putInt(KEY_ERROR_CODE, ERROR_CODE_BAD_ARGUMENTS);
+            result.putString(KEY_ERROR_MESSAGE, "Account unavailable");
             return result;
         }
         if (options.containsKey(KEY_OVERRIDE_PACKAGE) || options.containsKey(KEY_OVERRIDE_CERTIFICATE)) {

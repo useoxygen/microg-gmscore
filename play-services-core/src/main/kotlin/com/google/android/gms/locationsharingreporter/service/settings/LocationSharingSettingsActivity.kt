@@ -4,6 +4,7 @@
  */
 package com.google.android.gms.locationsharingreporter.service.settings
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
@@ -62,9 +63,11 @@ class LocationSharingSettingsActivity : AppCompatActivity() {
 
         val accountName = intent.getStringExtra("account_name")
         Log.d(TAG, "account name: $accountName")
-        if (accountName.isNullOrEmpty()) {
+        // Cyclon's device account has no location sharing (CYC-927): closed before its name or avatar shows.
+        if (accountName.isNullOrEmpty() || DeviceAccount.isDevice(this, accountName) && !DeviceAccount.shown()) {
             Log.w(TAG, "Missing account name")
             finish()
+            return
         }
         val ivAvatar = findViewById<ImageView>(R.id.avatar_iv)
         if (accountName != null) {

@@ -5,6 +5,7 @@
 
 package org.microg.gms.ui
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.annotation.SuppressLint
 import android.os.Bundle
@@ -81,7 +82,7 @@ class GameProfileFragment : PreferenceFragmentCompat() {
             allowUploadGamePlayed.isChecked = GameProfileSettings.getAllowUploadGamePlayed(requireContext())
 
             val hasGamePlayAccount = runCatching {
-                AccountManager.get(requireContext()).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+                DeviceAccount.visible(requireContext(), AccountManager.get(requireContext()).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
             }.getOrNull()?.any { GamesConfigurationService.getPlayer(requireContext(), it) != null }
             deletePlayGamesAccountPreference.isVisible = hasGamePlayAccount == true
             changeDefaultAccountPreference.isVisible = hasGamePlayAccount == true

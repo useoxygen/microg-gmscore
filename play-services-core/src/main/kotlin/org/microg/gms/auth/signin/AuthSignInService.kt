@@ -15,6 +15,7 @@
  */
 package org.microg.gms.auth.signin
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.content.Context
 import android.os.Bundle
@@ -92,7 +93,9 @@ class AuthSignInServiceImpl(
                         return@launchWhenStarted
                     }
                 }
-                val account = currentAccount ?: SignInConfigurationService.getDefaultAccount(context, packageName)
+                // Cyclon's device account is never signed in to by an app, even when it names it (CYC-927).
+                val account = (currentAccount ?: SignInConfigurationService.getDefaultAccount(context, packageName))
+                    ?.takeIf { DeviceAccount.mayShow(context, it) }
                 Log.d(TAG, "silentSignIn: account -> ${account?.name}")
                 if (account != null && options?.isForceCodeForRefreshToken != true) {
                     if (getOAuthManager(context, packageName, options, account).isPermitted || AuthPrefs.isTrustGooglePermitted(context)) {
