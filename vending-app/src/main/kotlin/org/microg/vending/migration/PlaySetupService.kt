@@ -50,6 +50,7 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
     constructor(queue: MigrationInstallQueue, trusted: () -> Boolean, execute: (() -> Unit) -> Unit) : this({ queue }, trusted, execute)
     private val queue by lazy(open)
     // A Play lookup took 6.6 s (median) on customer-96's phone (10-29), so 8 at a time ran out of time on 50 apps.
+    // Each lookup holds one of Aurora's (about 16) binder threads, which its token replies and status calls need too.
     private val lookups = Executors.newFixedThreadPool(LOOKUPS)
     init { attachInterface(null, PlaySetupService.DESCRIPTOR) }
     fun close() { lookups.shutdownNow() }
@@ -158,10 +159,13 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
         if (retry.isNotEmpty() && deadline - System.nanoTime() > TimeUnit.SECONDS.toNanos(RETRY_MIN_SECONDS)) {
             preparationFailures(lookUp(retry.map { names[it] }, deadline)).forEachIndexed { at, result -> documents[retry[at]] = result }
         }
-        // Switch drops an app this batch leaves out, and the owner never sees it to choose. One the store could not
-        // check in time is listed under its package name instead: once chosen, its install looks it up again with
-        // every fallback, and a real failure shows in the results with Retry.
-        for (at in documents.indices) if (documents[at].getString("error") == "lookup_timeout") documents[at] = unchecked(names[at])
+        // Switch drops an app this batch leaves out, and the owner never sees it to choose. While the store answers,
+        // one it could not check in time is listed under its package name instead: once chosen, its install looks it
+        // up again with every fallback, and a real failure shows in the results with Retry. A store that answered
+        // none still fails the batch below, so Switch retries it.
+        if (documents.any { it.getInt("availability") == 1 }) {
+            for (at in documents.indices) if (documents[at].getString("error") == "lookup_timeout") documents[at] = unchecked(names[at])
+        }
         queue.recordCatalog(documents)
         return PlaySetupService.catalog(documents).apply {
             // Only a store outage fails the whole batch: Switch retries the operation and otherwise drops every app in
@@ -199,7 +203,7 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
          * call, AppDetailsHelper.getCompatibleDocuments); this bounds its "checking apps" wait.
          */
         @VisibleForTesting internal var catalogSeconds = 75L
-        private const val LOOKUPS = 16
+        private const val LOOKUPS = 12
         /** Time left in the catalog deadline needed for a second lookup of apps that failed for a passing reason. */
         private const val RETRY_MIN_SECONDS = 5L
         private fun validate(names: List<String>): List<String> {

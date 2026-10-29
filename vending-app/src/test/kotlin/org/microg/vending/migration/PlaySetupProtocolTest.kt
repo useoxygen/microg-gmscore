@@ -222,6 +222,7 @@ class PlaySetupProtocolTest {
     /** customer-96 (10-29): about 20 of a batch of 50 were still being checked when the batch ran out of time. */
     @Test fun anAppTheStoreHasNotCheckedInTimeIsStillListedForTheOwnerToChoose() {
         slow += MISSING
+        val previous = PlaySetupProtocol.catalogSeconds
         PlaySetupProtocol.catalogSeconds = 1
         try {
             val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
@@ -231,7 +232,19 @@ class PlaySetupProtocolTest {
             assertEquals(MISSING, listed.getValue(MISSING).getString("title"))
             assertTrue(resultDocuments(result, "unrestorable_document_groups").isEmpty())
             assertTrue(MISSING !in queue.retryDocuments(queue.currentSessionId()!!).map { it.getString("package_name") })
-        } finally { PlaySetupProtocol.catalogSeconds = 75 }
+        } finally { PlaySetupProtocol.catalogSeconds = previous }
+    }
+
+    /** A store that answers none of the batch in time still fails it, so Switch retries instead of listing guesses. */
+    @Test fun aStoreThatAnswersNothingInTimeStillFailsTheBatch() {
+        slow += listOf(APP, MISSING)
+        val previous = PlaySetupProtocol.catalogSeconds
+        PlaySetupProtocol.catalogSeconds = 1
+        try {
+            val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+            assertEquals("StoreUnavailableException", result.getBundle("error")?.getString("exception_type"))
+            assertTrue(resultDocuments(result, "document_groups").isEmpty())
+        } finally { PlaySetupProtocol.catalogSeconds = previous }
     }
 
     @Test fun theOwnerCanStillAddAnAppSwitchLeftOutForAPassingFailure() {
