@@ -119,7 +119,17 @@ public class AuthManager {
         return "perm." + buildTokenKey();
     }
 
+    /**
+     * Cyclon's device account belongs to microG alone (CYC-927): no other app gets a token, an account ID or a sign-in
+     * for it, even with an earlier grant or by naming it directly. microG itself keeps using it (check-in, registration).
+     */
+    private boolean refusedForCaller() {
+        return packageName != null && !packageName.equals(context.getPackageName())
+                && !DeviceAccount.INSTANCE.mayShow(context, getAccount());
+    }
+
     public void setPermitted(boolean value) {
+        if (refusedForCaller()) return;
         setUserData(buildPermKey(), value ? "1" : "0");
         if (SDK_INT >= 26 && value && packageName != null && DeviceAccount.INSTANCE.mayShow(context, getAccount())) {
             // Make account persistently visible as we already granted access (never Cyclon's device account, CYC-927)
@@ -128,6 +138,7 @@ public class AuthManager {
     }
 
     public boolean isPermitted() {
+        if (refusedForCaller()) return false;
         if (!service.startsWith("oauth")) {
             if (context.getPackageManager().checkPermission(PERMISSION_TREE_BASE + service, packageName) == PackageManager.PERMISSION_GRANTED) {
                 return true;
@@ -183,6 +194,7 @@ public class AuthManager {
     }
 
     public boolean accountExists() {
+        if (refusedForCaller()) return false;
         for (Account refAccount : getAccountManager().getAccountsByType(accountType)) {
             if (refAccount.name.equalsIgnoreCase(accountName)) return true;
         }
@@ -190,7 +202,7 @@ public class AuthManager {
     }
 
     public String peekAuthToken() {
-        if (service.startsWith("weblogin:")) return null;
+        if (service.startsWith("weblogin:") || refusedForCaller()) return null;
         Log.d(TAG, "peekAuthToken: " + buildTokenKey());
         return getAccountManager().peekAuthToken(getAccount(), buildTokenKey());
     }
@@ -318,6 +330,7 @@ public class AuthManager {
 
     @NonNull
     public AuthResponse requestAuth(boolean legacy) throws IOException {
+        if (refusedForCaller()) throw new IOException("Account unavailable");
         if (service.equals(AuthConstants.SCOPE_GET_ACCOUNT_ID)) {
             AuthResponse response = new AuthResponse();
             response.accountId = response.auth = getAccountManager().getUserData(getAccount(), "GoogleUserId");

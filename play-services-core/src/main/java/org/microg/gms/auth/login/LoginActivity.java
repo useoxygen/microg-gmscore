@@ -415,6 +415,8 @@ public class LoginActivity extends AssistantActivity {
             bd.putString(AccountManager.KEY_ACCOUNT_TYPE,accountType);
             response.onResult(bd);
         }
+        // Cyclon's device account is hidden from FakeStore too, which could not find it (CYC-927).
+        if (!DeviceAccount.INSTANCE.mayShow(this, account)) return;
         Intent intent = new Intent(ACTION_UPDATE_ACCOUNT);
         intent.setPackage(VENDING_PACKAGE_NAME);
         intent.putExtra(AccountManager.KEY_ACCOUNT_NAME, account.name);

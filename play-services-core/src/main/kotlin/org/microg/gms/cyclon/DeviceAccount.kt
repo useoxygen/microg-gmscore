@@ -25,8 +25,10 @@ import java.util.concurrent.Executors
  * Hiding works on two levels. Android's account visibility hides it from every other app, privileged ones included
  * ([hideFromApps]: explicit NOT_VISIBLE for every package that has a setting, and both legacy defaults, which decide
  * for apps without one). microG, the account's own authenticator, always sees it, so microG's screens and the answers
- * it gives apps drop it themselves ([visible]). On a test phone `adb shell setprop debug.cyclon.show_device_account 1`
- * shows it again in microG's own screens (a debug.* property only the shell can set); other apps stay hidden.
+ * it gives apps drop it themselves ([visible]); microG gives no app a token, ID or sign-in for it (AuthManager). On a test
+ * phone `adb shell setprop debug.cyclon.show_device_account 1` (a debug.* property only the shell can set) turns microG's
+ * own hiding off: its screens and answers list it again and apps may use it through microG. Android's visibility settings
+ * stay as they are, and on Cyclon's OS the system lists still leave it out.
  */
 object DeviceAccount {
     private const val TAG = "CyclonDeviceAccount"
@@ -89,6 +91,11 @@ object DeviceAccount {
                 var syncsOff = 0
                 for (adapter in ContentResolver.getSyncAdapterTypes()) {
                     if (adapter.accountType != account.type) continue
+                    // No scheduled syncs either: a sync that is off but still scheduled only wakes the sync system.
+                    for (periodic in ContentResolver.getPeriodicSyncs(account, adapter.authority)) {
+                        ContentResolver.removePeriodicSync(account, adapter.authority, periodic.extras)
+                        syncsOff++
+                    }
                     if (ContentResolver.getIsSyncable(account, adapter.authority) != 0) {
                         ContentResolver.cancelSync(account, adapter.authority)
                         ContentResolver.setSyncAutomatically(account, adapter.authority, false)
