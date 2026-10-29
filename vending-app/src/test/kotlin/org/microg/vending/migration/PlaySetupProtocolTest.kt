@@ -30,6 +30,7 @@ class PlaySetupProtocolTest {
     private val catalog = mutableMapOf<String, Bundle>()
     /** Answers to give, in order, before falling back to [catalog]. */
     private val lookups = mutableMapOf<String, ArrayDeque<Bundle>>()
+    private val slow = mutableSetOf<String>()
     private var pauseSucceeds = true
     private var ready = true
     private var supportsHold = true
@@ -41,6 +42,7 @@ class PlaySetupProtocolTest {
         context.getSharedPreferences("migration-installs", 0).edit().clear().commit()
         queue = MigrationInstallQueue(context, storeCall = { operation, name ->
             calls += operation to name
+            if (operation == 1 && name in slow) Thread.sleep(3_000)
             when (operation) {
                 1 -> Bundle(lookups[name]?.removeFirstOrNull() ?: catalog[name] ?: document(name))
                 2 -> receipt(name, "queued")
@@ -215,6 +217,21 @@ class PlaySetupProtocolTest {
         assertTrue(missing.getBoolean("recoverable"))
         assertEquals(2, calls.count { it == 1 to MISSING }) // asked once more before leaving it out
         assertEquals(1, calls.count { it == 1 to APP })
+    }
+
+    /** customer-96 (10-29): about 20 of a batch of 50 were still being checked when the batch ran out of time. */
+    @Test fun anAppTheStoreHasNotCheckedInTimeIsStillListedForTheOwnerToChoose() {
+        slow += MISSING
+        PlaySetupProtocol.catalogSeconds = 1
+        try {
+            val result = bundle(7) { writeString(null); writeStringArray(arrayOf(APP, MISSING)) }
+            assertNull(result.getBundle("error"))
+            val listed = resultDocuments(result, "document_groups").associateBy { it.getString("package_name") }
+            assertEquals(setOf(APP, MISSING), listed.keys)
+            assertEquals(MISSING, listed.getValue(MISSING).getString("title"))
+            assertTrue(resultDocuments(result, "unrestorable_document_groups").isEmpty())
+            assertTrue(MISSING !in queue.retryDocuments(queue.currentSessionId()!!).map { it.getString("package_name") })
+        } finally { PlaySetupProtocol.catalogSeconds = 75 }
     }
 
     @Test fun theOwnerCanStillAddAnAppSwitchLeftOutForAPassingFailure() {

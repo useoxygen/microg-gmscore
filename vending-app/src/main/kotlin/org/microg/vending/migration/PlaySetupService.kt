@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.vending.migration
 
+import androidx.annotation.VisibleForTesting
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
@@ -48,7 +49,8 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
     private val trusted: () -> Boolean, private val execute: (() -> Unit) -> Unit) : Binder() {
     constructor(queue: MigrationInstallQueue, trusted: () -> Boolean, execute: (() -> Unit) -> Unit) : this({ queue }, trusted, execute)
     private val queue by lazy(open)
-    private val lookups = Executors.newFixedThreadPool(8)
+    // A Play lookup took 6.6 s (median) on customer-96's phone (10-29), so 8 at a time ran out of time on 50 apps.
+    private val lookups = Executors.newFixedThreadPool(LOOKUPS)
     init { attachInterface(null, PlaySetupService.DESCRIPTOR) }
     fun close() { lookups.shutdownNow() }
     override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
@@ -142,7 +144,7 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
             return PlaySetupService.catalog(documents).apply { putAll(storeUpdateError()) }
         }
         val prepared = queue.control(6)
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(45)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(catalogSeconds)
         fun preparationFailures(results: List<Bundle>) = results.onEach { result ->
             if (!prepared.getBoolean("ready") && result.getString("error") in setOf("anonymous_sign_in_required", "store_unavailable")) {
                 result.putBoolean("recoverable", true)
@@ -156,6 +158,10 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
         if (retry.isNotEmpty() && deadline - System.nanoTime() > TimeUnit.SECONDS.toNanos(RETRY_MIN_SECONDS)) {
             preparationFailures(lookUp(retry.map { names[it] }, deadline)).forEachIndexed { at, result -> documents[retry[at]] = result }
         }
+        // Switch drops an app this batch leaves out, and the owner never sees it to choose. One the store could not
+        // check in time is listed under its package name instead: once chosen, its install looks it up again with
+        // every fallback, and a real failure shows in the results with Retry.
+        for (at in documents.indices) if (documents[at].getString("error") == "lookup_timeout") documents[at] = unchecked(names[at])
         queue.recordCatalog(documents)
         return PlaySetupService.catalog(documents).apply {
             // Only a store outage fails the whole batch: Switch retries the operation and otherwise drops every app in
@@ -177,6 +183,10 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
         }
     }
     private fun Bundle.retryable() = getInt("availability") != 1 && getBoolean("recoverable") && getString("error") != "lookup_timeout"
+    private fun unchecked(name: String) = Bundle().apply {
+        putString("package_name", name); putString("title", name); putInt("availability", 1)
+        putLong("install_size", 0); putBoolean("is_paid", false); putBoolean("unchecked", true)
+    }
     private fun select(documents: List<Bundle>) {
         validate(documents.map { requireNotNull(it.getString("package_name")) })
         queue.select(documents)
@@ -184,7 +194,13 @@ internal class PlaySetupProtocol(open: () -> MigrationInstallQueue,
     fun publish() = MigrationSetupReceivers.publish(queue)
     companion object {
         private val PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
-        /** Time left in the 45 s catalog deadline needed for a second lookup of apps that failed for a passing reason. */
+        /**
+         * How long one batch of Switch's apps (up to 50) may take. Switch sets no limit of its own (it waits on the
+         * call, AppDetailsHelper.getCompatibleDocuments); this bounds its "checking apps" wait.
+         */
+        @VisibleForTesting internal var catalogSeconds = 75L
+        private const val LOOKUPS = 16
+        /** Time left in the catalog deadline needed for a second lookup of apps that failed for a passing reason. */
         private const val RETRY_MIN_SECONDS = 5L
         private fun validate(names: List<String>): List<String> {
             require(names.size <= 1000 && names.all { it.length <= 255 && PACKAGE.matches(it) })

@@ -127,7 +127,9 @@ internal object MigrationResultText {
         if (result.getBoolean("installed")) return "Installed and verified"
         return when (result.getString("error") ?: result.getString("errorCode")) {
             "anonymous_sign_in_required", "not_signed_in", "session_expired" -> "App Store could not start an anonymous session. Retry when it is available."
-            "store_unavailable", "unavailable", "lookup_timeout", "network_error", "network" -> "App Store is unavailable. Check your connection and retry."
+            // Switch gives each batch of apps 45 s; one App Store had not checked in time is not a connection problem.
+            "lookup_timeout" -> "App Store didn't finish checking this app in time. Retry to install it."
+            "store_unavailable", "unavailable", "network_error", "network" -> "App Store is unavailable. Check your connection and retry."
             "rate_limited" -> "App Store is busy. Try again later."
             "no_google_account" -> "Sign in to a Google account on this phone to install this app with it."
             "several_google_accounts" -> "This phone has more than one Google account. Install this app from App Store."
