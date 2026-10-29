@@ -6,9 +6,12 @@ import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -18,7 +21,8 @@ import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import android.net.Uri
+import org.microg.gms.cyclon.*
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Explicit account and owner-selected recipient; no exported activity or background send path. */
@@ -38,102 +42,112 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 28) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_share), style = MaterialTheme.typography.headlineSmall)
+        setContent { CyclonMaterialTheme {
+            PasswordOwnerPage(stringResource(R.string.passwords_share), intent.getStringExtra("account"), onBack = ::finish) {
                 if (!unlocked) {
-                    Button(onClick = ::authenticateOwner, enabled = !busy) { Text(stringResource(R.string.passwords_unlock)) }
-                } else {
-                    Text(intent.getStringExtra("account").orEmpty())
-                    Text(stringResource(R.string.passwords_sharing_family_description))
-                    Button(onClick = { perform {} }, enabled = !busy) { Text(stringResource(R.string.passwords_sharing_refresh)) }
-                    screen?.let { state ->
-                        if (!state.keysAvailable) Text(stringResource(R.string.passwords_sharing_unavailable))
-                        if (state.recipients.none { it.eligible }) Text(stringResource(R.string.passwords_sharing_no_recipients))
-                        state.passwords.filter { it.data.canFillRealm(it.data.realm) }.forEach { entry ->
-                            Text(entry.data.realm); Text(entry.data.username)
-                            TextButton(onClick = { requireOwner(); selectedPassword = entry },
-                                enabled = !busy && state.keysAvailable && state.recipients.any { it.eligible }) {
-                                Text(stringResource(R.string.passwords_share))
-                            }
-                        }
-                        if (state.incoming.isNotEmpty()) Text(stringResource(R.string.passwords_sharing_incoming), style = MaterialTheme.typography.titleMedium)
-                        state.incoming.forEach { incoming ->
-                            Text(incoming.invitation.sender.name); Text(incoming.invitation.sender.email)
-                            incoming.passwords.forEach { Text(it.realm); Text(it.username) }
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                TextButton(onClick = { requireOwner(); selectedIncoming = incoming }, enabled = !busy) {
-                                    Text(stringResource(R.string.passwords_sharing_receive))
+                    PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner)
+                    PasswordOwnerStatus(busy, stringResource(R.string.passwords_sharing_failed).takeIf { failed })
+                    return@PasswordOwnerPage
+                }
+                CyclonNote(stringResource(R.string.passwords_sharing_family_description))
+                PasswordOwnerActions { CyclonLineButton(stringResource(R.string.passwords_sharing_refresh), enabled = !busy) { perform {} } }
+                PasswordOwnerStatus(busy, stringResource(R.string.passwords_sharing_failed).takeIf { failed })
+                screen?.let { state ->
+                    if (!state.keysAvailable) PasswordOwnerText(stringResource(R.string.passwords_sharing_unavailable))
+                    if (state.recipients.none { it.eligible }) PasswordOwnerText(stringResource(R.string.passwords_sharing_no_recipients))
+                    val shareable = state.passwords.filter { it.data.canFillRealm(it.data.realm) }
+                    if (shareable.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_saved))
+                    shareable.forEach { entry ->
+                        CyclonRow(sharingTitle(entry.data.realm), entry.data.username.ifEmpty { null }, summaryLines = 1,
+                            leading = { CyclonMonogram(sharingTitle(entry.data.realm)) }, trailing = {
+                                CyclonTextAction(stringResource(R.string.passwords_sharing_share),
+                                    enabled = !busy && state.keysAvailable && state.recipients.any { it.eligible }) {
+                                    requireOwner(); selectedPassword = entry
                                 }
-                                TextButton(onClick = { requireOwner(); dismissIncoming = incoming }, enabled = !busy) {
-                                    Text(stringResource(R.string.passwords_sharing_dismiss))
-                                }
-                            }
+                            })
+                    }
+                    if (state.incoming.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_sharing_incoming))
+                    state.incoming.forEach { incoming ->
+                        CyclonRow(incoming.invitation.sender.name.ifEmpty { incoming.invitation.sender.email },
+                            incoming.invitation.sender.email.takeIf { incoming.invitation.sender.name.isNotEmpty() }, divider = false,
+                            leading = { CyclonMonogram(incoming.invitation.sender.name.ifEmpty { incoming.invitation.sender.email }) })
+                        incoming.passwords.forEach { CyclonRow(sharingTitle(it.realm), it.username.ifEmpty { null }, divider = false, inset = 70.dp, summaryLines = 1) }
+                        Row(Modifier.padding(start = 54.dp)) {
+                            CyclonTextAction(stringResource(R.string.passwords_sharing_receive), enabled = !busy) { requireOwner(); selectedIncoming = incoming }
+                            CyclonTextAction(stringResource(R.string.passwords_sharing_dismiss), enabled = !busy) { requireOwner(); dismissIncoming = incoming }
                         }
-                        state.operations.filter { !it.phase.terminal }.forEach { operation ->
-                            if (operation.kind == SharingOperationKind.SEND) {
-                                Text(stringResource(R.string.passwords_sharing_delivery_pending))
-                                if (operation.phase in setOf(SharingOperationPhase.PREPARED, SharingOperationPhase.LAUNCHED, SharingOperationPhase.INDETERMINATE)) {
-                                    TextButton(onClick = { requireOwner(); resolveSend = operation }, enabled = !busy) {
-                                        Text(stringResource(R.string.passwords_sharing_resolve_send))
-                                    }
-                                }
-                            }
-                            else TextButton(onClick = { perform { it.resume(operation.id) } }, enabled = !busy) {
-                                Text(stringResource(R.string.passwords_sharing_finish_receiving))
-                            }
+                        CyclonHairline(Modifier.padding(start = 20.dp))
+                    }
+                    val open = state.operations.filter { !it.phase.terminal }
+                    if (open.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_changes))
+                    open.forEach { operation ->
+                        if (operation.kind == SharingOperationKind.SEND) {
+                            if (operation.phase in setOf(SharingOperationPhase.PREPARED, SharingOperationPhase.LAUNCHED, SharingOperationPhase.INDETERMINATE))
+                                CyclonRow(stringResource(R.string.passwords_sharing_delivery_pending), trailing = {
+                                    CyclonTextAction(stringResource(R.string.passwords_resolve), enabled = !busy) { requireOwner(); resolveSend = operation }
+                                })
+                            else CyclonRow(stringResource(R.string.passwords_sharing_delivery_pending))
                         }
+                        else CyclonRow(stringResource(R.string.passwords_sharing_finish_receiving), onClick = { perform { it.resume(operation.id) } },
+                            enabled = !busy, trailing = { CyclonChevron() })
                     }
                 }
-                if (busy) LinearProgressIndicator()
-                if (failed) Text(stringResource(R.string.passwords_sharing_failed))
-                TextButton(onClick = { finish() }) { Text(stringResource(android.R.string.cancel)) }
             }
             selectedPassword?.takeIf { unlocked }?.let { entry ->
                 AlertDialog(onDismissRequest = { selectedPassword = null; selectedRecipient = null },
                     title = { Text(stringResource(R.string.passwords_sharing_choose_recipient)) },
-                    text = { PasswordDialogProtection(); Column {
-                        Text(entry.data.realm); Text(entry.data.username)
-                        screen?.recipients.orEmpty().forEach { recipient ->
-                            TextButton(onClick = { requireOwner(); selectedRecipient = recipient }, enabled = recipient.eligible) {
-                                Text(recipient.name + " " + recipient.email + if (selectedRecipient === recipient) " ✓" else "")
+                    text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+                        Text(sharingTitle(entry.data.realm), style = MaterialTheme.typography.titleMedium)
+                        Text(entry.data.username, style = MaterialTheme.typography.bodyMedium)
+                        CyclonHairline(Modifier.padding(top = 12.dp))
+                        Column(Modifier.selectableGroup()) {
+                            screen?.recipients.orEmpty().forEach { recipient ->
+                                CyclonChoiceRow(recipient.name.ifEmpty { recipient.email }, recipient.email.takeIf { recipient.name.isNotEmpty() },
+                                    selected = selectedRecipient === recipient, enabled = recipient.eligible, inset = 0.dp) {
+                                    requireOwner(); selectedRecipient = recipient
+                                }
                             }
                         }
-                        if (selectedRecipient != null) Text(stringResource(R.string.passwords_sharing_send_warning))
+                        if (selectedRecipient != null) PasswordDialogText(stringResource(R.string.passwords_sharing_send_warning), Modifier.padding(top = 8.dp))
                     } },
-                    confirmButton = { TextButton(onClick = {
-                        val recipient = selectedRecipient ?: return@TextButton
+                    confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_send), enabled = selectedRecipient != null && !busy) {
+                        val recipient = selectedRecipient ?: return@CyclonTextAction
                         selectedPassword = null; selectedRecipient = null
                         perform { it.send(entry.chromeBytes, recipient) }
-                    }, enabled = selectedRecipient != null && !busy) { Text(stringResource(R.string.passwords_sharing_send)) } },
-                    dismissButton = { TextButton(onClick = { selectedPassword = null; selectedRecipient = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    } },
+                    dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { selectedPassword = null; selectedRecipient = null } })
             }
             selectedIncoming?.takeIf { unlocked }?.let { incoming ->
                 AlertDialog(onDismissRequest = { selectedIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_receive)) },
-                    text = { PasswordDialogProtection(); Column { Text(incoming.invitation.sender.email)
-                        incoming.passwords.forEach { Text(it.realm); Text(it.username) }
-                        Text(stringResource(R.string.passwords_sharing_receive_description))
+                    text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(incoming.invitation.sender.email, style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.muted)
+                        incoming.passwords.forEach {
+                            Text(sharingTitle(it.realm), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleMedium)
+                            Text(it.username, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        PasswordDialogText(stringResource(R.string.passwords_sharing_receive_description), Modifier.padding(top = 8.dp))
                     } },
-                    confirmButton = { TextButton(onClick = { selectedIncoming = null; perform { it.accept(incoming) } }, enabled = !busy) {
-                        Text(stringResource(R.string.passwords_sharing_receive))
-                    } }, dismissButton = { TextButton(onClick = { selectedIncoming = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_receive), enabled = !busy) {
+                        selectedIncoming = null; perform { it.accept(incoming) }
+                    } }, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { selectedIncoming = null } })
             }
             dismissIncoming?.takeIf { unlocked }?.let { incoming ->
                 AlertDialog(onDismissRequest = { dismissIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_dismiss)) },
-                    text = { PasswordDialogProtection(); Text(incoming.invitation.sender.email) },
-                    confirmButton = { TextButton(onClick = { dismissIncoming = null; perform { it.dismiss(incoming) } }, enabled = !busy) {
-                        Text(stringResource(R.string.passwords_sharing_dismiss))
-                    } }, dismissButton = { TextButton(onClick = { dismissIncoming = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    text = { PasswordDialogProtection(); PasswordDialogText(incoming.invitation.sender.email) },
+                    confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_dismiss), enabled = !busy) {
+                        dismissIncoming = null; perform { it.dismiss(incoming) }
+                    } }, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { dismissIncoming = null } })
             }
             resolveSend?.takeIf { unlocked }?.let { operation ->
                 AlertDialog(onDismissRequest = { resolveSend = null }, title = { Text(stringResource(R.string.passwords_sharing_resolve_send)) },
-                    text = { PasswordDialogProtection(); Text(stringResource(R.string.passwords_sharing_resolve_warning)) },
-                    confirmButton = { TextButton(onClick = {
+                    text = { PasswordDialogProtection(); PasswordDialogText(stringResource(R.string.passwords_sharing_resolve_warning), scrolls = true) },
+                    confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_allow_new_attempt), enabled = !busy) {
                         resolveSend = null; perform { it.resolveUnknownSend(operation.id, acknowledgesPossibleDelivery = true) }
-                    }, enabled = !busy) { Text(stringResource(R.string.passwords_sharing_allow_new_attempt)) } },
-                    dismissButton = { TextButton(onClick = { resolveSend = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    } },
+                    dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { resolveSend = null } })
             }
-        } } }
+        } }
         authenticateOwner()
     }
     private fun sharing(): PasswordSharing {
@@ -174,3 +188,8 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
         screen = null
     }
 }
+
+/** A login's website host, or the app it belongs to, as the Passwords list names it. */
+private fun sharingTitle(realm: String): String =
+    if (realm.startsWith("android://")) realm.substringAfter('@').trimEnd('/').ifEmpty { realm }
+    else Uri.parse(realm).host?.takeIf { it.isNotBlank() } ?: realm
