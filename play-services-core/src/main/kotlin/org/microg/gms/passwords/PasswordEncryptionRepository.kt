@@ -229,6 +229,53 @@ internal class PasswordEncryptionRepository(context: Context, private val accoun
             }
         }
     }
+    /**
+     * Ends an interrupted change (an attempt whose Google page closed before it could be confirmed) without asserting
+     * what Google did. Only the local receipt closes: no snapshot is adopted, so nothing needs to be decrypted here.
+     * Normal sync then reads Google's authoritative state, like any change made on another device: unchanged data just
+     * syncs again, and an account Google moved to on-device encryption asks for its keys through account recovery.
+     */
+    fun release(expectedId: String) {
+        locked { session, passkey ->
+            val state = session.load()
+            val current = PasswordEncryptionState.decode(state.passwordEncryptionFlow) ?: throw ConflictException()
+            current.use { receipt ->
+                if (receipt.id != expectedId || receipt.accountId != expectedUserId) throw ConflictException()
+                val terminal = when (receipt.phase) {
+                    PasswordEncryptionPhase.READY -> receipt.closeView()
+                    PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN -> {
+                        noWrites(state, passkey)
+                        receipt.abandoned()
+                    }
+                    else -> return@locked
+                }
+                terminal.use { closed -> state.passwordEncryptionFlow = closed.encode(); verify(); session.save(state) }
+            }
+        }
+        // Outside the vault lock: the sync worker takes the same lock when it runs.
+        repository.schedule()
+    }
+
+    /** Unlocked keys from Google's account recovery reach the vault on its next sync. */
+    fun syncSoon() { verify(); repository.schedule() }
+
+    enum class Status { OFF, ON, ON_LOCKED, OTHER }
+
+    /** Google's current encryption setting, from one read of the account's metadata, and whether this phone can use it. */
+    fun status(): Status {
+        verify()
+        val metadata = PasswordApi(transport).metadata()
+        verify()
+        return when (encryptionType(metadata)) {
+            2L -> Status.OFF
+            5L -> locked { session, _ ->
+                try { repository.sharingKeys(metadata, session.load()).destroy(); Status.ON }
+                catch (_: VaultLockedException) { Status.ON_LOCKED }
+            }
+            else -> Status.OTHER
+        }
+    }
+
     /** The owner may adopt a verified current vault without asserting that Google cancelled or completed the old request. */
     fun abandonVerified(before: PasswordEncryptionSnapshot, expectedId: String): Boolean = locked { session, passkey ->
         val current = PasswordEncryptionState.decode(session.load().passwordEncryptionFlow) ?: throw ConflictException()

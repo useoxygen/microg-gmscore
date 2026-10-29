@@ -85,18 +85,29 @@ class PasswordOwnerPagesAndroidTest {
         gone(text(R.string.passwords_encryption_manage))
     }
 
-    /** Offline, the encryption page shows its choices or its error; a choice asks first and Cancel changes nothing. */
-    @Test fun encryptionChoiceAsksBeforeGoogleOpens() {
+    /** Offline, the page shows the account's setting or its error; a delete asks first and Cancel changes nothing. */
+    @Test fun encryptionDeleteAsksBeforeGoogleOpens() {
         open(PasswordEncryptionActivity::class.java)
-        val choice = text(R.string.passwords_encryption_enable)
+        val choice = text(R.string.passwords_encryption_passkeys)
         waitFor { find(choice) != null || find(text(R.string.passwords_encryption_failed)) != null }
         assumeTrue("Encryption state unavailable offline", find(choice) != null)
         click(choice)
-        node(text(R.string.passwords_encryption_enable_warning))
+        node(text(R.string.passwords_encryption_passkeys_warning))
         node(text(R.string.passwords_encryption_continue))
         click(text(android.R.string.cancel))
-        gone(text(R.string.passwords_encryption_enable_warning))
+        gone(text(R.string.passwords_encryption_passkeys_warning))
         node(choice)
+        click(text(R.string.cyclon_back))
+        gone(text(R.string.passwords_encryption_manage))
+    }
+
+    /** Offline, the page offers Try again instead of a pending change to check by hand. */
+    @Test fun encryptionErrorOffersRetry() {
+        open(PasswordEncryptionActivity::class.java)
+        val failed = text(R.string.passwords_encryption_failed)
+        waitFor { find(failed) != null || find(text(R.string.passwords_encryption_passkeys)) != null }
+        assumeTrue("Encryption state readable", find(failed) != null)
+        node(text(R.string.passwords_encryption_retry))
         click(text(R.string.cyclon_back))
         gone(text(R.string.passwords_encryption_manage))
     }
