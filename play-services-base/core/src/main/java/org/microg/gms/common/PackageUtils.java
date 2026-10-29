@@ -207,7 +207,9 @@ public class PackageUtils {
         try {
             return getAndCheckCallingPackage(context, suggestedPackageName, 0);
         } catch (Exception e) {
-            if (callerHasGooglePackagePermission(context, GooglePackagePermission.IMPERSONATE)) {
+            // No caller may act as microG itself: microG's own package is trusted with Cyclon's device account (CYC-927).
+            if (!context.getPackageName().equals(suggestedPackageName)
+                    && callerHasGooglePackagePermission(context, GooglePackagePermission.IMPERSONATE)) {
                 return suggestedPackageName;
             }
             throw e;
