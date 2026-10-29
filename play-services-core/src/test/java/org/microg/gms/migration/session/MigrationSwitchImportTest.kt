@@ -18,8 +18,15 @@ class MigrationSwitchImportTest {
             .putExtra("suw_session_id", 1234L).putExtra("password", "secret"))
         assertEquals("com.google.android.apps.restore", intent.component!!.packageName)
         assertTrue(intent.component!!.className.endsWith("MultiD2dMigrateFlowActivity"))
-        listOf("is_quick_start", "after_account", "suw_supports_ios_wifi_migration_state", "is_ios_wifi_d2d", "is_os_migration_import", "firstRun").forEach { assertTrue(it, intent.getBooleanExtra(it, false)) }
+        listOf("is_quick_start", "after_account", "is_from_d2d_wizard_manager", "suw_supports_ios_wifi_migration_state", "is_ios_wifi_d2d", "is_os_migration_import", "firstRun").forEach { assertTrue(it, intent.getBooleanExtra(it, false)) }
         assertEquals("glif_v4", intent.getStringExtra("theme")); assertEquals(1234L, intent.getLongExtra("suw_session_id", -1))
         assertFalse(intent.hasExtra("password")); assertFalse(intent.hasExtra("final_hold"))
+    }
+    // Both copy steps stay open until the copy ends, so their result never arrives mid-copy (CYC-925).
+    @Test fun androidCopyStepOpensAsTheWizardDoes() {
+        val intent = org.microg.gms.migration.android.copyStep()
+        assertEquals("com.google.android.apps.restore", intent.`package`)
+        listOf("is_quick_start", "after_account", "is_from_d2d_wizard_manager").forEach { assertTrue(it, intent.getBooleanExtra(it, false)) }
+        assertTrue(intent.flags and Intent.FLAG_ACTIVITY_FORWARD_RESULT != 0)
     }
 }
