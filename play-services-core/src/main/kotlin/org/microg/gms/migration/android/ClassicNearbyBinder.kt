@@ -86,15 +86,16 @@ internal fun classicFrameAction(frame: V1Frame): ClassicFrameAction = when(frame
 
 /**
  * Sends the offer in [listener] on [channel] and waits up to [timeoutMs] for the peer to connect to it.
- * Meanwhile frames already waiting on the prior medium are read and passed to [handle], so traffic keeps flowing;
- * the peer's UPGRADE_FAILURE ends the wait. Must run on the channel's sole reader.
+ * Only a connection whose CLIENT_INTRODUCTION names this channel's endpoint is returned; others are closed and the
+ * wait goes on. Meanwhile frames already waiting on the prior medium are read and passed to [handle], so traffic keeps
+ * flowing; the peer's UPGRADE_FAILURE ends the wait. Must run on the channel's sole reader.
  */
 internal fun awaitUpgradeConnection(channel: ClassicNearbyChannel, priorInput: InputStream, listener: ClassicUpgradeListener,
     timeoutMs: Long, handle: (V1Frame) -> Unit): ClassicRadio.Link {
     channel.offerUpgrade(listener.path)
     val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     while (true) {
-        listener.poll(250)?.let { return it }
+        listener.poll(250) { channel.checkIntroduction(it) }?.let { return it }
         while (priorInput.available() > 0) {
             val frame = channel.receive()
             if (frame.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
@@ -136,7 +137,10 @@ internal fun awaitAcceptance(channel: ClassicNearbyChannel, close: () -> Unit,
 
 /** [switchUid]: the caller, when its broker authenticated it as Switch; its live copy transports keep its retained
  * pairing in use ([RetainedSessionUse]). Null for microG's own pairing transport. */
-internal class ClassicNearbyBinder(private val context: Context, uid: Int, private val switchUid: Int? = null) :
+/** [upgradeListener] and [upgradeAcceptMs] are replaced only by tests. */
+internal class ClassicNearbyBinder(private val context: Context, uid: Int, private val switchUid: Int? = null,
+    private val upgradeListener: () -> ClassicUpgradeListener? = { ClassicUpgradeListener.wifiLan(context) },
+    private val upgradeAcceptMs: Long = UPGRADE_ACCEPT_MS) :
     MigrationBinder(NEARBY_DESCRIPTOR,uid), Closeable {
     private val closed = AtomicBoolean(false)
     private val ownerUid=uid
@@ -206,7 +210,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int, priva
                 val incoming = peer == null
                 session.incoming = incoming
                 if (incoming) { val (request,token) = channel.receiveConnection(); endpoint = request.endpointId; info = request.endpointInfo.toByteArray().takeIf { it.isNotEmpty() } ?: request.endpointName.toByteArray(); session.token = token
-                    session.peerMediums = request.mediumsList.map { it.number }.toSet(); session.localMediums = listOf(ClassicUpgradeListener.WIFI_LAN) }
+                    session.peerMediums = request.mediumsList.map { it.number }.toSet(); session.localMediums = if (switchUid != null) listOf(ClassicUpgradeListener.WIFI_LAN) else emptyList() }
                 else { endpoint = requireNotNull(peer).endpoint.id; info = peer.endpoint.info; val mediums = buildList {
                     add(ConnectionRequestFrame.Medium.WIFI_LAN)
                     if(android.os.Build.VERSION.SDK_INT>=29 && context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WIFI))add(ConnectionRequestFrame.Medium.WIFI_HOTSPOT)
@@ -229,7 +233,7 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int, priva
                 val keepAlive = timer.scheduleAtFixedRate({ runCatching { channel.send(V1Frame.newBuilder().setType(V1Frame.FrameType.KEEP_ALIVE).setKeepAlive(KeepAliveFrame.getDefaultInstance()).build()) }.onFailure { runCatching { link.close() } } },5,5,TimeUnit.SECONDS)
                 try {
                     // As Nearby's advertiser, kick off the bandwidth upgrade once both sides accepted.
-                    if (session.incoming && ClassicUpgradeListener.WIFI_LAN in session.peerMediums) offerUpgrade(session,ep)
+                    if (offersUpgrades(session) && ClassicUpgradeListener.WIFI_LAN in session.peerMediums) offerUpgrade(session,ep)
                     while (!closed.get()) { if (!handleFrame(session,ep,channel.receive())) break }
                 } finally { keepAlive.cancel(false) }
             } catch (error: Exception) {
@@ -266,7 +270,20 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int, priva
         Log.i(TAG, "Peer bandwidth-upgrade retry mediums=${retry.supportedMediumList} request=${retry.isRequest}")
         session.peerMediums = session.peerMediums + mediums
         if (retry.isRequest) session.channel.answerUpgradeRetry(session.localMediums.mapNotNull { BandwidthUpgradeRetryFrame.Medium.forNumber(it) })
-        if (session.incoming && ClassicUpgradeListener.WIFI_LAN in mediums) offerUpgrade(session,endpoint)
+        if (offersUpgrades(session) && ClassicUpgradeListener.WIFI_LAN in mediums) offerUpgrade(session,endpoint)
+    }
+    /** Initiating is limited to Switch's copy transport (CYC-911) until a phone run proves it; other flows,
+     * such as the legacy target bootstrap, keep their prior medium. */
+    private fun offersUpgrades(session: Session) = session.incoming && switchUid != null
+    /** A frame on the prior medium while our offer is open. GMS sends BANDWIDTH_UPGRADE_RETRY about 500 ms after
+     * connecting, usually inside this window: its request is answered and the open offer stands. */
+    private fun duringOffer(session: Session, frame: V1Frame) {
+        if (frame.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_RETRY) {
+            val retry = frame.bandwidthUpgradeRetry
+            Log.i(TAG, "Peer bandwidth-upgrade retry during open offer mediums=${retry.supportedMediumList} request=${retry.isRequest}")
+            session.peerMediums = session.peerMediums + retry.supportedMediumList.map { it.number }
+            if (retry.isRequest) session.channel.answerUpgradeRetry(session.localMediums.mapNotNull { BandwidthUpgradeRetryFrame.Medium.forNumber(it) })
+        } else drainPriorChannel(session, frame)
     }
     /** Initiator side of the bandwidth upgrade, for a connection we accepted as advertiser:
      * offer Wi-Fi LAN, accept the peer's connection and hand the endpoint's traffic over to
@@ -275,14 +292,14 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int, priva
      * handoff commits keeps the authenticated prior medium. */
     private fun offerUpgrade(session: Session, endpoint: String) {
         if (session.upgraded || session.link.medium == ClassicUpgradeListener.WIFI_LAN || session.upgradeOffers >= MAX_UPGRADE_OFFERS) return
-        val listener = try { ClassicUpgradeListener.wifiLan(context) } catch (e: Exception) { Log.w(TAG, "Wi-Fi LAN upgrade listener failed (${e.javaClass.simpleName})"); null }
+        val listener = try { upgradeListener() } catch (e: Exception) { Log.w(TAG, "Wi-Fi LAN upgrade listener failed (${e.javaClass.simpleName})"); null }
         if (listener == null) { Log.i(TAG, "No Wi-Fi LAN address to offer for bandwidth upgrade"); return }
         session.upgradeOffers++
         val link = try {
             session.upgrades.add(listener)
             // A failure handling ordinary traffic (or the peer's DISCONNECTION) still ends the session.
-            try { awaitUpgradeConnection(session.channel, session.link.input, listener, UPGRADE_ACCEPT_MS) {
-                try { drainPriorChannel(session,it) } catch (e: Exception) { runCatching { session.channel.close() }; throw e }
+            try { awaitUpgradeConnection(session.channel, session.link.input, listener, upgradeAcceptMs) {
+                try { duringOffer(session,it) } catch (e: Exception) { runCatching { session.channel.close() }; throw e }
             } }
             finally { session.upgrades.remove(listener); runCatching { listener.close() } }
         } catch (e: Exception) {
@@ -303,6 +320,8 @@ internal class ClassicNearbyBinder(private val context: Context, uid: Int, priva
         Log.i(TAG, "Bandwidth upgraded to Wi-Fi LAN as initiator")
         event(lifecycle,"IConnectionLifecycleListener",5,DctRecord(ClassicSchemas.bandwidth,mapOf(1 to endpoint,2 to 3,3 to link.medium,4 to 0,12 to 1)))
     }
+    /** Test entry: [link] arrives as an incoming connection while [listener] receives lifecycle events. */
+    internal fun acceptIncomingForTest(link: ClassicRadio.Link, listener: IBinder) { lifecycle = listener; open(link,null) }
     private fun bandwidthFailed(session: Session, endpoint: String) =
         event(lifecycle,"IConnectionLifecycleListener",5,DctRecord(ClassicSchemas.bandwidth,mapOf(1 to endpoint,2 to 0,3 to session.link.medium,4 to 0,12 to 2)))
     private fun upgrade(session: Session, endpoint: String, message: BandwidthUpgradeNegotiationFrame) {

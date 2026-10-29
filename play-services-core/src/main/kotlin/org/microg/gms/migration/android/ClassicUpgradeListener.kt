@@ -18,24 +18,36 @@ import java.net.SocketTimeoutException
  * the device's current Wi-Fi IPv4 address and accepts the peer's one connection to it.
  * Listens only while an offer is open; never changes a network, radio or saved setting. */
 internal class ClassicUpgradeListener(address: InetAddress) : Closeable {
-    private val server = ServerSocket(0, 1, address)
+    private val server = ServerSocket(0, 4, address)
     /** The UPGRADE_PATH_AVAILABLE path, as Nearby's WIFI_LAN initiator builds it. */
     val path: UpgradePathInfo = wifiLanPath(address, server.localPort)
 
-    /** Waits at most [timeoutMs] for the peer's connection; null when none arrived yet. */
-    fun poll(timeoutMs: Int): ClassicRadio.Link? {
+    /** Waits at most [timeoutMs] for a connection and gives it [introductionTimeoutMs] to pass
+     * [introduce] (the peer's CLIENT_INTRODUCTION). Null when none arrived, or when the one that did
+     * failed: it is closed and the listener keeps accepting, so a stray LAN host cannot spoil the offer. */
+    fun poll(timeoutMs: Int, introductionTimeoutMs: Int = INTRODUCTION_TIMEOUT_MS, introduce: (java.io.InputStream) -> Unit): ClassicRadio.Link? {
         server.soTimeout = timeoutMs
         val socket = try { server.accept() } catch (_: SocketTimeoutException) { return null }
         return try {
+            socket.soTimeout = introductionTimeoutMs
+            introduce(socket.getInputStream())
             socket.soTimeout = 30000
             ClassicRadio.Link(socket.getInputStream(), socket.getOutputStream(), WIFI_LAN) { socket.close() }
-        } catch (e: Exception) { socket.close(); throw e }
+        } catch (e: Exception) {
+            rejected++
+            socket.close()
+            if (e is IllegalStateException) throw e // our own channel closed meanwhile
+            null
+        }
     }
+    /** Connections closed because they did not introduce this offer's endpoint in time. */
+    var rejected = 0; private set
 
     override fun close() = server.close()
 
     companion object {
         const val WIFI_LAN = 5
+        const val INTRODUCTION_TIMEOUT_MS = 2000
 
         /** Opens a listener on the current Wi-Fi IPv4 address, or null without one. */
         fun wifiLan(context: Context): ClassicUpgradeListener? {

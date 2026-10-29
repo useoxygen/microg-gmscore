@@ -25,7 +25,8 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     @Volatile private var closed = false
     private var pending = false
     @Volatile var diagnosticPhase="NEW"; private set
-    private var pausedWrites: MutableList<V1Frame>? = null
+    /** Set while a bandwidth upgrade drains the prior medium; see [send]. */
+    private var paused = false
     var endpointId: String? = null
         private set
     /** While we wait for the peer's acceptance: when its last frame (often a keep-alive) arrived, else null. */
@@ -134,11 +135,19 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         return parse(requireNotNull(context).decodeMessageFromPeer(readPacket()), allowUnknownType = true)
     }
 
+    /** While an upgrade drains the prior medium only its negotiation frames go out: a keep-alive is
+     * dropped (those frames keep the link alive, and the shared timer must not block), any other frame
+     * waits, without holding the lock, until the handoff ends and then goes out on the new medium. */
     @Synchronized fun send(frame: V1Frame) {
         check(context != null && !closed)
-        val paused = pausedWrites
-        if(paused != null && frame.type != V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION) {
-            require(paused.size<128); paused.add(frame); return
+        if(paused && frame.type != V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION) {
+            if(frame.type == V1Frame.FrameType.KEEP_ALIVE) return
+            val deadline = System.nanoTime()+HANDOFF_NANOS+5_000_000_000L
+            while(paused && !closed) {
+                check(System.nanoTime()<deadline) { "Bandwidth upgrade did not finish" }
+                (this as Object).wait(250)
+            }
+            check(context != null && !closed)
         }
         writeFrame(frame, encrypted = true)
     }
@@ -190,28 +199,28 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         }
     }
 
-    /** Initiator side of public Nearby BWU, after [offerUpgrade]: [input]/[output] is the
-     * peer's connection to the offered path. Reads its plaintext CLIENT_INTRODUCTION, which
-     * must name this connection's endpoint and keep encryption, then answers with
-     * CLIENT_INTRODUCTION_ACK (Nearby's initiator always sends it) and runs the same drain
-     * and handoff as [upgrade]. Called by the sole reader. Failure before the ACK is
-     * written leaves the prior medium usable. */
-    fun acceptUpgrade(input: InputStream, output: OutputStream, drain: (V1Frame) -> Unit) {
+    /** Initiator side of public Nearby BWU, after [offerUpgrade]: reads a candidate connection's
+     * plaintext CLIENT_INTRODUCTION, which must name this connection's endpoint and keep encryption.
+     * The caller bounds the read (socket timeout) and drops a candidate that fails. */
+    fun checkIntroduction(input: InputStream) {
         check(context != null && !closed)
         val peer = requireNotNull(endpointId)
+        val frame = parse(readPacket(DataInputStream(input)))
+        require(frame.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
+            frame.bandwidthUpgradeNegotiation.eventType == BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION &&
+            frame.bandwidthUpgradeNegotiation.hasClientIntroduction()) { "Expected a bandwidth-upgrade client introduction" }
+        val introduction = frame.bandwidthUpgradeNegotiation.clientIntroduction
+        require(introduction.endpointId == peer) { "Bandwidth upgrade introduced a different endpoint" }
+        require(!introduction.supportsDisablingEncryption) { "Bandwidth upgrade must stay encrypted" }
+    }
+
+    /** Initiator side, once [checkIntroduction] accepted [input]/[output]: answers with
+     * CLIENT_INTRODUCTION_ACK (Nearby's initiator always sends it) and runs the same drain and
+     * handoff as [upgrade]. Called by the sole reader. Failure before the ACK is written leaves
+     * the prior medium usable. */
+    fun acceptUpgrade(input: InputStream, output: OutputStream, drain: (V1Frame) -> Unit) {
+        check(context != null && !closed)
         val nextReader = DataInputStream(input); val nextWriter = DataOutputStream(output)
-        try {
-            val frame = parse(readPacket(nextReader))
-            require(frame.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
-                frame.bandwidthUpgradeNegotiation.eventType == BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION &&
-                frame.bandwidthUpgradeNegotiation.hasClientIntroduction()) { "Expected a bandwidth-upgrade client introduction" }
-            val introduction = frame.bandwidthUpgradeNegotiation.clientIntroduction
-            require(introduction.endpointId == peer) { "Bandwidth upgrade introduced a different endpoint" }
-            require(!introduction.supportsDisablingEncryption) { "Bandwidth upgrade must stay encrypted" }
-        } catch(e: Exception) {
-            runCatching { nextReader.close() }; runCatching { nextWriter.close() }
-            throw e
-        }
         handoff(nextReader, nextWriter, drain) {
             writePlain(nextWriter, V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
                 .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder()
@@ -221,8 +230,9 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
 
     /** Shared by both BWU roles once [introduce] has run on the new medium: LAST_WRITE,
      * drain the prior medium until the peer's LAST_WRITE, SAFE_TO_CLOSE both ways, then
-     * a cleartext DISCONNECTION and the switch of reader and writer. */
-    @Synchronized private fun handoff(nextReader: DataInputStream, nextWriter: DataOutputStream,
+     * a cleartext DISCONNECTION and the switch of reader and writer. Runs on the sole reader and
+     * holds the lock only to change state, never across a read. */
+    private fun handoff(nextReader: DataInputStream, nextWriter: DataOutputStream,
         drain: (V1Frame) -> Unit, introduce: () -> Unit) {
         check(context != null && !closed)
         fun negotiation(event: BandwidthUpgradeNegotiationFrame.EventType) = V1Frame.newBuilder()
@@ -230,12 +240,12 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
             .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder().setEventType(event)).build()
         var committed = false
         try {
-            check(pausedWrites == null); pausedWrites = mutableListOf()
+            synchronized(this) { check(!paused); paused = true }
             introduce()
             committed = true // A partial LAST_WRITE is already a committed handoff.
             send(negotiation(BandwidthUpgradeNegotiationFrame.EventType.LAST_WRITE_TO_PRIOR_CHANNEL))
             var last = false; var safe = false
-            val deadline = System.nanoTime()+30_000_000_000L
+            val deadline = System.nanoTime()+HANDOFF_NANOS
             var count = 0
             while(!safe) {
                 check(System.nanoTime()<deadline && ++count<=128)
@@ -254,14 +264,19 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
             // Closing courtesy is intentionally cleartext and consumes no crypto sequence.
             writeFrame(V1Frame.newBuilder().setType(V1Frame.FrameType.DISCONNECTION)
                 .setDisconnection(DisconnectionFrame.getDefaultInstance()).build(),false)
-            runCatching { parse(readPacket()) } // peer may already have closed its prior socket
             val oldReader=reader; val oldWriter=writer
-            reader=nextReader; writer=nextWriter
+            // The peer may already have closed its prior socket, or never answer: wait at most 2 s.
+            val answered = java.util.concurrent.CountDownLatch(1)
+            val bound = Thread { if(!answered.await(2, java.util.concurrent.TimeUnit.SECONDS)) runCatching { oldReader.close() } }.apply { isDaemon = true; start() }
+            try { runCatching { parse(readPacket()) } } finally { answered.countDown() }
+            bound.join(100)
+            synchronized(this) {
+                reader=nextReader; writer=nextWriter
+                paused = false; (this as Object).notifyAll()
+            }
             runCatching { oldReader.close() }; runCatching { oldWriter.close() }
-            val queued = requireNotNull(pausedWrites); pausedWrites = null
-            queued.forEach { send(it) }
         } catch(e: Exception) {
-            pausedWrites = null
+            synchronized(this) { paused = false; (this as Object).notifyAll() }
             runCatching { nextReader.close() }; runCatching { nextWriter.close() }
             if(committed) close()
             throw e
@@ -295,6 +310,7 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     }
     companion object {
         const val MAX_PACKET = 1024 * 1024 + 65536
+        private const val HANDOFF_NANOS = 30_000_000_000L
         /** [allowUnknownType]: an authenticated frame whose type this build does not know
          * (newer Nearby) comes back as UNKNOWN_FRAME_TYPE for the caller to skip. */
         internal fun parse(bytes: ByteArray, allowUnknownType: Boolean = false): V1Frame {

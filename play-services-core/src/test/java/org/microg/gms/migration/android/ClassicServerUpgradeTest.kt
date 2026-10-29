@@ -158,26 +158,77 @@ class ClassicServerUpgradeTest {
         } } finally { pool.shutdownNow() }
     }
 
-    @Test fun introductionForAnotherEndpointIsRefusedBeforeHandoff() {
+    @Test fun strayLanConnectionsAreDroppedAndTheOfferStaysOpen() {
         val pool = Executors.newCachedThreadPool()
         try { connected(pool).use { pair ->
             ClassicUpgradeListener(loopback).use { listener ->
                 val client = pool.submit<Unit> {
-                    val lan = pair.source.receive().bandwidthUpgradeNegotiation.upgradePathInfo.wifiLanSocket
-                    Socket(InetAddress.getByAddress(lan.ipAddress.toByteArray()), lan.wifiPort).use { next ->
+                    val path = pair.source.receive().bandwidthUpgradeNegotiation.upgradePathInfo
+                    val address = InetAddress.getByAddress(path.wifiLanSocket.ipAddress.toByteArray()); val port = path.wifiLanSocket.wifiPort
+                    Socket(address, port).use { silent ->
+                        // A host that says nothing is dropped after the introduction timeout.
+                        silent.soTimeout = 5000
+                        assertEquals(-1, silent.getInputStream().read())
+                    }
+                    Socket(address, port).use { wrong ->
+                        wrong.soTimeout = 5000
                         val intro = OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(V1Frame.newBuilder()
                             .setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION).setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder()
                                 .setEventType(EventType.CLIENT_INTRODUCTION).setClientIntroduction(BandwidthUpgradeNegotiationFrame.ClientIntroduction.newBuilder().setEndpointId("XXXX")))).build().toByteArray()
-                        DataOutputStream(next.getOutputStream()).apply { writeInt(intro.size); write(intro); flush() }
-                        assertEquals(-1, next.getInputStream().read()) // no ACK; the target closes it
+                        DataOutputStream(wrong.getOutputStream()).apply { writeInt(intro.size); write(intro); flush() }
+                        assertEquals(-1, wrong.getInputStream().read()) // no ACK; the target closes it
                     }
-                    assertEquals(keepAlive, pair.source.receive())
+                    Socket(address, port).use { next ->
+                        next.soTimeout = 5000
+                        pair.source.upgrade(next.getInputStream(), next.getOutputStream(), "SRC1", path.supportsClientIntroductionAck) { }
+                        pair.source.send(payload(4))
+                    }
+                }
+                val link = awaitUpgradeConnection(pair.target, pair.targetSocket.getInputStream(), listener, 10000) { }
+                assertEquals(2, listener.rejected)
+                link.use {
+                    pair.target.acceptUpgrade(link.input, link.output) { }
+                    assertEquals(4L, pair.target.receive().payloadTransfer.payloadHeader.id)
+                    client.get(10, TimeUnit.SECONDS)
+                }
+            }
+        } } finally { pool.shutdownNow() }
+    }
+
+    @Test fun pausedWritesWaitForTheNewMediumWithoutBlockingKeepAlives() {
+        val pool = Executors.newCachedThreadPool()
+        try { connected(pool).use { pair ->
+            ClassicUpgradeListener(loopback).use { listener ->
+                val sentDuringHandoff = CountDownLatch(1); val keepAliveReturned = CountDownLatch(1)
+                val client = pool.submit<Unit> {
+                    val path = pair.source.receive().bandwidthUpgradeNegotiation.upgradePathInfo
+                    Socket(InetAddress.getByAddress(path.wifiLanSocket.ipAddress.toByteArray()), path.wifiLanSocket.wifiPort).use { next ->
+                        next.soTimeout = 5000
+                        pair.source.send(payload(9)) // on the prior medium; the target drains it mid-handoff
+                        pair.source.upgrade(next.getInputStream(), next.getOutputStream(), "SRC1", true) { }
+                        // Only the payload follows on the new medium: the keep-alive sent mid-handoff was dropped.
+                        assertEquals(5L, pair.source.receive().payloadTransfer.payloadHeader.id)
+                    }
                 }
                 val link = awaitUpgradeConnection(pair.target, pair.targetSocket.getInputStream(), listener, 5000) { }
-                link.use { assertThrows(IllegalArgumentException::class.java) { pair.target.acceptUpgrade(link.input, link.output) { } } }
-                assertTrue(pair.target.isConnected)
-                pair.target.send(keepAlive)
-                client.get(5, TimeUnit.SECONDS)
+                link.use {
+                    val writer = pool.submit {
+                        sentDuringHandoff.await(5, TimeUnit.SECONDS)
+                        pair.target.send(keepAlive) // returns at once while paused
+                        keepAliveReturned.countDown()
+                        pair.target.send(payload(5)) // waits for the handoff, then uses the new medium
+                    }
+                    pair.target.acceptUpgrade(link.input, link.output) {
+                        assertEquals(9L, it.payloadTransfer.payloadHeader.id)
+                        sentDuringHandoff.countDown()
+                        // The handoff holds no lock while it reads: the keep-alive (as from the shared timer) returns.
+                        assertTrue(keepAliveReturned.await(2, TimeUnit.SECONDS))
+                        Thread.sleep(300) // the payload write waits for the pause to end
+                        assertFalse(writer.isDone)
+                    }
+                    writer.get(5, TimeUnit.SECONDS)
+                    client.get(10, TimeUnit.SECONDS)
+                }
             }
         } } finally { pool.shutdownNow() }
     }
