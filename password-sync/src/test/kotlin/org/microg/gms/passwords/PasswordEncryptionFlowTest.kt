@@ -110,6 +110,20 @@ class PasswordEncryptionFlowTest {
             }
         } } }
     }
+    /** The encryption page settles an attempt whose Google page closed early: the fence lifts and staged keys are wiped. */
+    @Test fun interruptedAttemptClosesFromEveryPendingPhaseAndLiftsTheFence() {
+        prepared().use { ready -> ready.closeView().use { closed ->
+            assertEquals(PasswordEncryptionPhase.CLOSED, closed.phase); assertFalse(PasswordEncryptionState.fences(closed.encode()))
+        } }
+        prepared().use { ready -> ready.open().use { opened -> opened.closeView().use { unknown -> unknown.abandoned().use { closed ->
+            assertTrue(PasswordEncryptionState.fences(unknown.encode()))
+            assertEquals(PasswordEncryptionPhase.CLOSED, closed.phase); assertFalse(PasswordEncryptionState.fences(closed.encode()))
+        } } } }
+        val key = VersionedTrustedVaultKey(3, ByteArray(32) { 2 })
+        try { prepared().use { ready -> ready.open().use { opened -> opened.stage(listOf(key)).use { staged -> staged.abandoned().use { closed ->
+            assertTrue(closed.deliveredKeys.isEmpty()); assertNull(closed.before); assertFalse(PasswordEncryptionState.fences(closed.encode()))
+        } } } } } finally { key.destroy() }
+    }
     @Test fun corruptOrFutureJournalCannotRemoveFenceByFallingBackToEmpty() {
         prepared().use { ready -> ready.open().use { opened ->
             rejects { PasswordEncryptionState.fences(Proto.decode(opened.encode()).replaceInteger(1, 2).encode()) }

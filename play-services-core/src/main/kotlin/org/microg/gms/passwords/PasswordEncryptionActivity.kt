@@ -4,6 +4,7 @@ package org.microg.gms.passwords
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -19,6 +20,7 @@ import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.LinearLayout
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -48,6 +50,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.microg.gms.auth.AuthManager
+import org.microg.gms.auth.folsom.ui.GenericActivity
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
 import org.microg.gms.cyclon.*
 import java.net.URLEncoder
@@ -72,6 +75,13 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     private var currentPhase: PasswordEncryptionPhase? = null
     private val lease = UUID.randomUUID().toString()
     private var question by mutableStateOf<Question?>(null)
+    // Google's unlock covers this page, which then locks; the page stays and asks for the owner again on return.
+    private var recovering = false
+    private var recovered = false
+    private val verifyLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        recovering = false
+        recovered = result.resultCode == RESULT_OK
+    }
 
     /** A confirmation the owner answers before Google's page opens or a change is closed. */
     private class Question(val title: Int, val message: Int, val confirm: Int, val accept: () -> Unit)
@@ -106,10 +116,16 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         if (!::account.isInitialized || initialized) return
         initialized = true
         ownerSessionStarted = true
-        refreshStatus()
+        refreshStatus(syncFirst = recovered)
+        recovered = false
     }
     override fun onOwnerAuthenticationFailed() { finish() }
-    override fun onOwnerLocked() { if (ownerSessionStarted) { invalidate(); finish() } }
+    override fun onOwnerLocked() {
+        if (!ownerSessionStarted) return
+        invalidate()
+        // Back from the unlock, the owner is asked again as on first open: that prompt must not close the page.
+        if (recovering) { ownerSessionStarted = false; showText(R.string.passwords_unlock_description) } else finish()
+    }
     override fun onResume() {
         super.onResume()
         if (::account.isInitialized && !initialized && ownsLease(lease) && !isFinishing) authenticateOwner()
@@ -163,49 +179,93 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         }
     }
 
-    private fun refreshStatus() = runWork { repository, token ->
-        val bytes = withContext(Dispatchers.IO) { repository.loadFlow() }
-        try { verify(token); renderState(bytes) } finally { bytes?.fill(0) }
+    /**
+     * Like Google Password Manager: the page shows the account's actual setting. An attempt left open (its Google page
+     * closed, or the owner left) is settled first, so it never blocks syncing or needs a manual check.
+     */
+    private fun refreshStatus(syncFirst: Boolean = false) = runWork { repository, token ->
+        val status = withContext(Dispatchers.IO) {
+            if (syncFirst) repository.syncSoon()
+            settle(repository); repository.status()
+        }
+        verify(token); renderStatus(status)
     }
 
-    private fun renderState(raw: ByteArray?) {
-        verify()
-        val state = PasswordEncryptionState.decode(raw)
-        try {
-            currentId = state?.id; currentOperation = state?.operation; currentPhase = state?.phase
-            // Only plain values reach the page; the decoded state is closed below.
-            val phase = state?.phase
-            val operation = state?.operation
-            val id = state?.id
-            val acknowledgedUnknown = state?.acknowledgedUnknown == true
-            when (phase) {
-                PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN -> page {
-                    CyclonSectionLabel(stringResource(R.string.passwords_changes))
-                    CyclonRow(stringResource(title(operation!!)), stringResource(R.string.passwords_encryption_pending), divider = false)
-                    PasswordOwnerActions {
-                        CyclonInkButton(stringResource(R.string.passwords_encryption_check)) { unlessBusy { reconcile() } }
-                        CyclonTextAction(stringResource(R.string.passwords_encryption_resolve)) { unlessBusy { confirmAbandon() } }
-                    }
+    /** Confirms a finished change from Google's own data, otherwise closes the local record and lets sync read Google. */
+    private fun settle(repository: PasswordEncryptionRepository) {
+        val bytes = repository.loadFlow() ?: return
+        try { PasswordEncryptionState.decode(bytes)?.use { state ->
+            when (state.phase) {
+                PasswordEncryptionPhase.READY -> repository.release(state.id)
+                PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN -> {
+                    val before = state.before ?: throw ConflictException()
+                    // Only a definite "not as requested" closes the record; a network failure keeps it for Try again.
+                    val finished = try {
+                        if (state.operation == PasswordEncryptionOperation.ENROLL) {
+                            val keys = state.deliveredKeys
+                            // Staged keys Google no longer proves (a newer epoch, no member proof) can never finish it.
+                            try { keys.isNotEmpty() && repository.completeEnrollment(before, keys, state.id) }
+                            catch (_: ProtocolException) { false } catch (_: VaultLockedException) { false }
+                            finally { keys.forEach(VersionedTrustedVaultKey::destroy) }
+                        } else repository.reconcileDeletion(before, state.operation, state.id)
+                    } catch (_: ConflictException) { false } catch (_: VaultResetException) { false }
+                    if (!finished) repository.release(state.id)
                 }
-                PasswordEncryptionPhase.READY -> page {
-                    CyclonSectionLabel(stringResource(R.string.passwords_changes))
-                    CyclonRow(stringResource(title(operation!!)), stringResource(warning(operation)), divider = false)
-                    PasswordOwnerActions {
-                        CyclonInkButton(stringResource(R.string.passwords_encryption_continue)) { unlessBusy { confirm(operation, existingId = id) } }
-                    }
-                }
-                else -> page {
-                    if (phase == PasswordEncryptionPhase.CONFIRMED) PasswordOwnerText(stringResource(R.string.passwords_encryption_checked))
-                    if (acknowledgedUnknown) PasswordOwnerText(stringResource(R.string.passwords_encryption_unknown_closed))
-                    CyclonNote(stringResource(R.string.passwords_encryption_description))
-                    CyclonHairline()
-                    for (choice in PasswordEncryptionOperation.values()) CyclonRow(stringResource(title(choice)),
-                        onClick = { unlessBusy { confirm(choice) } }, trailing = { CyclonChevron() })
-                }
+                else -> {}
             }
-        } finally { state?.close() }
+        } } finally { bytes.fill(0) }
     }
 
+    private fun renderStatus(status: PasswordEncryptionRepository.Status) {
+        verify()
+        page {
+            when (status) {
+                PasswordEncryptionRepository.Status.OFF -> {
+                    PasswordOwnerText(stringResource(R.string.passwords_encryption_intro))
+                    PasswordOwnerText(stringResource(R.string.passwords_encryption_intro_unlock))
+                    PasswordOwnerActions {
+                        CyclonInkButton(stringResource(R.string.passwords_encryption_set_up)) {
+                            unlessBusy { confirm(PasswordEncryptionOperation.ENROLL) }
+                        }
+                    }
+                }
+                PasswordEncryptionRepository.Status.ON -> {
+                    CyclonRow(stringResource(R.string.passwords_encryption_on), stringResource(R.string.passwords_encryption_on_summary),
+                        divider = false, trailing = { CyclonVoice("✓", color = Cyclon.palette.ink, size = 18) })
+                }
+                PasswordEncryptionRepository.Status.ON_LOCKED -> {
+                    CyclonRow(stringResource(R.string.passwords_encryption_on), stringResource(R.string.passwords_encryption_verify_summary),
+                        divider = false)
+                    PasswordOwnerActions {
+                        CyclonInkButton(stringResource(R.string.passwords_encryption_verify)) { unlessBusy { verifyIdentity() } }
+                    }
+                }
+                PasswordEncryptionRepository.Status.OTHER ->
+                    PasswordOwnerText(stringResource(R.string.passwords_encryption_passphrase))
+            }
+            CyclonSectionLabel(stringResource(R.string.passwords_encryption_reset_section), Modifier.padding(top = 16.dp))
+            // Google's reset turns off on-device encryption; it doesn't apply to keystore or passphrase accounts.
+            if (status == PasswordEncryptionRepository.Status.ON || status == PasswordEncryptionRepository.Status.ON_LOCKED) CyclonRow(stringResource(R.string.passwords_encryption_clear),
+                onClick = { unlessBusy { confirm(PasswordEncryptionOperation.CLEAR_PASSWORDS) } }, trailing = { CyclonChevron() })
+            CyclonRow(stringResource(R.string.passwords_encryption_passkeys),
+                onClick = { unlessBusy { confirm(PasswordEncryptionOperation.RESET_PASSKEYS) } }, trailing = { CyclonChevron() })
+        }
+    }
+
+    /** Google's account unlock for this phone, the same recovery the Passwords screen offers for a locked account. */
+    private fun verifyIdentity() = runWork { repository, token ->
+        withContext(Dispatchers.IO) { repository.prepareRecovery() }
+        verify(token); recovering = true
+        verifyLauncher.launch(Intent(this, GenericActivity::class.java)
+            .putExtra(GenericActivity.EXTRA_ACCOUNT_NAME, account.name)
+            .putExtra(GenericActivity.EXTRA_ACCOUNT_ID, accountId)
+            .putExtra(GenericActivity.EXTRA_SECURITY_DOMAIN, "chromesync")
+            .putExtra(GenericActivity.EXTRA_OPERATION, 1)
+            .putExtra(GenericActivity.EXTRA_OFFER_RESET, false)
+            .putExtra(GenericActivity.EXTRA_PASSWORD_OWNER_RECOVERY, true))
+    }
+
+    /** Every change asks first: setting up can't be undone without deleting all passwords, and the resets delete data. */
     private fun confirm(operation: PasswordEncryptionOperation, existingId: String? = null) {
         try { verify() } catch (_: Exception) { finish(); return }
         question = Question(title(operation), warning(operation), R.string.passwords_encryption_continue) { prepareAndOpen(operation, existingId) }
@@ -345,39 +405,10 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         tearDownWeb()
         reconcile()
     }
-    private fun reconcile() = runWork { repository, token ->
+    /** Google's page finished or closed: settle the attempt and show the account's setting again. */
+    private fun reconcile() {
         tearDownWeb()
-        val bytes = withContext(Dispatchers.IO) { repository.loadFlow() } ?: throw ConflictException()
-        try { PasswordEncryptionState.decode(bytes)!!.use { state ->
-            if (state.id != currentId || state.phase !in setOf(PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN)) throw ConflictException()
-            val before = state.before ?: throw ConflictException()
-            val complete = withContext(Dispatchers.IO) {
-                if (state.operation == PasswordEncryptionOperation.ENROLL) {
-                    val keys = state.deliveredKeys
-                    try { keys.isNotEmpty() && repository.completeEnrollment(before, keys, state.id) } finally { keys.forEach(VersionedTrustedVaultKey::destroy) }
-                } else repository.reconcileDeletion(before, state.operation, state.id)
-            }
-            verify(token)
-            val latest = withContext(Dispatchers.IO) { repository.loadFlow() }
-            try { renderState(latest); if (!complete) renderError() } finally { latest?.fill(0) }
-        } } finally { bytes.fill(0) }
-    }
-
-    private fun confirmAbandon() {
-        try { verify() } catch (_: Exception) { finish(); return }
-        val expectedId = currentId ?: return
-        question = Question(R.string.passwords_encryption_resolve, R.string.passwords_encryption_resolve_warning, R.string.passwords_encryption_resolve) {
-                runWork { repository, token ->
-                    val bytes = withContext(Dispatchers.IO) { repository.loadFlow() } ?: throw ConflictException()
-                    try { PasswordEncryptionState.decode(bytes)!!.use { state ->
-                        if (state.id != expectedId || state.id != currentId || state.phase !in setOf(PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN)) throw ConflictException()
-                        val complete = withContext(Dispatchers.IO) { repository.abandonVerified(state.before ?: throw ConflictException(), state.id) }
-                        verify(token)
-                        val latest = withContext(Dispatchers.IO) { repository.loadFlow() }
-                        try { renderState(latest); if (!complete) renderError() } finally { latest?.fill(0) }
-                    } } finally { bytes.fill(0) }
-                }
-            }
+        refreshStatus()
     }
 
     private fun closeOwnerScreen() {
@@ -407,7 +438,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     }
     private fun renderError() = page {
         PasswordOwnerText(stringResource(R.string.passwords_encryption_failed))
-        PasswordOwnerActions { CyclonInkButton(stringResource(R.string.passwords_encryption_check)) { unlessBusy { refreshStatus() } } }
+        PasswordOwnerActions { CyclonInkButton(stringResource(R.string.passwords_encryption_retry)) { unlessBusy { refreshStatus() } } }
     }
     private fun showUnavailable() { showText(R.string.passwords_encryption_not_supported) }
     private fun showText(message: Int) = page(onBack = ::finish) { PasswordOwnerText(stringResource(message)) }
