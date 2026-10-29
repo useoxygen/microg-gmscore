@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
@@ -30,7 +31,9 @@ class PasswordRepository private constructor(context: Context, val account: Acco
     private val marker: String
 
     init {
-        if (account.type != "com.google" || !accounts.getAccountsByType("com.google").contains(account)) throw VaultLockedException()
+        // Cyclon's device account has no password vault for anyone (CYC-927).
+        if (account.type != "com.google" || !accounts.getAccountsByType("com.google").contains(account) ||
+            !DeviceAccount.mayShow(this.context, account)) throw VaultLockedException()
         userId = accounts.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
         marker = hash("google:$userId")
         store = AndroidVaultStore(this.context, "google:$userId", ::checkAccount) { state ->
@@ -423,7 +426,8 @@ class PasswordRepository private constructor(context: Context, val account: Acco
         setPackageSignature(Constants.GMS_PACKAGE_SIGNATURE_SHA1)
     }
     private fun checkAccount() {
-        if (!accounts.getAccountsByType("com.google").contains(account) || accounts.getUserData(account, "GoogleUserId") != userId) throw VaultLockedException()
+        if (!accounts.getAccountsByType("com.google").contains(account) || accounts.getUserData(account, "GoogleUserId") != userId ||
+            !DeviceAccount.mayShow(context, account)) throw VaultLockedException()
     }
     private fun checkSnapshotParent(metadata: ByteArray) {
         if (expectedVaultParent != null && Proto.decode(metadata).string(1) != expectedVaultParent) throw VaultResetException()

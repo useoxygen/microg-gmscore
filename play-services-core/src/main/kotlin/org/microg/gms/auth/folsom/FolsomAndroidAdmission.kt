@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.auth.folsom
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.content.Context
 import android.content.pm.PackageManager
@@ -34,6 +35,8 @@ internal object FolsomAndroidAdmission {
     private fun accountId(context: Context, name: String): String? {
         val manager = AccountManager.get(context)
         val account = manager.getAccountsByType("com.google").singleOrNull { it.name == name } ?: return null
+        // Cyclon's device account has no recovery keys for any client (CYC-927); the fence re-checks this every time.
+        if (!DeviceAccount.mayShow(context, account)) return null
         return manager.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() }
     }
     private fun digest(value: ByteArray, algorithm: String): String = MessageDigest.getInstance(algorithm).digest(value)
