@@ -101,7 +101,8 @@ public class AccountContentProvider extends ContentProvider {
             } else if (PROVIDER_METHOD_CLEAR_PASSWORD.equals(method) && hasGooglePackagePermission
                     && !"com.google.android.apps.restore".equals(packageName)) {
                 Account a = extras.getParcelable(PROVIDER_EXTRA_CLEAR_PASSWORD);
-                AccountManager.get(getContext()).clearPassword(a);
+                // Cyclon's device account keeps its token: microG needs it to register the phone (CYC-927).
+                if (a != null && DeviceAccount.INSTANCE.mayShow(getContext(), a)) AccountManager.get(getContext()).clearPassword(a);
                 return null;
             }
             throw new UnsupportedOperationException(String.format("Unsupported method call %s(%s).", method, arg));
