@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -235,9 +236,10 @@ fun CyclonTopBar(title: String, backLabel: String, onBack: () -> Unit, status: S
     val band = 48.dp
     val firstLine = with(LocalDensity.current) { style.lineHeight.toDp() }
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
-        Box(Modifier.size(band).clip(CircleShape).clickable(role = Role.Button, onClick = onBack)
-            .semantics { contentDescription = backLabel }, contentAlignment = Alignment.Center) {
-            Text("‹", style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 32.sp), color = p.ink)
+        Box(Modifier.size(band).clip(CircleShape).semantics { contentDescription = backLabel }
+            .clickable(role = Role.Button, onClick = onBack), contentAlignment = Alignment.Center) {
+            Text("‹", Modifier.clearAndSetSemantics { },
+                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 28.sp, lineHeight = 32.sp), color = p.ink)
         }
         leading?.let { Box(Modifier.height(band).padding(end = 10.dp), contentAlignment = Alignment.Center) { it() } }
         Column(Modifier.weight(1f).padding(top = ((band - firstLine) / 2).coerceAtLeast(0.dp))) {
@@ -320,8 +322,8 @@ fun CyclonIconAction(icon: ImageVector, label: String, filled: Boolean, enabled:
     val p = Cyclon.palette
     Box(Modifier.size(48.dp).clip(CircleShape).background(if (filled) (if (enabled) p.ink else p.cell) else Color.Transparent)
         .then(if (filled) Modifier else Modifier.border(BorderStroke(1.dp, p.mid), CircleShape))
-        .clickable(enabled = enabled, role = Role.Button, onClickLabel = label, onClick = onClick)
-        .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+        .semantics { contentDescription = label }
+        .clickable(enabled = enabled, role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
         Icon(icon, contentDescription = null, tint = if (!enabled) p.muted else if (filled) p.paper else p.ink)
     }
 }
