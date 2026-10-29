@@ -111,6 +111,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         return getReadableDatabase().query(OWNERS_TABLE, null, null, null, null, null, null);
     }
 
+    /** The owners without the accounts named in [excluded] (Cyclon's device account, CYC-927), compared case-insensitively. */
+    public Cursor getOwnersExcept(java.util.Collection<String> excluded) {
+        if (excluded.isEmpty()) return getOwners();
+        StringBuilder where = new StringBuilder("lower(account_name) NOT IN (");
+        String[] args = new String[excluded.size()];
+        int i = 0;
+        for (String name : excluded) {
+            where.append(i == 0 ? "?" : ",?");
+            args[i++] = name.toLowerCase(java.util.Locale.ROOT);
+        }
+        return getReadableDatabase().query(OWNERS_TABLE, null, where.append(')').toString(), args, null, null, null);
+    }
+
     public void putOwner(ContentValues contentValues) {
         getWritableDatabase().insertWithOnConflict(OWNERS_TABLE, null, contentValues, SQLiteDatabase.CONFLICT_REPLACE);
         close();
