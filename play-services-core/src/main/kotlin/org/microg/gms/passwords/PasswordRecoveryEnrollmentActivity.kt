@@ -7,12 +7,12 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
@@ -21,7 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.microg.gms.auth.folsom.ui.GenericActivity
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -50,78 +50,57 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_recovery_enroll_phone), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) {
-                    Text(stringResource(R.string.passwords_unlock))
-                } else {
-                    Text(account.name)
-                    Text(stringResource(R.string.passwords_recovery_enroll_description))
-                    if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_recovery_enroll_lock_required))
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    message?.let { Text(stringResource(it)) }
-                    status?.phase?.let { Text(stringResource(phaseText(it))) }
-                    if (hasSecureScreenLock) {
-                        OutlinedButton(onClick = { perform(RecoveryEnrollmentAction.REFRESH) }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_refresh))
-                        }
-                        if (status != null && status?.attemptId == null) Button(onClick = {
-                            confirmation = RecoveryEnrollmentAction.ENROLL
-                        }, enabled = !busy) { Text(stringResource(R.string.passwords_recovery_enroll_allow)) }
-                        if (status?.attemptId != null && status?.phase != EnrollmentPhase.ENROLLED) {
-                            TextButton(onClick = { confirmation = RecoveryEnrollmentAction.RETRY }, enabled = !busy) {
-                                Text(stringResource(R.string.passwords_retry_owner))
-                            }
-                            TextButton(onClick = { confirmation = RecoveryEnrollmentAction.CLOSE }, enabled = !busy) {
-                                Text(stringResource(R.string.passwords_recovery_enroll_close_attempt))
-                            }
-                        }
-                        TextButton(onClick = ::recoverWithGoogle, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_recovery_enroll_recover))
-                        }
-                        OutlinedButton(onClick = ::manageRecovery, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_domain_manage))
-                        }
-                        OutlinedButton(onClick = { manageRecoverableVault("chromesync") }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_recoverable_vault_passwords))
-                        }
-                        OutlinedButton(onClick = { manageRecoverableVault("hw_protected") }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_recoverable_vault_passkeys))
-                        }
-                        OutlinedButton(onClick = ::managePinRecovery, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_pin_renewal_title))
-                        }
-                        OutlinedButton(onClick = ::manageEnclavePin, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_enclave_pin_title))
-                        }
-                        OutlinedButton(onClick = { restoreRecovery("chromesync") }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_restore_passwords))
-                        }
-                        OutlinedButton(onClick = { restoreRecovery("hw_protected") }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_restore_passkeys))
+        setContent { CyclonMaterialTheme {
+            PasswordOwnerPage(stringResource(R.string.passwords_recovery_enroll_phone), account.name, onBack = { cancel(); finish() }) {
+                if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
+                CyclonNote(stringResource(R.string.passwords_recovery_enroll_description))
+                if (!hasSecureScreenLock) PasswordOwnerText(stringResource(R.string.passwords_recovery_enroll_lock_required))
+                PasswordOwnerStatus(busy, message?.let { stringResource(it) })
+                status?.phase?.let { PasswordOwnerText(stringResource(phaseText(it))) }
+                if (!hasSecureScreenLock) return@PasswordOwnerPage
+                PasswordOwnerActions {
+                    if (status != null && status?.attemptId == null) CyclonInkButton(stringResource(R.string.passwords_recovery_enroll_allow), enabled = !busy) {
+                        confirmation = RecoveryEnrollmentAction.ENROLL
+                    }
+                    CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(RecoveryEnrollmentAction.REFRESH) }
+                    if (status?.attemptId != null && status?.phase != EnrollmentPhase.ENROLLED) {
+                        CyclonTextAction(stringResource(R.string.passwords_retry_owner), enabled = !busy) { confirmation = RecoveryEnrollmentAction.RETRY }
+                        CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
+                            confirmation = RecoveryEnrollmentAction.CLOSE
                         }
                     }
                 }
-                TextButton(onClick = { cancel(); finish() }) { Text(stringResource(android.R.string.cancel)) }
+                CyclonSectionLabel(stringResource(R.string.passwords_section_recovery))
+                RecoveryRow(R.string.passwords_recovery_enroll_recover, ::recoverWithGoogle)
+                RecoveryRow(R.string.passwords_domain_manage, ::manageRecovery)
+                RecoveryRow(R.string.passwords_recoverable_vault_passwords) { manageRecoverableVault("chromesync") }
+                RecoveryRow(R.string.passwords_recoverable_vault_passkeys) { manageRecoverableVault("hw_protected") }
+                RecoveryRow(R.string.passwords_pin_renewal_title, ::managePinRecovery)
+                RecoveryRow(R.string.passwords_enclave_pin_title, ::manageEnclavePin)
+                RecoveryRow(R.string.passwords_restore_passwords) { restoreRecovery("chromesync") }
+                RecoveryRow(R.string.passwords_restore_passkeys) { restoreRecovery("hw_protected") }
             }
             confirmation?.takeIf { unlocked }?.let { action ->
                 AlertDialog(onDismissRequest = { confirmation = null },
                     title = { Text(stringResource(R.string.passwords_recovery_enroll_phone)) },
                     text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(account.name)
-                        Text(stringResource(when (action) {
+                        Text(account.name, style = MaterialTheme.typography.titleMedium, color = Cyclon.palette.ink)
+                        PasswordDialogText(stringResource(when (action) {
                             RecoveryEnrollmentAction.ENROLL -> R.string.passwords_recovery_enroll_confirm
                             RecoveryEnrollmentAction.RETRY -> R.string.passwords_recovery_enroll_retry_warning
                             else -> R.string.passwords_recovery_enroll_close_warning
-                        }))
-                    } }, confirmButton = { TextButton(onClick = {
+                        }), scrolls = true)
+                    } }, confirmButton = { CyclonTextAction(stringResource(android.R.string.ok), enabled = !busy && hasSecureScreenLock) {
                         confirmation = null; perform(action)
-                    }, enabled = !busy && hasSecureScreenLock) { Text(stringResource(android.R.string.ok)) } },
-                    dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    } },
+                    dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { confirmation = null } })
             }
-        } } }
+        } }
         authenticateOwner()
+    }
+    /** A page this one opens, as a Settings row. */
+    @Composable private fun RecoveryRow(title: Int, open: () -> Unit) {
+        CyclonRow(stringResource(title), onClick = open, enabled = !busy, trailing = { CyclonChevron() })
     }
     private fun validAccount(): Boolean {
         val accounts = AccountManager.get(this)

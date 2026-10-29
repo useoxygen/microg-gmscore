@@ -6,8 +6,7 @@ import android.accounts.AccountManager
 import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -17,7 +16,7 @@ import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import java.util.concurrent.atomic.AtomicBoolean
 
 class PasswordBreachActivity : PasswordOwnerActivity() {
@@ -34,30 +33,28 @@ class PasswordBreachActivity : PasswordOwnerActivity() {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 26) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_breach_assess), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner) { Text(stringResource(R.string.passwords_unlock)) }
-                else {
-                    Text(stringResource(R.string.passwords_breach_description))
-                    if (busy) {
-                        progress?.let { value ->
-                            if (value.saving) Text(stringResource(R.string.passwords_breach_saving))
-                            else Text(stringResource(R.string.passwords_breach_progress, value.checked, value.total))
-                        }
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                        TextButton(onClick = ::cancel) { Text(stringResource(android.R.string.cancel)) }
-                    } else Button(onClick = ::start) { Text(stringResource(R.string.passwords_breach_start)) }
-                    result?.let { value ->
-                        Text(stringResource(R.string.passwords_breach_result, value.checked, value.leaked))
-                        if (value.knownLeaked != 0) Text(stringResource(R.string.passwords_breach_known, value.knownLeaked))
-                        if (value.unassessed != 0) Text(stringResource(R.string.passwords_breach_unassessed, value.unassessed))
+        setContent { CyclonMaterialTheme {
+            PasswordOwnerPage(stringResource(R.string.passwords_breach_assess), intent.getStringExtra("account"), onBack = { cancel(); finish() }) {
+                if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
+                CyclonNote(stringResource(R.string.passwords_breach_description))
+                if (busy) {
+                    progress?.let { value ->
+                        CyclonVoice(if (value.saving) stringResource(R.string.passwords_breach_saving)
+                            else stringResource(R.string.passwords_breach_progress, value.checked, value.total),
+                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = Cyclon.palette.ink)
                     }
-                    error?.let { Text(stringResource(it)) }
+                    CyclonProgress(true, Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+                    PasswordOwnerActions { CyclonLineButton(stringResource(android.R.string.cancel), onClick = ::cancel) }
+                } else PasswordOwnerActions { CyclonInkButton(stringResource(R.string.passwords_breach_start), onClick = ::start) }
+                result?.let { value ->
+                    CyclonHairline(Modifier.padding(top = 8.dp))
+                    PasswordOwnerText(stringResource(R.string.passwords_breach_result, value.checked, value.leaked), Modifier.padding(top = 8.dp))
+                    if (value.knownLeaked != 0) PasswordOwnerText(stringResource(R.string.passwords_breach_known, value.knownLeaked))
+                    if (value.unassessed != 0) PasswordOwnerText(stringResource(R.string.passwords_breach_unassessed, value.unassessed))
                 }
-                TextButton(onClick = { cancel(); finish() }) { Text(stringResource(R.string.passwords_breach_close)) }
+                error?.let { PasswordOwnerText(stringResource(it)) }
             }
-        } } }
+        } }
     }
     private fun start() {
         requireOwner()

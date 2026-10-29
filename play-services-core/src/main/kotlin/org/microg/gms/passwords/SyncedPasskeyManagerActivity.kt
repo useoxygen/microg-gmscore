@@ -11,7 +11,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -21,7 +24,7 @@ import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -50,128 +53,127 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            LazyColumn(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        setContent { CyclonMaterialTheme { PasswordOwnerSurface {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
                 item {
-                    Text(stringResource(R.string.passwords_synced_passkeys), style = MaterialTheme.typography.headlineSmall)
-                    if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) {
-                        Text(stringResource(R.string.passwords_unlock))
-                    } else {
-                        Text(account.name)
-                        Text(stringResource(R.string.passwords_passkey_management_description))
-                        OutlinedButton(onClick = { perform(refresh = true) }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_refresh))
-                        }
+                    PasswordOwnerHeader(stringResource(R.string.passwords_synced_passkeys), account.name, onBack = ::finish)
+                    if (!unlocked) PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner)
+                    else {
+                        CyclonNote(stringResource(R.string.passwords_passkey_management_description))
+                        PasswordOwnerActions { CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(refresh = true) } }
                     }
-                    if (busy) LinearProgressIndicator()
-                    message?.let { Text(stringResource(it)) }
+                    PasswordOwnerStatus(busy, message?.let { stringResource(it) })
                 }
                 if (unlocked) screen?.let { state ->
-                    if (state.reset) item { Text(stringResource(R.string.passwords_passkey_management_reset)) }
+                    if (state.reset) item { PasswordOwnerText(stringResource(R.string.passwords_passkey_management_reset)) }
+                    if (state.pendingCreate || state.operation != null) item { CyclonSectionLabel(stringResource(R.string.passwords_changes)) }
                     if (state.pendingCreate) item {
-                        Text(stringResource(R.string.passwords_passkey_management_pending_create))
-                        TextButton(onClick = { closeCreate = true }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_passkey_management_close_create))
+                        CyclonRow(stringResource(R.string.passwords_passkey_management_pending_create), divider = false)
+                        Row(Modifier.padding(horizontal = 4.dp)) {
+                            CyclonTextAction(stringResource(R.string.passwords_passkey_management_close_create), enabled = !busy) { closeCreate = true }
                         }
+                        CyclonHairline(Modifier.padding(start = 20.dp))
                     }
                     state.operation?.let { operation -> item {
-                        Text(stringResource(R.string.passwords_passkey_management_progress,
-                            operation.steps.count { it.phase == PasskeyOwnerPhase.COMMITTED }, operation.steps.size))
-                        Text(stringResource(R.string.passwords_passkey_management_pending))
-                        if (!state.reset && operation.kind != PasskeyOwnerKind.SECRET_UPDATE &&
-                            operation.steps.none { it.phase == PasskeyOwnerPhase.CONFLICT })
-                            TextButton(onClick = { resolving = true }, enabled = !busy) {
-                                Text(stringResource(R.string.passwords_retry_owner))
-                            }
-                        if (operation.steps.any { it.phase == PasskeyOwnerPhase.CONFLICT })
-                            Text(stringResource(R.string.passwords_passkey_management_conflict))
-                        TextButton(onClick = { resolving = false }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_passkey_management_close))
+                        val conflict = operation.steps.any { it.phase == PasskeyOwnerPhase.CONFLICT }
+                        CyclonRow(stringResource(R.string.passwords_passkey_management_progress,
+                            operation.steps.count { it.phase == PasskeyOwnerPhase.COMMITTED }, operation.steps.size),
+                            listOfNotNull(stringResource(R.string.passwords_passkey_management_pending),
+                                stringResource(R.string.passwords_passkey_management_conflict).takeIf { conflict }).joinToString("\n"), divider = false)
+                        Row(Modifier.padding(horizontal = 4.dp)) {
+                            if (!state.reset && operation.kind != PasskeyOwnerKind.SECRET_UPDATE && !conflict)
+                                CyclonTextAction(stringResource(R.string.passwords_retry_owner), enabled = !busy) { resolving = true }
+                            CyclonTextAction(stringResource(R.string.passwords_passkey_management_close), enabled = !busy) { resolving = false }
                         }
+                        CyclonHairline(Modifier.padding(start = 20.dp))
                     } }
-                    if (!state.reset && state.entries.isEmpty()) item { Text(stringResource(R.string.passwords_passkey_management_empty)) }
+                    if (!state.reset) item { CyclonSectionLabel(stringResource(R.string.passwords_synced_passkeys)) }
+                    if (!state.reset && state.entries.isEmpty()) item { CyclonNote(stringResource(R.string.passwords_passkey_management_empty)) }
                     items(state.entries, key = { it.data.tag }) { entry ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Identity(entry.data)
-                            if (entry.data.hidden) Text(stringResource(R.string.passwords_passkey_management_hidden))
-                            if (entry.shadowed) Text(stringResource(R.string.passwords_passkey_management_shadowed))
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                TextButton(onClick = { editing = entry }, enabled = !busy && !entry.data.hidden &&
-                                    state.operation == null && !state.pendingCreate) { Text(stringResource(R.string.passwords_passkey_management_edit)) }
-                                TextButton(onClick = { deleting = entry }, enabled = !busy && state.operation == null && !state.pendingCreate) {
-                                    Text(stringResource(R.string.passwords_delete))
-                                }
+                        CyclonRow(entry.data.rpId, listOfNotNull(entry.data.username.ifEmpty { null }, entry.data.displayName.ifEmpty { null },
+                            stringResource(R.string.passwords_passkey_management_hidden).takeIf { entry.data.hidden },
+                            stringResource(R.string.passwords_passkey_management_shadowed).takeIf { entry.shadowed },
+                            stringResource(R.string.passwords_passkey_management_record, entry.data.tag.take(12))).joinToString("\n"),
+                            divider = false, leading = { CyclonMonogram(entry.data.rpId) })
+                        Row(Modifier.padding(start = 54.dp)) {
+                            CyclonTextAction(stringResource(R.string.passwords_passkey_management_edit), enabled = !busy && !entry.data.hidden &&
+                                state.operation == null && !state.pendingCreate) { editing = entry }
+                            CyclonTextAction(stringResource(R.string.passwords_delete), enabled = !busy && state.operation == null && !state.pendingCreate) {
+                                deleting = entry
                             }
-                            HorizontalDivider()
                         }
+                        CyclonHairline(Modifier.padding(start = 20.dp))
                     }
                 }
-                item { TextButton(onClick = { finish() }) { Text(stringResource(android.R.string.cancel)) } }
             }
             editing?.takeIf { unlocked }?.let { entry ->
                 var username by remember(entry.data.tag) { mutableStateOf(entry.data.username) }
                 var display by remember(entry.data.tag) { mutableStateOf(entry.data.displayName) }
                 AlertDialog(onDismissRequest = { editing = null }, title = { Text(stringResource(R.string.passwords_passkey_management_edit)) },
-                    text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(entry.data.rpId)
-                        OutlinedTextField(username, { if (it.length <= 1024) username = it },
+                    text = { PasswordDialogProtection(); Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(entry.data.rpId, style = MaterialTheme.typography.titleMedium)
+                        OutlinedTextField(username, { if (it.length <= 1024) username = it }, Modifier.fillMaxWidth(), colors = cyclonFieldColors(),
                             label = { Text(stringResource(R.string.passwords_username)) })
-                        OutlinedTextField(display, { if (it.length <= 1024) display = it },
+                        OutlinedTextField(display, { if (it.length <= 1024) display = it }, Modifier.fillMaxWidth(), colors = cyclonFieldColors(),
                             label = { Text(stringResource(R.string.passwords_passkey_management_display_name)) })
-                        Text(stringResource(R.string.passwords_passkey_management_edit_warning))
+                        Text(stringResource(R.string.passwords_passkey_management_edit_warning), style = MaterialTheme.typography.bodySmall,
+                            color = Cyclon.palette.muted)
                     } },
-                    confirmButton = { TextButton(onClick = {
+                    confirmButton = { CyclonTextAction(stringResource(R.string.passwords_save),
+                        enabled = username.isNotEmpty() && !busy && (username != entry.data.username || display != entry.data.displayName)) {
                         editing = null
                         perform { vault, verify -> vault.ownerRename(entry.resource, username, display, verify) }
-                    }, enabled = username.isNotEmpty() && !busy && (username != entry.data.username || display != entry.data.displayName)) {
-                        Text(stringResource(R.string.passwords_save)) } },
-                    dismissButton = { TextButton(onClick = { editing = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    } },
+                    dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { editing = null } })
             }
             deleting?.takeIf { unlocked }?.let { entry ->
                 val group = deletionGroup(entry)
                 AlertDialog(onDismissRequest = { deleting = null }, title = { Text(stringResource(R.string.passwords_delete)) },
-                    text = { PasswordDialogProtection(); Column(Modifier.verticalScroll(rememberScrollState()),
+                    text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(R.string.passwords_passkey_management_delete_warning, group.size))
+                        PasswordDialogText(stringResource(R.string.passwords_passkey_management_delete_warning, group.size))
                         group.forEach { Identity(it.data) }
-                    } }, confirmButton = { TextButton(onClick = {
+                    } }, confirmButton = { CyclonTextAction(stringResource(R.string.passwords_delete), enabled = !busy && group.isNotEmpty()) {
                         deleting = null
                         perform { vault, verify -> vault.ownerDelete(entry.resource, group.map { it.resource }, verify) }
-                    }, enabled = !busy && group.isNotEmpty()) { Text(stringResource(R.string.passwords_delete)) } },
-                    dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    } },
+                    dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { deleting = null } })
             }
             resolving?.takeIf { unlocked }?.let { retry -> screen?.operation?.let { operation ->
                 AlertDialog(onDismissRequest = { resolving = null },
                     title = { Text(stringResource(if (retry) R.string.passwords_retry_owner else R.string.passwords_passkey_management_close)) },
-                    text = { PasswordDialogProtection(); Column(Modifier.verticalScroll(rememberScrollState()),
+                    text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(if (retry) R.string.passwords_passkey_management_retry_warning
+                        PasswordDialogText(stringResource(if (retry) R.string.passwords_passkey_management_retry_warning
                             else R.string.passwords_passkey_management_close_warning))
                         screen?.operationEntries.orEmpty().forEachIndexed { index, data ->
                             Identity(data)
-                            Text(stringResource(phaseLabel(operation.steps[index].phase)))
+                            CyclonVoice(stringResource(phaseLabel(operation.steps[index].phase)), color = Cyclon.palette.ink)
                         }
-                    } }, confirmButton = { TextButton(onClick = {
+                    } }, confirmButton = { CyclonTextAction(stringResource(android.R.string.ok), enabled = !busy) {
                         resolving = null
                         perform { vault, verify -> if (retry) vault.ownerRetry(operation.id, verify) else vault.ownerClose(operation.id, verify) }
-                    }, enabled = !busy) { Text(stringResource(android.R.string.ok)) } },
-                    dismissButton = { TextButton(onClick = { resolving = null }) { Text(stringResource(android.R.string.cancel)) } })
+                    } },
+                    dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { resolving = null } })
             } }
             if (closeCreate && unlocked) AlertDialog(onDismissRequest = { closeCreate = false },
                 title = { Text(stringResource(R.string.passwords_passkey_management_close_create)) },
-                text = { PasswordDialogProtection(); Text(stringResource(R.string.passwords_passkey_management_close_warning)) },
-                confirmButton = { TextButton(onClick = {
+                text = { PasswordDialogProtection(); PasswordDialogText(stringResource(R.string.passwords_passkey_management_close_warning), scrolls = true) },
+                confirmButton = { CyclonTextAction(stringResource(android.R.string.ok), enabled = !busy) {
                     closeCreate = false; perform { vault, verify -> vault.discardPendingCreate(verify) }
-                }, enabled = !busy) { Text(stringResource(android.R.string.ok)) } },
-                dismissButton = { TextButton(onClick = { closeCreate = false }) { Text(stringResource(android.R.string.cancel)) } })
+                } },
+                dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { closeCreate = false } })
         } } }
         authenticateOwner()
     }
     @Composable private fun Identity(data: SyncedPasskey) {
-        Text(data.rpId, style = MaterialTheme.typography.titleMedium)
-        Text(data.username)
-        if (data.displayName.isNotEmpty()) Text(data.displayName)
-        Text(stringResource(R.string.passwords_passkey_management_record, data.tag.take(12)))
+        Column {
+            Text(data.rpId, style = MaterialTheme.typography.titleMedium, color = Cyclon.palette.ink)
+            Text(data.username, style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.ink)
+            if (data.displayName.isNotEmpty()) Text(data.displayName, style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.ink)
+            Text(stringResource(R.string.passwords_passkey_management_record, data.tag.take(12)), style = MaterialTheme.typography.bodySmall,
+                color = Cyclon.palette.muted)
+        }
     }
     private fun phaseLabel(phase: PasskeyOwnerPhase): Int = when (phase) {
         PasskeyOwnerPhase.COMMITTED -> R.string.passwords_passkey_management_committed

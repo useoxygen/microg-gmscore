@@ -9,14 +9,11 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +24,7 @@ import org.microg.gms.auth.folsom.DomainLifecycleOwnerStatus
 import org.microg.gms.auth.folsom.FolsomAndroidAdmission
 import org.microg.gms.auth.folsom.FolsomCallerAdmission
 import org.microg.gms.auth.folsom.utils.SecureBox
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import org.microg.gms.passwords.*
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
@@ -69,81 +66,19 @@ class SecurityDomainLifecycleActivity : PasswordOwnerActivity() {
             verifyIdentity()
         } catch (_: Exception) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_domain_manage), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) { Text(stringResource(R.string.passwords_unlock)) }
-                else {
-                    Text(account.name)
-                    Text(stringResource(if (domain == "chromesync") R.string.passwords_domain_passwords else R.string.passwords_domain_passkeys))
-                    if (requested == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        for ((id, label) in listOf("chromesync" to R.string.passwords_domain_passwords, "hw_protected" to R.string.passwords_domain_passkeys))
-                            TextButton(onClick = { if (id != domain) { domain = id; status = null; perform() } }, enabled = !busy) {
-                                Text(stringResource(label))
-                            }
-                    }
-                    if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_domain_lock_required))
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    message?.let { Text(stringResource(it)) }
-                    status?.let { current ->
-                        Text(stringResource(R.string.passwords_domain_devices, current.members))
-                        if (current.phase != null) Text(stringResource(phaseLabel(current)))
-                        val pending = current.phase != null && (current.phase != DomainLifecyclePhase.COMMITTED ||
-                            current.operation == DomainLifecycleKind.RESET && !current.authorityCleared)
-                        if (pending) {
-                            TextButton(onClick = { retry = true }, enabled = !busy) { Text(stringResource(R.string.passwords_retry_owner)) }
-                            if (current.operation != DomainLifecycleKind.RESET || current.phase == DomainLifecyclePhase.PREPARED)
-                                TextButton(onClick = { closing = true }, enabled = !busy) {
-                                Text(stringResource(R.string.passwords_domain_close_attempt))
-                            }
-                        } else if (hasSecureScreenLock) {
-                            val actions = requested?.let { listOf(it) } ?: if (current.epoch == 0 && current.members == 0) listOf(DomainLifecycleKind.CREATE) else
-                                listOf(DomainLifecycleKind.ENROLL, DomainLifecycleKind.ROTATE, DomainLifecycleKind.RESET)
-                            actions.forEach { action -> Button(onClick = { confirmation = action }, enabled = !busy) {
-                                Text(stringResource(actionLabel(action)))
-                            } }
-                        }
-                    }
-                    OutlinedButton(onClick = { perform() }, enabled = !busy && hasSecureScreenLock) { Text(stringResource(R.string.passwords_refresh)) }
-                    externalPublic?.let { public ->
-                        Text(stringResource(R.string.passwords_domain_device_identity,
-                            MessageDigest.getInstance("SHA-256").digest(public).take(16).joinToString("") { "%02x".format(it.toInt() and 255) }))
-                    }
-                }
-                TextButton(onClick = { cancel(); finish() }) { Text(stringResource(android.R.string.cancel)) }
-            }
-            if (confirmation != null || retry || closing) {
-                val action = confirmation
-                AlertDialog(onDismissRequest = { confirmation = null; retry = false; closing = false },
-                    title = { Text(stringResource(action?.let(::actionLabel) ?: R.string.passwords_domain_manage)) },
-                    text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(account.name)
-                        if (action == DomainLifecycleKind.ADD_MEMBER) {
-                            intent.getStringExtra("lifecycle_caller")?.let { Text(stringResource(R.string.passwords_domain_requesting_app, it)) }
-                            externalPublic?.let { Text(stringResource(R.string.passwords_domain_device_identity,
-                                MessageDigest.getInstance("SHA-256").digest(it).take(16).joinToString("") { byte -> "%02x".format(byte.toInt() and 255) })) }
-                        }
-                        Text(stringResource(when {
-                            retry -> R.string.passwords_domain_retry_warning
-                            closing && status?.operation == DomainLifecycleKind.RESET && status?.phase == DomainLifecyclePhase.PREPARED ->
-                                R.string.passwords_domain_close_prepared_reset
-                            closing -> R.string.passwords_domain_close_warning
-                            action == DomainLifecycleKind.RESET -> R.string.passwords_domain_reset_warning
-                            action == DomainLifecycleKind.ROTATE -> R.string.passwords_domain_rotate_warning
-                            action == DomainLifecycleKind.CREATE -> R.string.passwords_domain_create_warning
-                            action == DomainLifecycleKind.ADD_MEMBER -> R.string.passwords_domain_add_warning
-                            else -> R.string.passwords_domain_enroll_warning
-                        }))
-                    } }, confirmButton = { TextButton(onClick = {
-                        val doRetry = retry; val doClose = closing
-                        confirmation = null; retry = false; closing = false
-                        perform(action, doRetry, doClose)
-                    }, enabled = !busy && hasSecureScreenLock) { Text(stringResource(android.R.string.ok)) } },
-                    dismissButton = { TextButton(onClick = { confirmation = null; retry = false; closing = false }) {
-                        Text(stringResource(android.R.string.cancel))
-                    } })
-            }
-        } } }
+        setContent { CyclonMaterialTheme {
+            SecurityDomainLifecycleScreen(account.name, domain, requested, intent.getStringExtra("lifecycle_caller"), externalPublic,
+                unlocked, hasSecureScreenLock, busy, message, status, confirmation, retry, closing,
+                onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner,
+                onDomain = { id -> if (id != domain) { domain = id; status = null; perform() } }, onRefresh = { perform() },
+                onAsk = { confirmation = it }, onRetry = { retry = true }, onClose = { closing = true },
+                onDismiss = { confirmation = null; retry = false; closing = false },
+                onConfirm = { action ->
+                    val doRetry = retry; val doClose = closing
+                    confirmation = null; retry = false; closing = false
+                    perform(action, doRetry, doClose)
+                })
+        } }
         authenticateOwner()
     }
     private fun verifyIdentity() {
@@ -202,21 +137,6 @@ class SecurityDomainLifecycleActivity : PasswordOwnerActivity() {
             } finally { if (activeCancellation === stopped) { busy = false; client = null; activeCancellation = null } }
         }
     }
-    private fun actionLabel(kind: DomainLifecycleKind) = when (kind) {
-        DomainLifecycleKind.CREATE -> R.string.passwords_domain_create
-        DomainLifecycleKind.ENROLL -> R.string.passwords_domain_enroll
-        DomainLifecycleKind.ROTATE -> R.string.passwords_domain_rotate
-        DomainLifecycleKind.RESET -> R.string.passwords_domain_reset
-        DomainLifecycleKind.ADD_MEMBER -> R.string.passwords_domain_add
-    }
-    private fun phaseLabel(current: DomainLifecycleOwnerStatus) = when (current.phase) {
-        DomainLifecyclePhase.COMMITTED -> if (current.operation == DomainLifecycleKind.RESET && !current.authorityCleared)
-            R.string.passwords_domain_clear_pending else R.string.passwords_domain_confirmed
-        DomainLifecyclePhase.PREPARED -> R.string.passwords_domain_prepared
-        DomainLifecyclePhase.CONFLICT -> R.string.passwords_domain_changed
-        DomainLifecyclePhase.REFUSED -> R.string.passwords_domain_failed
-        else -> R.string.passwords_domain_uncertain
-    }
     private fun cancel() { activeCancellation?.set(true); client?.cancel() }
     override fun onOwnerAuthenticated() { generation.incrementAndGet(); allowed.set(true); unlocked = true; if (hasSecureScreenLock) perform() }
     override fun onOwnerAuthenticationFailed() { finish() }
@@ -226,4 +146,88 @@ class SecurityDomainLifecycleActivity : PasswordOwnerActivity() {
         allowed.set(false); generation.incrementAndGet(); cancel(); client = null; activeCancellation = null
         unlocked = false; busy = false; status = null; confirmation = null; retry = false; closing = false; message = null
     }
+}
+
+/** What [SecurityDomainLifecycleActivity] shows, from its state alone; the activity keeps every check and request. */
+@Composable
+internal fun SecurityDomainLifecycleScreen(
+    account: String, domain: String, requested: DomainLifecycleKind?, requestingApp: String?, externalPublic: ByteArray?,
+    unlocked: Boolean, secure: Boolean, busy: Boolean, message: Int?, status: DomainLifecycleOwnerStatus?,
+    confirmation: DomainLifecycleKind?, retry: Boolean, closing: Boolean, onBack: () -> Unit, onUnlock: () -> Unit,
+    onDomain: (String) -> Unit, onRefresh: () -> Unit, onAsk: (DomainLifecycleKind) -> Unit, onRetry: () -> Unit,
+    onClose: () -> Unit, onDismiss: () -> Unit, onConfirm: (DomainLifecycleKind?) -> Unit,
+) {
+    val fingerprint = externalPublic?.let { public ->
+        stringResource(R.string.passwords_domain_device_identity,
+            MessageDigest.getInstance("SHA-256").digest(public).take(16).joinToString("") { "%02x".format(it.toInt() and 255) })
+    }
+    PasswordOwnerPage(stringResource(R.string.passwords_domain_manage), account, onBack) {
+        if (!unlocked) { PasswordOwnerLocked(secure, enabled = !busy, onUnlock = onUnlock); return@PasswordOwnerPage }
+        if (requested == null) Column(Modifier.selectableGroup()) {
+            for ((id, label) in listOf("chromesync" to R.string.passwords_domain_passwords, "hw_protected" to R.string.passwords_domain_passkeys))
+                CyclonChoiceRow(stringResource(label), null, selected = id == domain, enabled = !busy) { onDomain(id) }
+        } else PasswordOwnerText(stringResource(if (domain == "chromesync") R.string.passwords_domain_passwords else R.string.passwords_domain_passkeys))
+        if (!secure) PasswordOwnerText(stringResource(R.string.passwords_domain_lock_required))
+        PasswordOwnerStatus(busy, message?.let { stringResource(it) })
+        val pending = status != null && status.phase != null && (status.phase != DomainLifecyclePhase.COMMITTED ||
+            status.operation == DomainLifecycleKind.RESET && !status.authorityCleared)
+        status?.let { current ->
+            CyclonSectionLabel(stringResource(R.string.passwords_section_recovery))
+            CyclonRow(stringResource(R.string.passwords_domain_devices, current.members), current.phase?.let { stringResource(phaseLabel(current)) })
+        }
+        fingerprint?.let { CyclonNote(it) }
+        PasswordOwnerActions {
+            status?.let { current ->
+                if (pending) {
+                    CyclonTextAction(stringResource(R.string.passwords_retry_owner), enabled = !busy, onClick = onRetry)
+                    if (current.operation != DomainLifecycleKind.RESET || current.phase == DomainLifecyclePhase.PREPARED)
+                        CyclonTextAction(stringResource(R.string.passwords_domain_close_attempt), enabled = !busy, onClick = onClose)
+                } else if (secure) {
+                    val actions = requested?.let { listOf(it) } ?: if (current.epoch == 0 && current.members == 0) listOf(DomainLifecycleKind.CREATE) else
+                        listOf(DomainLifecycleKind.ENROLL, DomainLifecycleKind.ROTATE, DomainLifecycleKind.RESET)
+                    actions.forEach { action ->
+                        // Allowing this phone (or the requested step) leads; replacing the key and the reset stay quieter.
+                        if (action == DomainLifecycleKind.ROTATE || action == DomainLifecycleKind.RESET && requested == null)
+                            CyclonLineButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
+                        else CyclonInkButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
+                    }
+                }
+            }
+            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy && secure, onClick = onRefresh)
+        }
+    }
+    if (confirmation != null || retry || closing) {
+        val action = confirmation
+        PasswordOwnerConfirm(stringResource(action?.let(::actionLabel) ?: R.string.passwords_domain_manage), account, listOfNotNull(
+            if (action == DomainLifecycleKind.ADD_MEMBER) requestingApp?.let { stringResource(R.string.passwords_domain_requesting_app, it) } else null,
+            if (action == DomainLifecycleKind.ADD_MEMBER) fingerprint else null,
+            stringResource(when {
+                retry -> R.string.passwords_domain_retry_warning
+                closing && status?.operation == DomainLifecycleKind.RESET && status?.phase == DomainLifecyclePhase.PREPARED ->
+                    R.string.passwords_domain_close_prepared_reset
+                closing -> R.string.passwords_domain_close_warning
+                action == DomainLifecycleKind.RESET -> R.string.passwords_domain_reset_warning
+                action == DomainLifecycleKind.ROTATE -> R.string.passwords_domain_rotate_warning
+                action == DomainLifecycleKind.CREATE -> R.string.passwords_domain_create_warning
+                action == DomainLifecycleKind.ADD_MEMBER -> R.string.passwords_domain_add_warning
+                else -> R.string.passwords_domain_enroll_warning
+            }),
+        ), confirmEnabled = !busy && secure, onConfirm = { onConfirm(action) }, onDismiss = onDismiss)
+    }
+}
+
+private fun actionLabel(kind: DomainLifecycleKind) = when (kind) {
+    DomainLifecycleKind.CREATE -> R.string.passwords_domain_create
+    DomainLifecycleKind.ENROLL -> R.string.passwords_domain_enroll
+    DomainLifecycleKind.ROTATE -> R.string.passwords_domain_rotate
+    DomainLifecycleKind.RESET -> R.string.passwords_domain_reset
+    DomainLifecycleKind.ADD_MEMBER -> R.string.passwords_domain_add
+}
+private fun phaseLabel(current: DomainLifecycleOwnerStatus) = when (current.phase) {
+    DomainLifecyclePhase.COMMITTED -> if (current.operation == DomainLifecycleKind.RESET && !current.authorityCleared)
+        R.string.passwords_domain_clear_pending else R.string.passwords_domain_confirmed
+    DomainLifecyclePhase.PREPARED -> R.string.passwords_domain_prepared
+    DomainLifecyclePhase.CONFLICT -> R.string.passwords_domain_changed
+    DomainLifecyclePhase.REFUSED -> R.string.passwords_domain_failed
+    else -> R.string.passwords_domain_uncertain
 }

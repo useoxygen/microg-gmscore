@@ -11,20 +11,16 @@ import android.provider.Settings
 import android.view.View
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 
 /** Internal owner surface: a known stable account and fresh foreground owner grant are required. */
 class PasswordWifiSyncActivity : PasswordOwnerActivity() {
@@ -56,63 +52,53 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); userId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_wifi_title), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner) { Text(stringResource(R.string.passwords_unlock)) }
-                else {
-                    Text(account.name)
-                    Text(stringResource(R.string.passwords_wifi_description))
-                    if (!available) {
-                        Text(stringResource(when (access) {
-                            PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED -> R.string.passwords_wifi_location_permission
-                            PasswordWifiAccess.LOCATION_DISABLED -> R.string.passwords_wifi_location_disabled
-                            PasswordWifiAccess.APP_OP_DENIED -> R.string.passwords_wifi_location_restricted
-                            else -> R.string.passwords_wifi_unavailable
-                        }))
-                        if (access in setOf(PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED,
-                                PasswordWifiAccess.LOCATION_DISABLED, PasswordWifiAccess.APP_OP_DENIED)) {
-                            OutlinedButton(enabled = !busy, onClick = ::requestAccess) {
-                                Text(stringResource(when (access) {
-                                    PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED -> R.string.passwords_wifi_allow_location
-                                    PasswordWifiAccess.LOCATION_DISABLED -> R.string.passwords_wifi_open_location
-                                    else -> R.string.passwords_wifi_open_permissions
-                                }))
-                            }
-                            if (access == PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED) TextButton(enabled = !busy,
-                                onClick = ::openAppPermissions) { Text(stringResource(R.string.passwords_wifi_open_permissions)) }
-                        }
+        setContent { CyclonMaterialTheme {
+            PasswordOwnerPage(stringResource(R.string.passwords_wifi_title), account.name, onBack = ::finish) {
+                if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
+                CyclonNote(stringResource(R.string.passwords_wifi_description))
+                if (!available) {
+                    PasswordOwnerText(stringResource(when (access) {
+                        PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED -> R.string.passwords_wifi_location_permission
+                        PasswordWifiAccess.LOCATION_DISABLED -> R.string.passwords_wifi_location_disabled
+                        PasswordWifiAccess.APP_OP_DENIED -> R.string.passwords_wifi_location_restricted
+                        else -> R.string.passwords_wifi_unavailable
+                    }))
+                    if (access in setOf(PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED,
+                            PasswordWifiAccess.LOCATION_DISABLED, PasswordWifiAccess.APP_OP_DENIED)) PasswordOwnerActions {
+                        CyclonLineButton(stringResource(when (access) {
+                            PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED -> R.string.passwords_wifi_allow_location
+                            PasswordWifiAccess.LOCATION_DISABLED -> R.string.passwords_wifi_open_location
+                            else -> R.string.passwords_wifi_open_permissions
+                        }), enabled = !busy, onClick = ::requestAccess)
+                        if (access == PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED) CyclonTextAction(
+                            stringResource(R.string.passwords_wifi_open_permissions), enabled = !busy, onClick = ::openAppPermissions)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Switch(enabled = !busy && (available || enabled), checked = enabled, onCheckedChange = { value ->
-                            if (value) prompt = R.string.passwords_wifi_enable_warning else perform { it.setEnabled(false) }
-                        })
-                        Text(stringResource(R.string.passwords_wifi_enable))
-                    }
-                    Text(stringResource(R.string.passwords_wifi_state, pending, conflicts))
-                    OutlinedButton(enabled = enabled && available && !busy, onClick = { perform { it.synchronizeIfEnabled() } }) {
-                        Text(stringResource(R.string.passwords_refresh))
-                    }
-                    if (uncertain > 0) OutlinedButton(enabled = !busy && enabled && available,
-                        onClick = { prompt = R.string.passwords_wifi_retry_warning }) { Text(stringResource(R.string.passwords_retry_owner)) }
-                    TextButton(enabled = !busy, onClick = { prompt = R.string.passwords_wifi_forget_warning }) {
-                        Text(stringResource(R.string.passwords_wifi_forget))
-                    }
-                    message?.let { Text(stringResource(it)) }
                 }
+                CyclonSectionLabel(stringResource(R.string.passwords_section_sync))
+                CyclonSwitchRow(stringResource(R.string.passwords_wifi_enable), stringResource(R.string.passwords_wifi_state, pending, conflicts),
+                    enabled, enabled = !busy && (available || enabled), onChange = { value ->
+                        if (value) prompt = R.string.passwords_wifi_enable_warning else perform { it.setEnabled(false) }
+                    })
+                CyclonRow(stringResource(R.string.passwords_refresh), onClick = { perform { it.synchronizeIfEnabled() } },
+                    enabled = enabled && available && !busy)
+                if (uncertain > 0) CyclonRow(stringResource(R.string.passwords_retry_owner), onClick = { prompt = R.string.passwords_wifi_retry_warning },
+                    enabled = !busy && enabled && available)
+                CyclonRow(stringResource(R.string.passwords_wifi_forget), onClick = { prompt = R.string.passwords_wifi_forget_warning }, enabled = !busy)
+                PasswordOwnerStatus(busy, message?.let { stringResource(it) })
             }
             prompt?.takeIf { unlocked }?.let { question -> AlertDialog(onDismissRequest = { prompt = null },
-                title = { Text(stringResource(R.string.passwords_wifi_title)) }, text = { Text(stringResource(question)) },
-                confirmButton = { TextButton(onClick = {
+                title = { Text(stringResource(R.string.passwords_wifi_title)) },
+                text = { PasswordDialogProtection(); PasswordDialogText(stringResource(question), scrolls = true) },
+                confirmButton = { CyclonTextAction(stringResource(android.R.string.ok)) {
                     prompt = null
                     perform { helper -> when (question) {
                         R.string.passwords_wifi_enable_warning -> { helper.setEnabled(true); helper.synchronizeIfEnabled() }
                         R.string.passwords_wifi_retry_warning -> helper.synchronizeIfEnabled(ownerAuthorizesRetry = true)
                         R.string.passwords_wifi_forget_warning -> helper.pauseAndForget()
                     } }
-                }) { Text(stringResource(android.R.string.ok)) } },
-                dismissButton = { TextButton(onClick = { prompt = null }) { Text(stringResource(android.R.string.cancel)) } }) }
-        } } }
+                } },
+                dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { prompt = null } }) }
+        } }
         authenticateOwner()
     }
     private fun validAccount(): Boolean {

@@ -6,18 +6,14 @@ import android.accounts.AccountManager
 import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -43,47 +39,11 @@ class GpmPinRenewalActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_pin_renewal_title), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) { Text(stringResource(R.string.passwords_unlock)) }
-                else {
-                    Text(account.name); Text(stringResource(R.string.passwords_pin_renewal_description))
-                    if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_recovery_enroll_lock_required))
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (failed) Text(stringResource(R.string.passwords_pin_renewal_failed))
-                    if (status?.current == true) Text(stringResource(R.string.passwords_pin_renewal_current))
-                    status?.phase?.let { phase -> Text(stringResource(when (phase) {
-                        GpmPinRenewalPhase.PREPARED -> R.string.passwords_recoverable_vault_prepared
-                        GpmPinRenewalPhase.VAULT_LAUNCHED, GpmPinRenewalPhase.JOIN_LAUNCHED -> R.string.passwords_recoverable_vault_uncertain
-                        GpmPinRenewalPhase.VAULT_CONFIRMED -> R.string.passwords_recoverable_vault_uploaded
-                        GpmPinRenewalPhase.CONFIRMED -> R.string.passwords_pin_renewal_complete
-                        GpmPinRenewalPhase.REVOKED -> R.string.passwords_pin_renewal_revoked
-                    })) }
-                    if (hasSecureScreenLock) {
-                        OutlinedButton(onClick = { perform(GpmPinRenewalAction.REFRESH) }, enabled = !busy) { Text(stringResource(R.string.passwords_refresh)) }
-                        if (status != null && (status?.id == null || status?.phase == GpmPinRenewalPhase.CONFIRMED)) Button(onClick = {
-                            confirmation = GpmPinRenewalAction.PREPARE
-                        }, enabled = !busy) { Text(stringResource(R.string.passwords_pin_renewal_start)) }
-                        if (status?.phase in setOf(GpmPinRenewalPhase.PREPARED, GpmPinRenewalPhase.VAULT_CONFIRMED)) Button(onClick = {
-                            confirmation = GpmPinRenewalAction.CONTINUE
-                        }, enabled = !busy) { Text(stringResource(R.string.passwords_recoverable_vault_continue)) }
-                        if (status?.id != null) TextButton(onClick = { confirmation = GpmPinRenewalAction.CLOSE }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_recovery_enroll_close_attempt))
-                        }
-                    }
-                }
-                TextButton(onClick = { cancel(); finish() }) { Text(stringResource(android.R.string.cancel)) }
-            }
-            confirmation?.takeIf { unlocked }?.let { action -> AlertDialog(onDismissRequest = { confirmation = null },
-                title = { Text(stringResource(R.string.passwords_pin_renewal_title)) },
-                text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(account.name); Text(stringResource(if (action == GpmPinRenewalAction.CLOSE)
-                        R.string.passwords_pin_renewal_close_confirm else R.string.passwords_pin_renewal_confirm))
-                } }, confirmButton = { TextButton(onClick = { confirmation = null; perform(action) }, enabled = !busy && hasSecureScreenLock) {
-                    Text(stringResource(android.R.string.ok))
-                } }, dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(android.R.string.cancel)) } }) }
-        } } }
+        setContent { CyclonMaterialTheme {
+            GpmPinRenewalScreen(account.name, unlocked, hasSecureScreenLock, busy, failed, status, confirmation,
+                onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner, onAsk = { confirmation = it },
+                onRefresh = { perform(GpmPinRenewalAction.REFRESH) }, onConfirm = { action -> confirmation = null; perform(action) })
+        } }
         authenticateOwner()
     }
     private fun validAccount(): Boolean = AccountManager.get(this).let {
@@ -123,4 +83,43 @@ class GpmPinRenewalActivity : PasswordOwnerActivity() {
     override fun onResume() { super.onResume(); if (unlocked) allowed.set(runCatching { requireOwner(); true }.getOrDefault(false)) }
     override fun onOwnerLocked() { allowed.set(false); generation.incrementAndGet(); cancel(); client = null; cancellation = null
         unlocked = false; busy = false; status = null; failed = false; confirmation = null }
+}
+
+/** What [GpmPinRenewalActivity] shows, from its state alone; the activity keeps every check and request. */
+@Composable
+internal fun GpmPinRenewalScreen(
+    account: String, unlocked: Boolean, secure: Boolean, busy: Boolean, failed: Boolean, status: GpmPinRenewalStatus?,
+    confirmation: GpmPinRenewalAction?, onBack: () -> Unit, onUnlock: () -> Unit, onAsk: (GpmPinRenewalAction?) -> Unit,
+    onRefresh: () -> Unit, onConfirm: (GpmPinRenewalAction) -> Unit,
+) {
+    PasswordOwnerPage(stringResource(R.string.passwords_pin_renewal_title), account, onBack) {
+        if (!unlocked) { PasswordOwnerLocked(secure, enabled = !busy, onUnlock = onUnlock); return@PasswordOwnerPage }
+        CyclonNote(stringResource(R.string.passwords_pin_renewal_description))
+        if (!secure) PasswordOwnerText(stringResource(R.string.passwords_recovery_enroll_lock_required))
+        PasswordOwnerStatus(busy, if (failed) stringResource(R.string.passwords_pin_renewal_failed) else null)
+        if (status?.current == true) PasswordOwnerText(stringResource(R.string.passwords_pin_renewal_current))
+        status?.phase?.let { phase -> PasswordOwnerText(stringResource(when (phase) {
+            GpmPinRenewalPhase.PREPARED -> R.string.passwords_recoverable_vault_prepared
+            GpmPinRenewalPhase.VAULT_LAUNCHED, GpmPinRenewalPhase.JOIN_LAUNCHED -> R.string.passwords_recoverable_vault_uncertain
+            GpmPinRenewalPhase.VAULT_CONFIRMED -> R.string.passwords_recoverable_vault_uploaded
+            GpmPinRenewalPhase.CONFIRMED -> R.string.passwords_pin_renewal_complete
+            GpmPinRenewalPhase.REVOKED -> R.string.passwords_pin_renewal_revoked
+        })) }
+        if (!secure) return@PasswordOwnerPage
+        PasswordOwnerActions {
+            if (status != null && (status.id == null || status.phase == GpmPinRenewalPhase.CONFIRMED))
+                CyclonInkButton(stringResource(R.string.passwords_pin_renewal_start), enabled = !busy) { onAsk(GpmPinRenewalAction.PREPARE) }
+            if (status?.phase in setOf(GpmPinRenewalPhase.PREPARED, GpmPinRenewalPhase.VAULT_CONFIRMED))
+                CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_continue), enabled = !busy) { onAsk(GpmPinRenewalAction.CONTINUE) }
+            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            if (status?.id != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
+                onAsk(GpmPinRenewalAction.CLOSE)
+            }
+        }
+    }
+    confirmation?.takeIf { unlocked }?.let { action ->
+        PasswordOwnerConfirm(stringResource(R.string.passwords_pin_renewal_title), account, listOf(stringResource(
+            if (action == GpmPinRenewalAction.CLOSE) R.string.passwords_pin_renewal_close_confirm else R.string.passwords_pin_renewal_confirm)),
+            confirmEnabled = !busy && secure, onConfirm = { onConfirm(action) }, onDismiss = { onAsk(null) })
+    }
 }

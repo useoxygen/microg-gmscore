@@ -18,11 +18,23 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
-import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.annotation.RequiresApi
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
@@ -37,6 +49,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.microg.gms.auth.AuthManager
 import org.microg.gms.common.Constants.GMS_PACKAGE_NAME
+import org.microg.gms.cyclon.*
 import java.net.URLEncoder
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -58,6 +71,10 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     private var currentOperation: PasswordEncryptionOperation? = null
     private var currentPhase: PasswordEncryptionPhase? = null
     private val lease = UUID.randomUUID().toString()
+    private var question by mutableStateOf<Question?>(null)
+
+    /** A confirmation the owner answers before Google's page opens or a change is closed. */
+    private class Question(val title: Int, val message: Int, val confirm: Int, val accept: () -> Unit)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val supported = Build.VERSION.SDK_INT >= 28 && initializeProfile()
@@ -111,6 +128,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         busy = false
         initialized = false
         reconcileRequested = false
+        question = null
         tearDownWeb()
     }
 
@@ -155,35 +173,42 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         val state = PasswordEncryptionState.decode(raw)
         try {
             currentId = state?.id; currentOperation = state?.operation; currentPhase = state?.phase
-            val layout = layout()
-            layout.addView(TextView(this).apply { text = account.name })
-            when (state?.phase) {
-                PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN -> {
-                    label(layout, title(state.operation)); label(layout, R.string.passwords_encryption_pending)
-                    button(layout, R.string.passwords_encryption_check) { reconcile() }
-                    button(layout, R.string.passwords_encryption_resolve) { confirmAbandon() }
+            // Only plain values reach the page; the decoded state is closed below.
+            val phase = state?.phase
+            val operation = state?.operation
+            val id = state?.id
+            val acknowledgedUnknown = state?.acknowledgedUnknown == true
+            when (phase) {
+                PasswordEncryptionPhase.OPENED, PasswordEncryptionPhase.UNKNOWN -> page {
+                    CyclonSectionLabel(stringResource(R.string.passwords_changes))
+                    CyclonRow(stringResource(title(operation!!)), stringResource(R.string.passwords_encryption_pending), divider = false)
+                    PasswordOwnerActions {
+                        CyclonInkButton(stringResource(R.string.passwords_encryption_check)) { unlessBusy { reconcile() } }
+                        CyclonTextAction(stringResource(R.string.passwords_encryption_resolve)) { unlessBusy { confirmAbandon() } }
+                    }
                 }
-                PasswordEncryptionPhase.READY -> {
-                    label(layout, title(state.operation)); label(layout, warning(state.operation))
-                    button(layout, R.string.passwords_encryption_continue) { confirm(state.operation, existingId = state.id) }
+                PasswordEncryptionPhase.READY -> page {
+                    CyclonSectionLabel(stringResource(R.string.passwords_changes))
+                    CyclonRow(stringResource(title(operation!!)), stringResource(warning(operation)), divider = false)
+                    PasswordOwnerActions {
+                        CyclonInkButton(stringResource(R.string.passwords_encryption_continue)) { unlessBusy { confirm(operation, existingId = id) } }
+                    }
                 }
-                else -> {
-                    if (state?.phase == PasswordEncryptionPhase.CONFIRMED) label(layout, R.string.passwords_encryption_checked)
-                    if (state?.acknowledgedUnknown == true) label(layout, R.string.passwords_encryption_unknown_closed)
-                    label(layout, R.string.passwords_encryption_description)
-                    for (operation in PasswordEncryptionOperation.values()) button(layout, title(operation)) { confirm(operation) }
+                else -> page {
+                    if (phase == PasswordEncryptionPhase.CONFIRMED) PasswordOwnerText(stringResource(R.string.passwords_encryption_checked))
+                    if (acknowledgedUnknown) PasswordOwnerText(stringResource(R.string.passwords_encryption_unknown_closed))
+                    CyclonNote(stringResource(R.string.passwords_encryption_description))
+                    CyclonHairline()
+                    for (choice in PasswordEncryptionOperation.values()) CyclonRow(stringResource(title(choice)),
+                        onClick = { unlessBusy { confirm(choice) } }, trailing = { CyclonChevron() })
                 }
             }
-            button(layout, R.string.passwords_encryption_close) { closeOwnerScreen() }
-            setContentView(layout)
         } finally { state?.close() }
     }
 
     private fun confirm(operation: PasswordEncryptionOperation, existingId: String? = null) {
         try { verify() } catch (_: Exception) { finish(); return }
-        AlertDialog.Builder(this).setTitle(title(operation)).setMessage(warning(operation))
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(R.string.passwords_encryption_continue) { _, _ -> prepareAndOpen(operation, existingId) }.show()
+        question = Question(title(operation), warning(operation), R.string.passwords_encryption_continue) { prepareAndOpen(operation, existingId) }
     }
 
     private fun prepareAndOpen(operation: PasswordEncryptionOperation, existingId: String?) = runWork { repository, token ->
@@ -280,10 +305,11 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         }
         script = WebViewCompat.addDocumentStartJavaScript(view, SHIM.replace("__EXPECTED_GAIA__", JSONObject.quote(accountId)),
             setOf(PasswordEncryptionWebPolicy.PASSWORDS_ORIGIN, PasswordEncryptionWebPolicy.ACCOUNTS_ORIGIN))
-        val layout = layout()
-        label(layout, R.string.passwords_encryption_keep_open)
+        // The header is Compose; Google's page stays a plain WebView under it, owned and destroyed by this activity.
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        layout.addView(composed(scrolls = false) { PasswordOwnerText(stringResource(R.string.passwords_encryption_keep_open), Modifier.padding(bottom = 8.dp)) },
+            LinearLayout.LayoutParams(-1, -2))
         layout.addView(view, LinearLayout.LayoutParams(-1, 0, 1f))
-        button(layout, R.string.passwords_encryption_close) { closeOwnerScreen() }
         setContentView(layout)
         CookieManager.getInstance().apply {
             setAcceptCookie(true); setAcceptThirdPartyCookies(view, true)
@@ -340,8 +366,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     private fun confirmAbandon() {
         try { verify() } catch (_: Exception) { finish(); return }
         val expectedId = currentId ?: return
-        AlertDialog.Builder(this).setTitle(R.string.passwords_encryption_resolve).setMessage(R.string.passwords_encryption_resolve_warning)
-            .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.passwords_encryption_resolve) { _, _ ->
+        question = Question(R.string.passwords_encryption_resolve, R.string.passwords_encryption_resolve_warning, R.string.passwords_encryption_resolve) {
                 runWork { repository, token ->
                     val bytes = withContext(Dispatchers.IO) { repository.loadFlow() } ?: throw ConflictException()
                     try { PasswordEncryptionState.decode(bytes)!!.use { state ->
@@ -352,7 +377,7 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
                         try { renderState(latest); if (!complete) renderError() } finally { latest?.fill(0) }
                     } } finally { bytes.fill(0) }
                 }
-            }.show()
+            }
     }
 
     private fun closeOwnerScreen() {
@@ -380,16 +405,31 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
             view.stopLoading(); view.clearHistory(); view.removeAllViews(); view.destroy()
         }
     }
-    private fun renderError() {
-        val layout = layout(); label(layout, R.string.passwords_encryption_failed)
-        button(layout, R.string.passwords_encryption_check) { refreshStatus() }
-        button(layout, R.string.passwords_encryption_close) { closeOwnerScreen() }; setContentView(layout)
+    private fun renderError() = page {
+        PasswordOwnerText(stringResource(R.string.passwords_encryption_failed))
+        PasswordOwnerActions { CyclonInkButton(stringResource(R.string.passwords_encryption_check)) { unlessBusy { refreshStatus() } } }
     }
     private fun showUnavailable() { showText(R.string.passwords_encryption_not_supported) }
-    private fun showText(message: Int) { val layout = layout(); label(layout, message); button(layout, R.string.passwords_encryption_close) { finish() }; setContentView(layout) }
-    private fun layout() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
-    private fun label(layout: LinearLayout, text: Int) { layout.addView(TextView(this).apply { setText(text); setPadding(0, 8, 0, 8) }) }
-    private fun button(layout: LinearLayout, text: Int, click: () -> Unit) { layout.addView(Button(this).apply { setText(text); setOnClickListener { if (!busy) click() } }) }
+    private fun showText(message: Int) = page(onBack = ::finish) { PasswordOwnerText(stringResource(message)) }
+
+    /** One state of this page: Back (closing as Close did), the title and the account, then [content]. */
+    private fun page(onBack: () -> Unit = { unlessBusy { closeOwnerScreen() } }, content: @Composable ColumnScope.() -> Unit) =
+        setContentView(composed(onBack = onBack, content = content))
+    private fun composed(scrolls: Boolean = true, onBack: () -> Unit = { unlessBusy { closeOwnerScreen() } },
+                         content: @Composable ColumnScope.() -> Unit) = ComposeView(this).apply {
+        val accountName = if (::account.isInitialized) account.name else null
+        setContent { CyclonMaterialTheme {
+            if (scrolls) PasswordOwnerPage(stringResource(R.string.passwords_encryption_manage), accountName, onBack, content)
+            // Above the WebView: only as tall as the header, so Google's page keeps the rest of the screen.
+            else Surface(Modifier.fillMaxWidth()) { Column { PasswordOwnerHeader(stringResource(R.string.passwords_encryption_manage), accountName, onBack); content() } }
+            question?.let { asked -> AlertDialog(onDismissRequest = { question = null },
+                title = { Text(stringResource(asked.title)) },
+                text = { PasswordDialogProtection(); PasswordDialogText(stringResource(asked.message), scrolls = true) },
+                confirmButton = { CyclonTextAction(stringResource(asked.confirm)) { question = null; asked.accept() } },
+                dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { question = null } }) }
+        } }
+    }
+    private inline fun unlessBusy(click: () -> Unit) { if (!busy) click() }
     private fun title(operation: PasswordEncryptionOperation) = when (operation) {
         PasswordEncryptionOperation.ENROLL -> R.string.passwords_encryption_enable
         PasswordEncryptionOperation.CLEAR_PASSWORDS -> R.string.passwords_encryption_clear
