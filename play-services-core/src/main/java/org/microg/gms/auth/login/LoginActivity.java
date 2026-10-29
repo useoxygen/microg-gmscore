@@ -185,7 +185,8 @@ public class LoginActivity extends AssistantActivity {
                 AccountManager accountManager = AccountManager.get(this);
                 Account account = new Account(getIntent().getStringExtra(EXTRA_EMAIL), accountType);
                 accountManager.addAccountExplicitly(account, getIntent().getStringExtra(EXTRA_TOKEN), null);
-                if (isAuthVisible(this) && SDK_INT >= 26) {
+                if (isAuthVisible(this) && SDK_INT >= 26 && DeviceAccount.INSTANCE.mayShow(this, account)) {
+                    // Never Cyclon's device account (CYC-927): it stays hidden from every app.
                     accountManager.setAccountVisibility(account, PACKAGE_NAME_KEY_LEGACY_NOT_VISIBLE, VISIBILITY_USER_MANAGED_VISIBLE);
                 }
                 retrieveGmsToken(account);
@@ -443,7 +444,8 @@ public class LoginActivity extends AssistantActivity {
                         String accountId = PeopleManager.loadUserInfo(LoginActivity.this, account);
                         if (!TextUtils.isEmpty(accountId))
                             accountManager.setUserData(account, "GoogleUserId", accountId);
-                        if (isAuthVisible(LoginActivity.this) && SDK_INT >= 26) {
+                        if (isAuthVisible(LoginActivity.this) && SDK_INT >= 26 && DeviceAccount.INSTANCE.mayShow(LoginActivity.this, account)) {
+                            // Never Cyclon's device account (CYC-927): it stays hidden from every app.
                             accountManager.setAccountVisibility(account, PACKAGE_NAME_KEY_LEGACY_NOT_VISIBLE, VISIBILITY_USER_MANAGED_VISIBLE);
                         }
                         checkin(true);
