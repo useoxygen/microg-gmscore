@@ -79,7 +79,7 @@ class PasswordAgentFillProvider : ContentProvider() {
 
 /** In-memory, one-use selection and callback; process death, timeout and cancellation revoke it. */
 internal class PasswordAgentFillTarget private constructor(val packageName: String, val uid: Int,
-    private val certificate: ByteArray, val realm: String, private val web: Boolean) {
+    private val certificate: ByteArray, val realm: String, private val web: Boolean, val background: Boolean) {
     fun valid(context: Context): Boolean = Build.VERSION.SDK_INT >= 28 && runCatching {
         val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
         val signers = info.signingInfo?.apkContentsSigners?.takeIf { it.size == 1 } ?: return@runCatching false
@@ -102,7 +102,7 @@ internal class PasswordAgentFillTarget private constructor(val packageName: Stri
                     uri.rawQuery != null || uri.rawFragment != null || uri.rawPath !in listOf("", "/")) throw SecurityException()
                 PasswordData.webRealm(origin)
             }
-            return PasswordAgentFillTarget(pkg, bundle.getInt("uid", -1), cert, realm, origin != null)
+            return PasswordAgentFillTarget(pkg, bundle.getInt("uid", -1), cert, realm, origin != null, bundle.getBoolean("background", false))
                 .also { if (!it.valid(context)) throw SecurityException() }
         }
         private fun trustedChrome(context: Context, pkg: String): Boolean = pkg == "com.android.chrome" && runCatching {
@@ -118,6 +118,7 @@ internal class PasswordAgentFillRequest private constructor(val handle: String, 
     @Volatile var close: (() -> Unit)? = null
     val packageName get() = target.packageName
     val realm get() = target.realm
+    val background get() = target.background
     fun valid(context: Context): Boolean = active.get() && SystemClock.elapsedRealtime() < deadline && target.valid(context)
     fun deliver(context: Context, password: CharArray) {
         try {

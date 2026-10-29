@@ -7,6 +7,7 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.os.Bundle
 import android.os.SystemClock
+import android.os.UserManager
 import java.security.SecureRandom
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -21,14 +22,14 @@ internal class AgentSignInBroker(private val context: Context) {
     }
 
     fun call(method: String, ref: String?, input: Bundle?): Bundle {
-        // Locked-device/background sign-ins are a separate acceptance milestone.
-        requireUnlocked()
+        requireTargetReady(input?.getBoolean("background", false) == true)
         return when (method) {
             "candidates" -> {
                 if (ref != null) throw SecurityException()
                 candidates(PasswordAgentFillTarget.from(context, input ?: throw SecurityException()))
             }
             "set_access" -> {
+                requireUnlocked()
                 val choice = choice(ref)
                 val level = AgentSignInAccess.Level.of(input?.getString("level")) ?: throw SecurityException()
                 withChoice(choice) {
@@ -49,11 +50,14 @@ internal class AgentSignInBroker(private val context: Context) {
                 // Capture only metadata in a pending authentication request, never a PasswordView.
                 val realm = before.data.realm
                 val username = before.data.username
-                val requiresAuthentication = withChoice(choice, vault) {
+                val grant = withChoice(choice, vault) {
                     val state = access.get(choice.vaultKey, choice.tag)
                     if (state.level == AgentSignInAccess.Level.NEVER) throw SecurityException()
-                    state.requireDeviceAuthentication
+                    state
                 }
+                val requiresAuthentication = grant.requireDeviceAuthentication
+                if (!AgentSignInLockPolicy.deliveryAllowed(locked(), request.background, approval == "once", requiresAuthentication) ||
+                    locked() && grant.level != AgentSignInAccess.Level.ALWAYS) throw SecurityException()
                 if (requiresAuthentication && !(context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager).isDeviceSecure) {
                     throw SecurityException()
                 }
@@ -85,7 +89,8 @@ internal class AgentSignInBroker(private val context: Context) {
             // The earlier affiliation proof covers exactly this entry's current realm.
             if (current.realm != realm || current.username != username || current.blocked || current.password.isEmpty()) throw SecurityException()
             access.redeem(choice.vaultKey, choice.tag, choice.incarnation, once, deviceAuthenticated = authenticated?.invoke() == true) {
-                requireUnlocked()
+                requireTargetReady(request.background)
+                if (!AgentSignInLockPolicy.deliveryAllowed(locked(), request.background, once, authenticated != null)) throw SecurityException()
                 // Authentication is native request-local state, rechecked immediately before handover.
                 if (authenticated != null && !authenticated() || !request.valid(context)) throw SecurityException()
                 request.deliver(context, current.password.toCharArray())
@@ -110,7 +115,7 @@ internal class AgentSignInBroker(private val context: Context) {
                     withChoice(initial, vault, checkIncarnation = false) { current ->
                         if (current.realm != entry.data.realm || current.username != entry.data.username ||
                             current.blocked || current.password.isEmpty()) return@withChoice
-                        requireUnlocked()
+                        requireTargetReady(target.background)
                         if (!target.valid(context)) throw SecurityException()
                         val state = access.get(initial.vaultKey, entry.id)
                         val choice = Choice(account, userId, entry.id, state.incarnation)
@@ -127,13 +132,20 @@ internal class AgentSignInBroker(private val context: Context) {
             } catch (_: Exception) { /* Account disabled, removed or locked while enumerating. */ }
         }
         if (!target.valid(context)) throw SecurityException()
-        requireUnlocked()
-        return Bundle().apply { putParcelableArrayList("accounts", rows) }
+        requireTargetReady(target.background)
+        return Bundle().apply { putParcelableArrayList("accounts", rows); putBoolean("background_signin_v1", true) }
     }
 
     private fun requireUnlocked() {
+        requireTargetReady(false)
+    }
+    private fun requireTargetReady(background: Boolean) {
+        val users = context.getSystemService(Context.USER_SERVICE) as? UserManager ?: throw SecurityException()
+        if (!AgentSignInLockPolicy.targetReady(users.isUserUnlocked, locked(), background)) throw SecurityException()
+    }
+    private fun locked(): Boolean {
         val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager ?: throw SecurityException()
-        if (keyguard.isDeviceLocked) throw SecurityException()
+        return keyguard.isDeviceLocked || keyguard.isKeyguardLocked
     }
     private fun stableId(account: Account?): String? {
         if (account == null) return null
