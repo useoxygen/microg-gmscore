@@ -131,7 +131,7 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
 
     fun receive(): V1Frame {
         check(context != null && !closed)
-        return parse(requireNotNull(context).decodeMessageFromPeer(readPacket()))
+        return parse(requireNotNull(context).decodeMessageFromPeer(readPacket()), allowUnknownType = true)
     }
 
     @Synchronized fun send(frame: V1Frame) {
@@ -152,22 +152,32 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
                 .setUpgradePathInfo(upgrade.upgradePathInfo)).build())
     }
 
+    /** Initiator side of public Nearby BWU: offers [path] over the current encrypted medium.
+     * The peer answers by connecting to it ([acceptUpgrade]) or with UPGRADE_FAILURE. */
+    fun offerUpgrade(path: BandwidthUpgradeNegotiationFrame.UpgradePathInfo) {
+        send(V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
+            .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder()
+                .setEventType(BandwidthUpgradeNegotiationFrame.EventType.UPGRADE_PATH_AVAILABLE)
+                .setUpgradePathInfo(path)).build())
+    }
+
+    /** Answers a peer's BANDWIDTH_UPGRADE_RETRY that asked for our upgrade mediums. */
+    fun answerUpgradeRetry(mediums: List<BandwidthUpgradeRetryFrame.Medium>) {
+        send(V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_RETRY)
+            .setBandwidthUpgradeRetry(BandwidthUpgradeRetryFrame.newBuilder()
+                .addAllSupportedMedium(mediums).setIsRequest(false)).build())
+    }
+
     /** Responder side of public Nearby BWU. Called by the sole reader. All payload
      * writes pause while the prior encrypted channel drains; crypto counters are
      * reused unchanged on the new medium. Never disable encryption for throughput. */
-    @Synchronized fun upgrade(input: InputStream, output: OutputStream, localId: String,
+    fun upgrade(input: InputStream, output: OutputStream, localId: String,
         expectsAck: Boolean, drain: (V1Frame) -> Unit) {
         check(context != null && !closed)
         require(localId.length == 4)
         val nextReader = DataInputStream(input); val nextWriter = DataOutputStream(output)
-        fun plain(frame: V1Frame) { val bytes = OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(frame).build().toByteArray(); nextWriter.writeInt(bytes.size); nextWriter.write(bytes); nextWriter.flush() }
-        fun negotiation(event: BandwidthUpgradeNegotiationFrame.EventType) = V1Frame.newBuilder()
-            .setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
-            .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder().setEventType(event)).build()
-        var committed = false
-        try {
-            check(pausedWrites == null); pausedWrites = mutableListOf()
-            plain(V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
+        handoff(nextReader, nextWriter, drain) {
+            writePlain(nextWriter, V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
                 .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder()
                     .setEventType(BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION)
                     .setClientIntroduction(BandwidthUpgradeNegotiationFrame.ClientIntroduction.newBuilder()
@@ -177,6 +187,51 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
                 require(ack.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
                     ack.bandwidthUpgradeNegotiation.eventType == BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION_ACK)
             }
+        }
+    }
+
+    /** Initiator side of public Nearby BWU, after [offerUpgrade]: [input]/[output] is the
+     * peer's connection to the offered path. Reads its plaintext CLIENT_INTRODUCTION, which
+     * must name this connection's endpoint and keep encryption, then answers with
+     * CLIENT_INTRODUCTION_ACK (Nearby's initiator always sends it) and runs the same drain
+     * and handoff as [upgrade]. Called by the sole reader. Failure before the ACK is
+     * written leaves the prior medium usable. */
+    fun acceptUpgrade(input: InputStream, output: OutputStream, drain: (V1Frame) -> Unit) {
+        check(context != null && !closed)
+        val peer = requireNotNull(endpointId)
+        val nextReader = DataInputStream(input); val nextWriter = DataOutputStream(output)
+        try {
+            val frame = parse(readPacket(nextReader))
+            require(frame.type == V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION &&
+                frame.bandwidthUpgradeNegotiation.eventType == BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION &&
+                frame.bandwidthUpgradeNegotiation.hasClientIntroduction()) { "Expected a bandwidth-upgrade client introduction" }
+            val introduction = frame.bandwidthUpgradeNegotiation.clientIntroduction
+            require(introduction.endpointId == peer) { "Bandwidth upgrade introduced a different endpoint" }
+            require(!introduction.supportsDisablingEncryption) { "Bandwidth upgrade must stay encrypted" }
+        } catch(e: Exception) {
+            runCatching { nextReader.close() }; runCatching { nextWriter.close() }
+            throw e
+        }
+        handoff(nextReader, nextWriter, drain) {
+            writePlain(nextWriter, V1Frame.newBuilder().setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
+                .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder()
+                    .setEventType(BandwidthUpgradeNegotiationFrame.EventType.CLIENT_INTRODUCTION_ACK)).build())
+        }
+    }
+
+    /** Shared by both BWU roles once [introduce] has run on the new medium: LAST_WRITE,
+     * drain the prior medium until the peer's LAST_WRITE, SAFE_TO_CLOSE both ways, then
+     * a cleartext DISCONNECTION and the switch of reader and writer. */
+    @Synchronized private fun handoff(nextReader: DataInputStream, nextWriter: DataOutputStream,
+        drain: (V1Frame) -> Unit, introduce: () -> Unit) {
+        check(context != null && !closed)
+        fun negotiation(event: BandwidthUpgradeNegotiationFrame.EventType) = V1Frame.newBuilder()
+            .setType(V1Frame.FrameType.BANDWIDTH_UPGRADE_NEGOTIATION)
+            .setBandwidthUpgradeNegotiation(BandwidthUpgradeNegotiationFrame.newBuilder().setEventType(event)).build()
+        var committed = false
+        try {
+            check(pausedWrites == null); pausedWrites = mutableListOf()
+            introduce()
             committed = true // A partial LAST_WRITE is already a committed handoff.
             send(negotiation(BandwidthUpgradeNegotiationFrame.EventType.LAST_WRITE_TO_PRIOR_CHANNEL))
             var last = false; var safe = false
@@ -213,6 +268,11 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
         }
     }
 
+    private fun writePlain(output: DataOutputStream, frame: V1Frame) {
+        val bytes = OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(frame).build().toByteArray()
+        output.writeInt(bytes.size); output.write(bytes); output.flush()
+    }
+
     @Synchronized private fun writeFrame(frame: V1Frame, encrypted: Boolean) {
         val bytes = OfflineFrame.newBuilder().setVersion(OfflineFrame.Version.V1).setV1(frame).build().toByteArray()
         writePacket(if (encrypted) requireNotNull(context).encodeMessageToPeer(bytes) else bytes)
@@ -235,10 +295,14 @@ internal class ClassicNearbyChannel(input: InputStream, output: OutputStream) : 
     }
     companion object {
         const val MAX_PACKET = 1024 * 1024 + 65536
-        internal fun parse(bytes: ByteArray): V1Frame {
+        /** [allowUnknownType]: an authenticated frame whose type this build does not know
+         * (newer Nearby) comes back as UNKNOWN_FRAME_TYPE for the caller to skip. */
+        internal fun parse(bytes: ByteArray, allowUnknownType: Boolean = false): V1Frame {
             require(bytes.size in 1..MAX_PACKET)
             val frame = OfflineFrame.parseFrom(bytes)
             require(frame.version == OfflineFrame.Version.V1 && frame.hasV1())
+            if (allowUnknownType && (!frame.v1.hasType() || frame.v1.type == V1Frame.FrameType.UNKNOWN_FRAME_TYPE))
+                return frame.v1.toBuilder().setType(V1Frame.FrameType.UNKNOWN_FRAME_TYPE).build()
             require(frame.v1.hasType() && frame.v1.type != V1Frame.FrameType.UNKNOWN_FRAME_TYPE)
             return frame.v1
         }
