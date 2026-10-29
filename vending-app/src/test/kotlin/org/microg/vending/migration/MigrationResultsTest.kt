@@ -160,6 +160,9 @@ class MigrationResultsTest {
     @Test fun failureReasonsAreReadableAndDoNotExposeUnknownCodes() {
         assertTrue(MigrationResultText.description(result("failed", "not_found")).contains("not available"))
         assertTrue(MigrationResultText.description(result("failed", "rate_limited")).contains("Try again later"))
+        // A check Switch's deadline cut short is not blamed on the connection.
+        assertFalse(MigrationResultText.description(result("unavailable", "lookup_timeout")).contains("connection"))
+        assertTrue(MigrationResultText.description(result("unavailable", "store_unavailable")).contains("connection"))
         assertTrue(MigrationResultText.description(result("removed", "owner_removed")).contains("will not be installed again"))
         assertFalse(MigrationResultText.description(result("failed", "UNRECOGNIZED_INTERNAL_123")).contains("UNRECOGNIZED_INTERNAL_123"))
         assertEquals("Installed and verified", MigrationResultText.description(result("installed", installed = true)))
