@@ -243,7 +243,8 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
                     PasswordOwnerText(stringResource(R.string.passwords_encryption_passphrase))
             }
             CyclonSectionLabel(stringResource(R.string.passwords_encryption_reset_section), Modifier.padding(top = 16.dp))
-            if (status != PasswordEncryptionRepository.Status.OFF) CyclonRow(stringResource(R.string.passwords_encryption_clear),
+            // Google's reset turns off on-device encryption; it doesn't apply to keystore or passphrase accounts.
+            if (status == PasswordEncryptionRepository.Status.ON || status == PasswordEncryptionRepository.Status.ON_LOCKED) CyclonRow(stringResource(R.string.passwords_encryption_clear),
                 onClick = { unlessBusy { confirm(PasswordEncryptionOperation.CLEAR_PASSWORDS) } }, trailing = { CyclonChevron() })
             CyclonRow(stringResource(R.string.passwords_encryption_passkeys),
                 onClick = { unlessBusy { confirm(PasswordEncryptionOperation.RESET_PASSKEYS) } }, trailing = { CyclonChevron() })
