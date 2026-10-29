@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.content.Context
 import android.os.Build
@@ -123,7 +124,7 @@ internal class EnclavePinIdentity(context: Context, private val accountId: Strin
         /** Only this feature's absent-account identity aliases are revoked. Discovery must be complete and stable. */
         fun purgeRemovedAccounts(context: Context) {
             val accounts = AccountManager.get(context)
-            fun discover() = accounts.getAccountsByType("com.google").map { account ->
+            fun discover() = DeviceAccount.visible(context, accounts.getAccountsByType("com.google")).map { account ->
                 accounts.getUserData(account, "GoogleUserId")?.takeIf { it.isNotBlank() } ?: throw VaultLockedException()
             }.toSet()
             val current = discover()

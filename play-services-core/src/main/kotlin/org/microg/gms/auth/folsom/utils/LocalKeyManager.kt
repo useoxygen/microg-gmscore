@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.folsom.utils
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.annotation.SuppressLint
 import android.content.Context
 import android.accounts.AccountManager
@@ -870,7 +871,7 @@ class LocalKeyManager(private val context: Context) {
     fun purgeRemovedAccounts() {
         updateStore { store ->
             val manager = AccountManager.get(context)
-            fun discover() = manager.getAccountsByType("com.google").associate { account ->
+            fun discover() = DeviceAccount.visible(context, manager.getAccountsByType("com.google")).associate { account ->
                 obfuscateAccountName(account.name) to manager.getUserData(account, "GoogleUserId")
             }
             val present = discover()

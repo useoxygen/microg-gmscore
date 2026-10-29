@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
@@ -62,7 +63,7 @@ class PasswordOwnerOperations(context: Context) {
         /** Invoke from account-removal cleanup as well as before exposing any recovery journal. */
         fun purgeRemovedAccounts(context: Context) {
             val accounts = AccountManager.get(context)
-            fun discover(): Map<String, String> = accounts.getAccountsByType("com.google").associate {
+            fun discover(): Map<String, String> = DeviceAccount.visible(context, accounts.getAccountsByType("com.google")).associate {
                 it.name to (accounts.getUserData(it, "GoogleUserId")?.takeIf { id -> id.isNotBlank() } ?: throw VaultLockedException())
             }
             AndroidVaultStore(context, "owner-password-transfers-v1").locked { session ->

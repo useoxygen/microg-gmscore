@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth;
 
+import org.microg.gms.people.PeopleManager;
 import android.accounts.Account;
 import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.AccountManager;
@@ -121,14 +122,16 @@ public class AuthManager {
 
     /**
      * Cyclon's device account is only for microG's device registration (CYC-927). For it, AuthManager serves microG's
-     * own registration services (its ac2dm token at sign-in and the weblogin of the registration page) and refuses
+     * own registration services (its ac2dm token and profile at sign-in, the weblogin of the registration page) and refuses
      * everything else to everyone: no app gets a token, an account ID or a sign-in for it, even with an earlier grant,
      * by naming it directly or through microG's own identity, and no account-backed microG feature (sync, passwords,
      * Find My Device, family, games, per-account push) runs for it. Check-in does not go through AuthManager.
      */
     private boolean refusedForCaller() {
         if (DeviceAccount.INSTANCE.mayShow(context, getAccount())) return false;
-        boolean registration = "ac2dm".equals(service) || (service != null && service.startsWith("weblogin:"));
+        // Its profile too (PeopleManager at sign-in): every Google account keeps its GoogleUserId, which microG relies on.
+        boolean registration = "ac2dm".equals(service) || PeopleManager.USERINFO_SCOPE.equals(service)
+                || (service != null && service.startsWith("weblogin:"));
         return packageName == null || !packageName.equals(context.getPackageName()) || !registration;
     }
 
