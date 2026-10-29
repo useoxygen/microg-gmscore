@@ -5,6 +5,7 @@ package org.microg.gms.cyclon
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.BroadcastReceiver
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -16,6 +17,10 @@ import java.util.concurrent.Executors
  * it is never the owner's. Owners and apps must never see it: Google's Switch would otherwise copy an iPhone's
  * contacts, calendars and notes into it (it takes the first Google account), apps would offer it for "Continue with
  * Google", and microG's settings would list it. microG itself keeps using it for check-in and registration.
+ *
+ * Nothing is synced for it either: [hideFromApps] turns off every sync adapter of its type for it, and microG's own
+ * contacts and calendar adapters refuse it. On Cyclon's OS, Android's account service also leaves the marked account out
+ * of every list but microG's own (frameworks/base, CYC-927), Settings and the sync system included.
  *
  * Hiding works on two levels. Android's account visibility hides it from every other app, privileged ones included
  * ([hideFromApps]: explicit NOT_VISIBLE for every package that has a setting, and both legacy defaults, which decide
@@ -80,6 +85,18 @@ object DeviceAccount {
                         manager.setAccountVisibility(account, pkg, AccountManager.VISIBILITY_NOT_VISIBLE)) changed++
                 }
                 if (changed > 0) Log.i(TAG, "Hid Cyclon's device account from $changed packages")
+                // Nothing is ever synced for it: every sync adapter of its type is off for this account.
+                var syncsOff = 0
+                for (adapter in ContentResolver.getSyncAdapterTypes()) {
+                    if (adapter.accountType != account.type) continue
+                    if (ContentResolver.getIsSyncable(account, adapter.authority) != 0) {
+                        ContentResolver.cancelSync(account, adapter.authority)
+                        ContentResolver.setSyncAutomatically(account, adapter.authority, false)
+                        ContentResolver.setIsSyncable(account, adapter.authority, 0)
+                        syncsOff++
+                    }
+                }
+                if (syncsOff > 0) Log.i(TAG, "Turned off $syncsOff syncs for Cyclon's device account")
             }.onFailure { Log.w(TAG, "Could not hide Cyclon's device account", it) }
         }
     }

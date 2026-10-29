@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.people
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -20,7 +21,7 @@ class ContactMigrationPrivacyProvider : ContentProvider() {
         val privacy = ContactMigrationPrivacy(requireNotNull(context))
         return when (method) {
             "beginMigration" -> {
-                AccountManager.get(requireNotNull(context)).getAccountsByType("com.google").forEach {
+                DeviceAccount.googleAccounts(requireNotNull(context)).forEach {
                     ContactSyncPreferences(requireNotNull(context), it).ensureDefaults()
                 }
                 privacy.beginMigration(); Bundle().apply { putBoolean("uploads_held", privacy.held); putBoolean("developer_controls", privacy.developerControlsEnabled) }
