@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.accounts.Account
+import org.microg.gms.cyclon.Cyclon
 import android.accounts.AccountManager
 import android.os.Bundle
 import android.view.View
@@ -113,7 +114,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
             editing?.takeIf { unlocked }?.let { entry ->
                 var username by remember(entry.data.tag) { mutableStateOf(entry.data.username) }
                 var display by remember(entry.data.tag) { mutableStateOf(entry.data.displayName) }
-                AlertDialog(onDismissRequest = { editing = null }, title = { Text(stringResource(R.string.passwords_passkey_management_edit)) },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { editing = null }, title = { Text(stringResource(R.string.passwords_passkey_management_edit)) },
                     text = { PasswordDialogProtection(); Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(entry.data.rpId, style = MaterialTheme.typography.titleMedium)
                         OutlinedTextField(username, { if (it.length <= 1024) username = it }, Modifier.fillMaxWidth(), colors = cyclonFieldColors(),
@@ -132,7 +133,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
             }
             deleting?.takeIf { unlocked }?.let { entry ->
                 val group = deletionGroup(entry)
-                AlertDialog(onDismissRequest = { deleting = null }, title = { Text(stringResource(R.string.passwords_delete)) },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { deleting = null }, title = { Text(stringResource(R.string.passwords_delete)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         PasswordDialogText(stringResource(R.string.passwords_passkey_management_delete_warning, group.size))
@@ -144,7 +145,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                     dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { deleting = null } })
             }
             resolving?.takeIf { unlocked }?.let { retry -> screen?.operation?.let { operation ->
-                AlertDialog(onDismissRequest = { resolving = null },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { resolving = null },
                     title = { Text(stringResource(if (retry) R.string.passwords_retry_owner else R.string.passwords_passkey_management_close)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -160,7 +161,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                     } },
                     dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { resolving = null } })
             } }
-            if (closeCreate && unlocked) AlertDialog(onDismissRequest = { closeCreate = false },
+            if (closeCreate && unlocked) AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { closeCreate = false },
                 title = { Text(stringResource(R.string.passwords_passkey_management_close_create)) },
                 text = { PasswordDialogProtection(); PasswordDialogText(stringResource(R.string.passwords_passkey_management_close_warning), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(android.R.string.ok), enabled = !busy) {

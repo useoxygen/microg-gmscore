@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.Manifest
+import org.microg.gms.cyclon.Cyclon
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
@@ -88,7 +89,7 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
                 }
                 PasswordOwnerStatus(busy, message?.let { stringResource(it) })
             }
-            prompt?.takeIf { unlocked }?.let { question -> AlertDialog(onDismissRequest = { prompt = null },
+            prompt?.takeIf { unlocked }?.let { question -> AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { prompt = null },
                 title = { Text(stringResource(R.string.passwords_wifi_title)) },
                 text = { PasswordDialogProtection(); PasswordDialogText(stringResource(question), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(android.R.string.ok)) {

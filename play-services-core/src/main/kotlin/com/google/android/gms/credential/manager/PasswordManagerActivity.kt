@@ -2,6 +2,7 @@
 package com.google.android.gms.credential.manager
 
 import org.microg.gms.cyclon.DeviceAccount
+import org.microg.gms.cyclon.Cyclon
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.os.Bundle
@@ -174,7 +175,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     repository().refresh()
                 }
             }
-            checkupDismissal?.takeIf { unlocked }?.let { (entry, dismissed) -> AlertDialog(
+            checkupDismissal?.takeIf { unlocked }?.let { (entry, dismissed) -> AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { checkupDismissal = null },
                 title = { Text(stringResource(if (dismissed) R.string.passwords_checkup_dismiss_question else R.string.passwords_checkup_restore_question)) },
                 text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -203,7 +204,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 blockedSiteOpen = false
                 perform { repository().upsert(Proto.field(1, data.encode())); repository().refresh() }
             }
-            deleting?.takeIf { unlocked }?.let { entry -> AlertDialog(
+            deleting?.takeIf { unlocked }?.let { entry -> AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { deleting = null },
                 title = { Text(stringResource(if (entry.data.blocked) R.string.passwords_allow_save_question else R.string.passwords_delete_question)) },
                 text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -216,19 +217,19 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 } } },
                 dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { deleting = null } }
             ) }
-            resolving?.takeIf { unlocked }?.let { change -> AlertDialog(
+            resolving?.takeIf { unlocked }?.let { change -> AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { resolving = null }, title = { Text(stringResource(R.string.passwords_resolve_question)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_resolve_description)) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_retry_owner)) { resolving = null; perform { repository().retryChange(change.id, true); repository().refresh() } } },
                 dismissButton = { CyclonTextAction(stringResource(R.string.passwords_drop_owner)) { resolving = null; perform { repository().dropChange(change.id) } } }
             ) }
-            if (resetOpen && unlocked) AlertDialog(
+            if (resetOpen && unlocked) AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { resetOpen = false }, title = { Text(stringResource(R.string.passwords_reset_question)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_reset_description)) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_reset_accept)) { resetOpen = false; perform { repository().acceptRemoteReset(); repository().refresh() } } },
                 dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { resetOpen = false } }
             )
-            moving?.takeIf { unlocked }?.let { entry -> AlertDialog(
+            moving?.takeIf { unlocked }?.let { entry -> AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { moving = null }, title = { Text(stringResource(R.string.passwords_move_question)) },
                 text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
                     Text(loginTitle(entry), style = MaterialTheme.typography.titleMedium)
@@ -244,7 +245,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     }
                 } }, confirmButton = {}, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { moving = null } }
             ) }
-            droppingTransfer?.takeIf { unlocked }?.let { id -> AlertDialog(
+            droppingTransfer?.takeIf { unlocked }?.let { id -> AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { droppingTransfer = null }, title = { Text(stringResource(R.string.passwords_transfer_drop_question)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_transfer_drop_description)) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_transfer_drop)) { droppingTransfer = null; perform { ownerOperations.drop(id) } } },
@@ -270,7 +271,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     }
                 }
             } }
-            if (csvExportOpen && unlocked) AlertDialog(
+            if (csvExportOpen && unlocked) AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { csvExportOpen = false }, title = { Text(stringResource(R.string.passwords_export_csv)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_export_csv_warning), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_export_csv)) {
@@ -282,7 +283,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 } },
                 dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { csvExportOpen = false } }
             )
-            if (csvImportOpen && unlocked) AlertDialog(
+            if (csvImportOpen && unlocked) AlertDialog(containerColor = Cyclon.glass.dialog, 
                 onDismissRequest = { csvImportOpen = false; importUri = null }, title = { Text(stringResource(R.string.passwords_import_csv)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_import_csv_warning), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_import_csv)) {
@@ -803,7 +804,7 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
     var selected by remember(entry.id, current) { mutableStateOf(current) }
     var requireAuthentication by remember(entry.id, currentRequireAuthentication) { mutableStateOf(currentRequireAuthentication) }
     val p = Cyclon.palette
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.passwords_assistant_access)) },
         text = {
             PasswordDialogProtection()
@@ -861,7 +862,7 @@ private fun PasswordEditor(existing: PasswordView?, onDismiss: () -> Unit, onSav
     var noteVisible by remember { mutableStateOf(false) }
     var invalid by remember { mutableStateOf(false) }
     val fields = cyclonFieldColors()
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = onDismiss,
         title = { Text(stringResource(if (existing == null) R.string.passwords_add else R.string.passwords_edit)) },
         text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(url, { url = it }, enabled = existing?.data?.realm?.startsWith("android://") != true, label = { Text(stringResource(R.string.passwords_site)) },
@@ -896,7 +897,7 @@ private fun PasswordEditor(existing: PasswordView?, onDismiss: () -> Unit, onSav
 @Composable
 private fun PasswordArchiveDialog(importing: Boolean, dismiss: () -> Unit, confirm: (CharArray) -> Unit) {
     var passphrase by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = dismiss,
+    AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = dismiss,
         title = { Text(stringResource(if (importing) R.string.passwords_import else R.string.passwords_export)) },
         text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             DialogBody(stringResource(if (importing) R.string.passwords_import_description else R.string.passwords_archive_description))
@@ -915,7 +916,7 @@ private fun PasswordArchiveDialog(importing: Boolean, dismiss: () -> Unit, confi
 private fun BlockedSiteEditor(onDismiss: () -> Unit, onSave: (PasswordData) -> Unit) {
     var url by remember { mutableStateOf("") }
     var invalid by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.passwords_never_save_add)) },
         text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(url, { url = it }, label = { Text(stringResource(R.string.passwords_site)) }, singleLine = true,

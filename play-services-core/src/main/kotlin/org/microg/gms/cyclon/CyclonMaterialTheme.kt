@@ -36,7 +36,7 @@ import com.google.android.gms.R
  * Text uses the bundled Manrope with Core's type scale (OwnerTheme.kt), as Theme.CyclonServices
  * does for the XML screens. Content without a Surface (Cyclon Services screens draw their own
  * paper) still gets ink, and cards and fields have 8dp corners. With [glass] (pages built of
- * CyclonComponents' islands) dialogs are Chat only's solid card: Home's violet or warm white,
+ * CyclonComponents' islands) dialogs are Chat only's solid card: the islands' grey or white,
  * 30dp corners.
  */
 @Composable

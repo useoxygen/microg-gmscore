@@ -110,7 +110,7 @@ internal fun PasswordDialogText(text: String, modifier: Modifier = Modifier, scr
 @Composable
 internal fun PasswordOwnerConfirm(title: String, account: String, messages: List<String>, confirmEnabled: Boolean,
                                   onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) },
+    AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = onDismiss, title = { Text(title) },
         text = {
             PasswordDialogProtection()
             Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

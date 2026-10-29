@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.accounts.Account
+import org.microg.gms.cyclon.Cyclon
 import android.accounts.AccountManager
 import android.content.Intent
 import android.os.Bundle
@@ -83,7 +84,7 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
                 }
             }
             confirmation?.takeIf { unlocked }?.let { action ->
-                AlertDialog(onDismissRequest = { confirmation = null },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { confirmation = null },
                     title = { Text(stringResource(R.string.passwords_recovery_enroll_phone)) },
                     text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(account.name, style = MaterialTheme.typography.titleMedium, color = Cyclon.palette.ink)

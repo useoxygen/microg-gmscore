@@ -92,7 +92,7 @@ import kotlinx.coroutines.withContext
 
 /*
  * The building blocks of Cyclon Services' own Compose pages, in the launcher's Chat only look (cyclon simulator
- * words.css, "Chat only: the Glass sheet" and "AI settings on glass"): a page of Home's deep violet (soft grey by day),
+ * words.css, "Chat only: the Glass sheet" and "AI settings on glass"): a page of Cyclon's black (raised paper by day),
  * what it holds on islands of one glass 10dp from the screen's edges with the words 32dp from them, sentence-case group
  * labels above the islands, a large title under a round back button, pills for actions, the owner's highlight only for
  * what is on or selected. No blur: the glass is a still gradient with a light top edge. Use inside
@@ -107,7 +107,7 @@ private val IslandMargin = 10.dp
 private val IslandPadding = CyclonTextInset - IslandMargin
 private val IslandShape = RoundedCornerShape(26.dp)
 private val PillShape = RoundedCornerShape(percent = 50)
-private val GlassShadow = Color(0xFF1E1E3C)
+private val GlassShadow = Color.Black
 
 /** Where words start here: [CyclonTextInset] on the page, an island's padding inside a [CyclonGroup]. */
 val LocalCyclonInset = staticCompositionLocalOf { CyclonTextInset }
@@ -117,24 +117,24 @@ class CyclonPalette(val paper: Color, val ink: Color, val muted: Color, val line
                     val highlight: Color, val onHighlight: Color, val error: Color)
 
 /**
- * Chat only's glass (words.css --gs-*) over a flat page instead of the wallpaper it tints, so night islands are a
- * deeper tint than the launcher's to still read as islands, and day islands near-white with the light shadow.
+ * Chat only's glass (words.css --gs-*) laid on Cyclon's own paper instead of the wallpaper: neutral islands a step
+ * above black by night, white with the light shadow by day, so the pages match the rest of Services and Core.
  */
 class CyclonGlass internal constructor(
     val dark: Boolean, val pageTop: Color, val pageBottom: Color, val island: Brush, val rim: Color, val edge: Color,
     val pill: Brush, val pillRim: Color, val pillEdge: Color, val rule: Color, val dialog: Color,
 )
 
-private val NightGlass = CyclonGlass(dark = true, pageTop = Color(0xFF221839), pageBottom = Color(0xFF191130),
-    island = Brush.verticalGradient(listOf(Color(10, 6, 28, 118), Color(8, 4, 22, 148))),
-    rim = Color.White.copy(alpha = .14f), edge = Color.White.copy(alpha = .06f),
-    pill = Brush.verticalGradient(listOf(Color.White.copy(alpha = .17f), Color.White.copy(alpha = .09f))),
-    pillRim = Color.White.copy(alpha = .24f), pillEdge = Color.White.copy(alpha = .1f),
-    rule = Color.White.copy(alpha = .14f), dialog = Color(0xFF1B1231))
+private val NightGlass = CyclonGlass(dark = true, pageTop = Color.Black, pageBottom = Color.Black,
+    island = Brush.verticalGradient(listOf(Color(0xFF1C1C20), Color(0xFF151518))),
+    rim = Color.White.copy(alpha = .12f), edge = Color.White.copy(alpha = .04f),
+    pill = Brush.verticalGradient(listOf(Color.White.copy(alpha = .16f), Color.White.copy(alpha = .09f))),
+    pillRim = Color.White.copy(alpha = .22f), pillEdge = Color.White.copy(alpha = .08f),
+    rule = Color.White.copy(alpha = .1f), dialog = Color(0xFF1C1C20))
 
-private val DayGlass = CyclonGlass(dark = false, pageTop = Color(0xFFECECF1), pageBottom = Color(0xFFF4F4F7),
+private val DayGlass = CyclonGlass(dark = false, pageTop = Color(0xFFF2F2F1), pageBottom = Color(0xFFF2F2F1),
     island = SolidColor(Color.White), rim = Color.White, edge = Color.White, pill = SolidColor(Color.White),
-    pillRim = Color.White, pillEdge = Color.White, rule = Color(30, 30, 60, 26), dialog = Color(0xFFFBFAF8))
+    pillRim = Color.White, pillEdge = Color.White, rule = Color(0, 0, 0, 20), dialog = Color.White)
 
 internal fun cyclonGlass(dark: Boolean) = if (dark) NightGlass else DayGlass
 
@@ -142,7 +142,7 @@ object Cyclon {
     val palette: CyclonPalette @Composable get() {
         val c = MaterialTheme.colorScheme
         val g = glass
-        // On violet glass Core's greys vanish: rings, outlines and cells are white at low alpha instead.
+        // On night glass Core's greys sink into the island: rings, outlines and cells are white at low alpha instead.
         return CyclonPalette(paper = c.surface, ink = c.onSurface, muted = c.onSurfaceVariant, line = g.rule,
             mid = if (g.dark) Color.White.copy(alpha = .3f) else colorResource(R.color.cyclon_mid),
             cell = if (g.dark) Color.White.copy(alpha = .1f) else c.surfaceVariant, highlight = c.primary,
@@ -165,7 +165,7 @@ fun Modifier.cyclonGlass(glass: CyclonGlass, shape: Shape, pill: Boolean = false
         }
 
 /**
- * The page under the islands: Home's violet by night, soft grey by day, also behind the system bars (targetSdk 29
+ * The page under the islands: Cyclon's black by night, its raised paper by day, also behind the system bars (targetSdk 29
  * keeps them out of the window, so they take the page's ends).
  */
 @Composable

@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.accounts.AccountManager
+import org.microg.gms.cyclon.Cyclon
 import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
@@ -105,7 +106,7 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
                 }
             }
             selectedPassword?.takeIf { unlocked }?.let { entry ->
-                AlertDialog(onDismissRequest = { selectedPassword = null; selectedRecipient = null },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { selectedPassword = null; selectedRecipient = null },
                     title = { Text(stringResource(R.string.passwords_sharing_choose_recipient)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
                         Text(sharingTitle(entry.data.realm), style = MaterialTheme.typography.titleMedium)
@@ -129,7 +130,7 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
                     dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { selectedPassword = null; selectedRecipient = null } })
             }
             selectedIncoming?.takeIf { unlocked }?.let { incoming ->
-                AlertDialog(onDismissRequest = { selectedIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_receive)) },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { selectedIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_receive)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(incoming.invitation.sender.email, style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.muted)
@@ -144,14 +145,14 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
                     } }, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { selectedIncoming = null } })
             }
             dismissIncoming?.takeIf { unlocked }?.let { incoming ->
-                AlertDialog(onDismissRequest = { dismissIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_dismiss)) },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { dismissIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_dismiss)) },
                     text = { PasswordDialogProtection(); PasswordDialogText(incoming.invitation.sender.email) },
                     confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_dismiss), enabled = !busy) {
                         dismissIncoming = null; perform { it.dismiss(incoming) }
                     } }, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { dismissIncoming = null } })
             }
             resolveSend?.takeIf { unlocked }?.let { operation ->
-                AlertDialog(onDismissRequest = { resolveSend = null }, title = { Text(stringResource(R.string.passwords_sharing_resolve_send)) },
+                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { resolveSend = null }, title = { Text(stringResource(R.string.passwords_sharing_resolve_send)) },
                     text = { PasswordDialogProtection(); PasswordDialogText(stringResource(R.string.passwords_sharing_resolve_warning), scrolls = true) },
                     confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_allow_new_attempt), enabled = !busy) {
                         resolveSend = null; perform { it.resolveUnknownSend(operation.id, acknowledgesPossibleDelivery = true) }
