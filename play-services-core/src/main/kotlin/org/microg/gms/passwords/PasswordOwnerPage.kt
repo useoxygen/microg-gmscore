@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,11 +28,12 @@ import org.microg.gms.cyclon.Cyclon
 import org.microg.gms.cyclon.CyclonBack
 import org.microg.gms.cyclon.CyclonInkButton
 import org.microg.gms.cyclon.CyclonProgress
+import org.microg.gms.cyclon.CyclonTextAction
 import org.microg.gms.cyclon.CyclonTitle
 
 /*
- * The frame of the pages Passwords' Settings opens (encryption, recovery, breach check, passkeys, sharing, Wi-Fi): the
- * manager's own Back, title and Space Mono account line, then the page in Cyclon rows and pills. Use inside
+ * The frame of the pages Passwords' Settings opens (encryption, recovery, breach check, passkeys, sharing, Wi-Fi) and of
+ * the recovery pages that Recovery's rows open: the manager's own Back, title and Space Mono account line, then the page in Cyclon rows and pills. Use inside
  * CyclonMaterialTheme.
  */
 
@@ -96,4 +98,23 @@ internal fun PasswordOwnerActions(modifier: Modifier = Modifier, content: @Compo
 internal fun PasswordDialogText(text: String, modifier: Modifier = Modifier, scrolls: Boolean = false) {
     Text(text, (if (scrolls) modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()) else modifier),
         style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.ink)
+}
+
+/**
+ * The question before a recovery step: [title], the account it is about in ink, then [messages]; OK runs [onConfirm]
+ * when [confirmEnabled]. Protected as every password dialog, and scrolling for long warnings at large font sizes.
+ */
+@Composable
+internal fun PasswordOwnerConfirm(title: String, account: String, messages: List<String>, confirmEnabled: Boolean,
+                                  onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) },
+        text = {
+            PasswordDialogProtection()
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(account, style = MaterialTheme.typography.titleMedium, color = Cyclon.palette.ink)
+                messages.forEach { PasswordDialogText(it) }
+            }
+        },
+        confirmButton = { CyclonTextAction(stringResource(android.R.string.ok), enabled = confirmEnabled, onClick = onConfirm) },
+        dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel), onClick = onDismiss) })
 }

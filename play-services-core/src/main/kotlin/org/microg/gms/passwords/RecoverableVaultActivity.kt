@@ -9,20 +9,14 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import org.microg.gms.auth.folsom.FolsomAndroidAdmission
 import org.microg.gms.auth.folsom.FolsomCallerAdmission
 import java.util.concurrent.atomic.AtomicBoolean
@@ -56,52 +50,11 @@ class RecoverableVaultActivity : PasswordOwnerActivity() {
         parent = intent.getStringExtra("password_parent")
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_recoverable_vault_title), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) { Text(stringResource(R.string.passwords_unlock)) }
-                else {
-                    Text(account.name)
-                    Text(stringResource(if (domain == "chromesync") R.string.passwords_recoverable_vault_passwords
-                        else R.string.passwords_recoverable_vault_passkeys))
-                    Text(stringResource(R.string.passwords_recoverable_vault_description))
-                    if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_recovery_enroll_lock_required))
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (failed) Text(stringResource(R.string.passwords_recoverable_vault_failed))
-                    status?.phase?.let { phase -> Text(stringResource(phaseText(phase))) }
-                    if (hasSecureScreenLock) {
-                        OutlinedButton(onClick = { perform(RecoverableVaultAction.REFRESH) }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_refresh))
-                        }
-                        if (status != null && status?.attemptId == null) Button(onClick = {
-                            confirmation = RecoverableVaultAction.PREPARE
-                        }, enabled = !busy) { Text(stringResource(R.string.passwords_recoverable_vault_enable)) }
-                        if (status?.attemptId != null && status?.complete != true && status?.phase != RecoverableVaultPhase.REVOKED) Button(onClick = {
-                            confirmation = RecoverableVaultAction.CONTINUE
-                        }, enabled = !busy) { Text(stringResource(R.string.passwords_recoverable_vault_continue)) }
-                        if (status?.attemptId != null) TextButton(onClick = { confirmation = RecoverableVaultAction.CLOSE }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_recovery_enroll_close_attempt))
-                        }
-                    }
-                }
-                TextButton(onClick = { cancel(); finish() }) { Text(stringResource(android.R.string.cancel)) }
-            }
-            confirmation?.takeIf { unlocked }?.let { action ->
-                AlertDialog(onDismissRequest = { confirmation = null },
-                    title = { Text(stringResource(R.string.passwords_recoverable_vault_title)) },
-                    text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(account.name)
-                        Text(stringResource(when (action) {
-                            RecoverableVaultAction.PREPARE -> R.string.passwords_recoverable_vault_confirm
-                            RecoverableVaultAction.CONTINUE -> R.string.passwords_recoverable_vault_continue_confirm
-                            else -> R.string.passwords_recoverable_vault_close_confirm
-                        }))
-                    } }, confirmButton = { TextButton(onClick = {
-                        confirmation = null; perform(action)
-                    }, enabled = !busy && hasSecureScreenLock) { Text(stringResource(android.R.string.ok)) } },
-                    dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(android.R.string.cancel)) } })
-            }
-        } } }
+        setContent { CyclonMaterialTheme {
+            RecoverableVaultScreen(account.name, domain, unlocked, hasSecureScreenLock, busy, failed, status, confirmation,
+                onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner, onAsk = { confirmation = it },
+                onRefresh = { perform(RecoverableVaultAction.REFRESH) }, onConfirm = { action -> confirmation = null; perform(action) })
+        } }
         authenticateOwner()
     }
     private fun validAccount(): Boolean {
@@ -159,14 +112,6 @@ class RecoverableVaultActivity : PasswordOwnerActivity() {
             }
         }
     }
-    private fun phaseText(phase: RecoverableVaultPhase): Int = when (phase) {
-        RecoverableVaultPhase.WAITING_FOR_SNAPSHOT -> R.string.passwords_recoverable_vault_waiting
-        RecoverableVaultPhase.PREPARED -> R.string.passwords_recoverable_vault_prepared
-        RecoverableVaultPhase.VAULT_LAUNCHED, RecoverableVaultPhase.JOIN_LAUNCHED -> R.string.passwords_recoverable_vault_uncertain
-        RecoverableVaultPhase.VAULT_CONFIRMED -> R.string.passwords_recoverable_vault_uploaded
-        RecoverableVaultPhase.CONFIRMED -> R.string.passwords_recoverable_vault_complete
-        RecoverableVaultPhase.REVOKED -> R.string.passwords_recoverable_vault_revoked
-    }
     private fun cancel() { cancellation?.set(true); client?.cancel() }
     override fun onOwnerAuthenticated() {
         generation.incrementAndGet(); allowed.set(true); unlocked = true
@@ -182,4 +127,49 @@ class RecoverableVaultActivity : PasswordOwnerActivity() {
         allowed.set(false); generation.incrementAndGet(); cancel()
         client = null; cancellation = null; busy = false; unlocked = false; status = null; confirmation = null
     }
+}
+
+/** What [RecoverableVaultActivity] shows, from its state alone; the activity keeps every check and request. */
+@Composable
+internal fun RecoverableVaultScreen(
+    account: String, domain: String, unlocked: Boolean, secure: Boolean, busy: Boolean, failed: Boolean,
+    status: RecoverableVaultStatus?, confirmation: RecoverableVaultAction?, onBack: () -> Unit, onUnlock: () -> Unit,
+    onAsk: (RecoverableVaultAction?) -> Unit, onRefresh: () -> Unit, onConfirm: (RecoverableVaultAction) -> Unit,
+) {
+    PasswordOwnerPage(stringResource(if (domain == "chromesync") R.string.passwords_recoverable_vault_passwords
+        else R.string.passwords_recoverable_vault_passkeys), account, onBack) {
+        if (!unlocked) { PasswordOwnerLocked(secure, enabled = !busy, onUnlock = onUnlock); return@PasswordOwnerPage }
+        CyclonNote(stringResource(R.string.passwords_recoverable_vault_description))
+        if (!secure) PasswordOwnerText(stringResource(R.string.passwords_recovery_enroll_lock_required))
+        PasswordOwnerStatus(busy, if (failed) stringResource(R.string.passwords_recoverable_vault_failed) else null)
+        status?.phase?.let { PasswordOwnerText(stringResource(recoverableVaultPhaseText(it))) }
+        if (!secure) return@PasswordOwnerPage
+        PasswordOwnerActions {
+            if (status != null && status.attemptId == null) CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_enable), enabled = !busy) {
+                onAsk(RecoverableVaultAction.PREPARE)
+            }
+            if (status?.attemptId != null && !status.complete && status.phase != RecoverableVaultPhase.REVOKED)
+                CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_continue), enabled = !busy) { onAsk(RecoverableVaultAction.CONTINUE) }
+            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            if (status?.attemptId != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
+                onAsk(RecoverableVaultAction.CLOSE)
+            }
+        }
+    }
+    confirmation?.takeIf { unlocked }?.let { action ->
+        PasswordOwnerConfirm(stringResource(R.string.passwords_recoverable_vault_title), account, listOf(stringResource(when (action) {
+            RecoverableVaultAction.PREPARE -> R.string.passwords_recoverable_vault_confirm
+            RecoverableVaultAction.CONTINUE -> R.string.passwords_recoverable_vault_continue_confirm
+            else -> R.string.passwords_recoverable_vault_close_confirm
+        })), confirmEnabled = !busy && secure, onConfirm = { onConfirm(action) }, onDismiss = { onAsk(null) })
+    }
+}
+
+private fun recoverableVaultPhaseText(phase: RecoverableVaultPhase): Int = when (phase) {
+    RecoverableVaultPhase.WAITING_FOR_SNAPSHOT -> R.string.passwords_recoverable_vault_waiting
+    RecoverableVaultPhase.PREPARED -> R.string.passwords_recoverable_vault_prepared
+    RecoverableVaultPhase.VAULT_LAUNCHED, RecoverableVaultPhase.JOIN_LAUNCHED -> R.string.passwords_recoverable_vault_uncertain
+    RecoverableVaultPhase.VAULT_CONFIRMED -> R.string.passwords_recoverable_vault_uploaded
+    RecoverableVaultPhase.CONFIRMED -> R.string.passwords_recoverable_vault_complete
+    RecoverableVaultPhase.REVOKED -> R.string.passwords_recoverable_vault_revoked
 }

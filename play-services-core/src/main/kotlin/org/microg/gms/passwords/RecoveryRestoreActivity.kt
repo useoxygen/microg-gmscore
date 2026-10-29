@@ -9,11 +9,14 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -28,7 +31,7 @@ import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.microg.gms.cyclon.CyclonMaterialTheme
+import org.microg.gms.cyclon.*
 import org.microg.gms.auth.folsom.FolsomAndroidAdmission
 import org.microg.gms.auth.folsom.FolsomCallerAdmission
 import java.security.MessageDigest
@@ -55,8 +58,7 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
     private var secret by mutableStateOf(CharArray(0))
     private var patternView: RecoveryPatternView? = null
     private var status by mutableStateOf<RecoveryRestoreStatus?>(null)
-    private var confirmation by mutableStateOf<Action?>(null)
-    private enum class Action { REFRESH, RESTORE, FINISH, CLOSE }
+    private var confirmation by mutableStateOf<RecoveryRestoreAction?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,94 +75,19 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
             (requestScope == null || !intent.hasExtra("lifecycle_caller"))) { finish(); return }
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.passwords_restore_title), style = MaterialTheme.typography.headlineSmall)
-                if (!unlocked) Button(onClick = ::authenticateOwner, enabled = !busy) { Text(stringResource(R.string.passwords_unlock)) }
-                else {
-                    Text(account.name)
-                    Text(stringResource(if (domain == "chromesync") R.string.passwords_domain_passwords else R.string.passwords_domain_passkeys))
-                    Text(stringResource(R.string.passwords_restore_description))
-                    if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_recovery_enroll_lock_required))
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (failed) Text(stringResource(R.string.passwords_restore_failed))
-                    status?.phase?.let { phase -> Text(stringResource(when (phase) {
-                        RecoveryRestorePhase.RECOVERED -> R.string.passwords_restore_ready
-                        RecoveryRestorePhase.CONFIRMED -> R.string.passwords_restore_complete
-                        RecoveryRestorePhase.REFUSED -> R.string.passwords_restore_refused
-                        RecoveryRestorePhase.REVOKED -> R.string.passwords_restore_revoked
-                        else -> R.string.passwords_restore_pending
-                    })) }
-                    if (hasSecureScreenLock) {
-                        OutlinedButton(onClick = { perform(Action.REFRESH) }, enabled = !busy) { Text(stringResource(R.string.passwords_refresh)) }
-                        if (status != null && status?.attemptId == null) {
-                            if (choices.isEmpty()) Text(stringResource(R.string.passwords_restore_empty))
-                            choices.forEachIndexed { index, choice ->
-                                val chosen = selected?.let { MessageDigest.isEqual(it.digest, choice.digest) } == true
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    RadioButton(chosen, onClick = { clearSecret(); selected = choice }, enabled = !busy)
-                                    Column {
-                                        Text(stringResource(R.string.passwords_restore_backup, index + 1))
-                                        Text(stringResource(if (choice.vaultType == 3) R.string.passwords_restore_gpm_pin else when (choice.format) {
-                                            1 -> R.string.passwords_restore_pin; 3 -> R.string.passwords_restore_pattern
-                                            else -> R.string.passwords_restore_password
-                                        }))
-                                        choice.remainingAttempts?.let { Text(stringResource(R.string.passwords_restore_attempts, it)) }
-                                    }
-                                }
-                            }
-                            selected?.let { choice ->
-                                if (choice.format == 3) AndroidView(factory = { context ->
-                                    RecoveryPatternView(context) { value -> secret.fill('\u0000'); secret = value }.also { patternView = it }
-                                }, update = { it.isEnabled = !busy }, modifier = Modifier.fillMaxWidth().aspectRatio(1f).semantics { password() })
-                                else OutlinedTextField(value = String(secret), onValueChange = { value ->
-                                    if (!busy && value.length <= 1024 && (choice.format != 1 || value.all { it in '0'..'9' }) &&
-                                        (choice.vaultType != 3 || choice.format != 1 || value.length <= 6) &&
-                                        (choice.vaultType == 3 || value.all { it.code in 32..127 })) {
-                                        clearSecret(); secret = value.toCharArray()
-                                    }
-                                }, enabled = !busy, singleLine = true,
-                                    label = { Text(stringResource(if (choice.vaultType == 3) R.string.passwords_restore_gpm_pin else
-                                        if (choice.format == 1) R.string.passwords_restore_pin else R.string.passwords_restore_password)) },
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = if (choice.format == 1) KeyboardType.NumberPassword else KeyboardType.Password),
-                                    modifier = Modifier.fillMaxWidth().semantics { password() })
-                                Button(onClick = { confirmation = Action.RESTORE }, enabled = !busy && when {
-                                    choice.format == 3 -> secret.size >= 4
-                                    choice.vaultType == 3 && choice.format == 1 -> secret.size == 6
-                                    else -> secret.isNotEmpty()
-                                }) {
-                                    Text(stringResource(R.string.passwords_restore_open))
-                                }
-                            }
-                        }
-                        if (status?.canFinish == true && matchesScope(status?.requestScopeDigest)) Button(onClick = { confirmation = Action.FINISH }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_restore_finish))
-                        }
-                        if (status?.attemptId != null) TextButton(onClick = { confirmation = Action.CLOSE }, enabled = !busy) {
-                            Text(stringResource(R.string.passwords_recovery_enroll_close_attempt))
-                        }
-                    }
-                }
-                TextButton(onClick = { cancel(); clearSecret(); finish() }) { Text(stringResource(android.R.string.cancel)) }
-            }
-            confirmation?.takeIf { unlocked }?.let { action -> AlertDialog(onDismissRequest = { confirmation = null },
-                title = { Text(stringResource(R.string.passwords_restore_title)) },
-                text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(account.name)
-                    Text(stringResource(when (action) {
-                        Action.RESTORE -> R.string.passwords_restore_confirm
-                        Action.CLOSE -> R.string.passwords_restore_close
-                        else -> R.string.passwords_restore_finish_confirm
-                    }))
-                    if (action == Action.RESTORE) selected?.remainingAttempts?.let { Text(stringResource(R.string.passwords_restore_attempts, it)) }
-                } }, confirmButton = { TextButton(onClick = {
+        setContent { CyclonMaterialTheme {
+            RecoveryRestoreScreen(account.name, domain, unlocked, hasSecureScreenLock, busy, failed, status,
+                status?.canFinish == true && matchesScope(status?.requestScopeDigest), choices, selected, secret, confirmation,
+                onBack = { cancel(); clearSecret(); finish() }, onUnlock = ::authenticateOwner,
+                onRefresh = { perform(RecoveryRestoreAction.REFRESH) }, onSelect = { choice -> clearSecret(); selected = choice },
+                onPatternView = { patternView = it }, onPattern = { value -> secret.fill('\u0000'); secret = value },
+                onSecret = { value -> clearSecret(); secret = value }, onAsk = { confirmation = it },
+                onConfirm = { action ->
                     confirmation = null
-                    val owned = if (action == Action.RESTORE) secret.copyOf() else null
+                    val owned = if (action == RecoveryRestoreAction.RESTORE) secret.copyOf() else null
                     clearSecret(); perform(action, owned)
-                }, enabled = !busy && hasSecureScreenLock) { Text(stringResource(android.R.string.ok)) } },
-                dismissButton = { TextButton(onClick = { confirmation = null }) { Text(stringResource(android.R.string.cancel)) } }) }
-        } } }
+                })
+        } }
         authenticateOwner()
     }
     private fun validAccount(): Boolean = AccountManager.get(this).let {
@@ -180,16 +107,16 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
     private fun matchesScope(actual: ByteArray?): Boolean = requestScope?.let { expected ->
         actual != null && MessageDigest.isEqual(expected, actual)
     } ?: true
-    private fun perform(action: Action, input: CharArray? = null) {
+    private fun perform(action: RecoveryRestoreAction, input: CharArray? = null) {
         try { requireOwner(); if (!allowed.get() || !validAccount() || !hasSecureScreenLock || busy) throw VaultLockedException() }
         catch (_: Exception) { input?.fill('\u0000'); failed = true; return }
         val stopped = AtomicBoolean(false); val grant = generation.get(); val attempt = status?.attemptId
         val digest = selected?.digest?.copyOf()
-        if (action == Action.RESTORE && !matchesScope(selected?.requestScopeDigest) ||
-            action == Action.FINISH && !matchesScope(status?.requestScopeDigest)) {
+        if (action == RecoveryRestoreAction.RESTORE && !matchesScope(selected?.requestScopeDigest) ||
+            action == RecoveryRestoreAction.FINISH && !matchesScope(status?.requestScopeDigest)) {
             input?.fill('\u0000'); failed = true; return
         }
-        if (action != Action.RESTORE) clearSecret()
+        if (action != RecoveryRestoreAction.RESTORE) clearSecret()
         cancellation = stopped; activeSecret = input; busy = true; failed = false
         val verify = {
             if (stopped.get() || !allowed.get() || generation.get() != grant || !validAccount() || !hasSecureScreenLock) throw VaultLockedException()
@@ -204,10 +131,10 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
                     if (stopped.get() || cancellation !== stopped) { current.cancel(); throw VaultLockedException() }
                     client = current
                     val loaded = try { when (action) {
-                        Action.RESTORE -> current.restore(digest ?: throw VaultLockedException(), input ?: throw VaultLockedException())
-                        Action.FINISH -> current.finishPending(attempt ?: throw VaultLockedException(), requestScope?.copyOf())
-                        Action.CLOSE -> { current.close(attempt ?: throw VaultLockedException()); current.status() }
-                        Action.REFRESH -> current.status()
+                        RecoveryRestoreAction.RESTORE -> current.restore(digest ?: throw VaultLockedException(), input ?: throw VaultLockedException())
+                        RecoveryRestoreAction.FINISH -> current.finishPending(attempt ?: throw VaultLockedException(), requestScope?.copyOf())
+                        RecoveryRestoreAction.CLOSE -> { current.close(attempt ?: throw VaultLockedException()); current.status() }
+                        RecoveryRestoreAction.REFRESH -> current.status()
                     } } catch (_: Exception) { problem = true; verify(); current.status() }
                     verify()
                     val available = if (loaded.attemptId == null) current.list().filter { it.format in 1..3 && matchesScope(it.requestScopeDigest) } else emptyList()
@@ -216,7 +143,7 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
                 verify()
                 if (cancellation === stopped) {
                     status = result.first; choices = result.second; selected = null; failed = problem
-                    if (!problem && action in setOf(Action.RESTORE, Action.FINISH) && result.first.acknowledges(requestScope) &&
+                    if (!problem && action in setOf(RecoveryRestoreAction.RESTORE, RecoveryRestoreAction.FINISH) && result.first.acknowledges(requestScope) &&
                         intent.getBooleanExtra("lifecycle_return_on_confirmed", false)) {
                         verify(); setResult(RESULT_OK); finish()
                     }
@@ -232,10 +159,103 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
     private fun clearSecret() { secret.fill('\u0000'); secret = CharArray(0); patternView?.clear() }
     private fun cancel() { cancellation?.set(true); client?.cancel(); activeSecret?.fill('\u0000'); activeSecret = null }
     override fun onOwnerAuthenticated() { generation.incrementAndGet(); allowed.set(true); unlocked = true
-        if (hasSecureScreenLock) perform(Action.REFRESH) }
+        if (hasSecureScreenLock) perform(RecoveryRestoreAction.REFRESH) }
     override fun onOwnerAuthenticationFailed() { finish() }
     override fun onPause() { allowed.set(false); generation.incrementAndGet(); cancel(); clearSecret(); super.onPause() }
     override fun onResume() { super.onResume(); if (unlocked) allowed.set(runCatching { requireOwner(); true }.getOrDefault(false)) }
     override fun onOwnerLocked() { allowed.set(false); generation.incrementAndGet(); cancel(); clearSecret()
         unlocked = false; busy = false; choices = emptyList(); selected = null; status = null; confirmation = null; failed = false }
+}
+
+internal enum class RecoveryRestoreAction { REFRESH, RESTORE, FINISH, CLOSE }
+
+/**
+ * What [RecoveryRestoreActivity] shows, from its state alone. The activity owns and clears the secret, checks every
+ * scope and makes every request; the field and the pattern only mask and filter what the owner enters, as before.
+ */
+@Composable
+internal fun RecoveryRestoreScreen(
+    account: String, domain: String, unlocked: Boolean, secure: Boolean, busy: Boolean, failed: Boolean,
+    status: RecoveryRestoreStatus?, canFinish: Boolean, choices: List<RecoveryRestoreChoice>, selected: RecoveryRestoreChoice?,
+    secret: CharArray, confirmation: RecoveryRestoreAction?, onBack: () -> Unit, onUnlock: () -> Unit, onRefresh: () -> Unit,
+    onSelect: (RecoveryRestoreChoice) -> Unit, onPatternView: (RecoveryPatternView) -> Unit, onPattern: (CharArray) -> Unit,
+    onSecret: (CharArray) -> Unit, onAsk: (RecoveryRestoreAction?) -> Unit, onConfirm: (RecoveryRestoreAction) -> Unit,
+) {
+    PasswordOwnerPage(stringResource(if (domain == "chromesync") R.string.passwords_restore_passwords else R.string.passwords_restore_passkeys),
+        account, onBack) {
+        if (!unlocked) { PasswordOwnerLocked(secure, enabled = !busy, onUnlock = onUnlock); return@PasswordOwnerPage }
+        CyclonNote(stringResource(R.string.passwords_restore_description))
+        if (!secure) PasswordOwnerText(stringResource(R.string.passwords_recovery_enroll_lock_required))
+        PasswordOwnerStatus(busy, if (failed) stringResource(R.string.passwords_restore_failed) else null)
+        status?.phase?.let { phase -> PasswordOwnerText(stringResource(when (phase) {
+            RecoveryRestorePhase.RECOVERED -> R.string.passwords_restore_ready
+            RecoveryRestorePhase.CONFIRMED -> R.string.passwords_restore_complete
+            RecoveryRestorePhase.REFUSED -> R.string.passwords_restore_refused
+            RecoveryRestorePhase.REVOKED -> R.string.passwords_restore_revoked
+            else -> R.string.passwords_restore_pending
+        })) }
+        if (!secure) return@PasswordOwnerPage
+        if (status != null && status.attemptId == null) {
+            CyclonSectionLabel(stringResource(R.string.passwords_restore_backups))
+            if (choices.isEmpty()) CyclonNote(stringResource(R.string.passwords_restore_empty))
+            Column(Modifier.selectableGroup()) {
+                choices.forEachIndexed { index, choice ->
+                    val chosen = selected?.let { MessageDigest.isEqual(it.digest, choice.digest) } == true
+                    CyclonChoiceRow(stringResource(R.string.passwords_restore_backup, index + 1),
+                        listOfNotNull(stringResource(restoreSecretLabel(choice, pattern = true)),
+                            choice.remainingAttempts?.let { stringResource(R.string.passwords_restore_attempts, it) }).joinToString("\n"),
+                        chosen, enabled = !busy) { onSelect(choice) }
+                }
+            }
+            selected?.let { choice ->
+                if (choice.format == 3) {
+                    CyclonNote(stringResource(R.string.passwords_restore_pattern_description))
+                    AndroidView(factory = { context -> RecoveryPatternView(context, onPattern).also(onPatternView) },
+                        update = { it.isEnabled = !busy },
+                        modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().aspectRatio(1f).semantics { password() })
+                } else OutlinedTextField(value = String(secret), onValueChange = { value ->
+                    if (!busy && value.length <= 1024 && (choice.format != 1 || value.all { it in '0'..'9' }) &&
+                        (choice.vaultType != 3 || choice.format != 1 || value.length <= 6) &&
+                        (choice.vaultType == 3 || value.all { it.code in 32..127 })) {
+                        onSecret(value.toCharArray())
+                    }
+                }, enabled = !busy, singleLine = true, label = { Text(stringResource(restoreSecretLabel(choice, pattern = false))) },
+                    visualTransformation = PasswordVisualTransformation(), colors = cyclonFieldColors(),
+                    keyboardOptions = KeyboardOptions(keyboardType = if (choice.format == 1) KeyboardType.NumberPassword else KeyboardType.Password),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp).fillMaxWidth().semantics { password() })
+            }
+        }
+        PasswordOwnerActions {
+            if (status != null && status.attemptId == null) selected?.let { choice ->
+                CyclonInkButton(stringResource(R.string.passwords_restore_open), enabled = !busy && when {
+                    choice.format == 3 -> secret.size >= 4
+                    choice.vaultType == 3 && choice.format == 1 -> secret.size == 6
+                    else -> secret.isNotEmpty()
+                }) { onAsk(RecoveryRestoreAction.RESTORE) }
+            }
+            if (canFinish) CyclonInkButton(stringResource(R.string.passwords_restore_finish), enabled = !busy) { onAsk(RecoveryRestoreAction.FINISH) }
+            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            if (status?.attemptId != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
+                onAsk(RecoveryRestoreAction.CLOSE)
+            }
+        }
+    }
+    confirmation?.takeIf { unlocked }?.let { action ->
+        PasswordOwnerConfirm(stringResource(R.string.passwords_restore_title), account, listOfNotNull(
+            stringResource(when (action) {
+                RecoveryRestoreAction.RESTORE -> R.string.passwords_restore_confirm
+                RecoveryRestoreAction.CLOSE -> R.string.passwords_restore_close
+                else -> R.string.passwords_restore_finish_confirm
+            }),
+            if (action == RecoveryRestoreAction.RESTORE) selected?.remainingAttempts?.let { stringResource(R.string.passwords_restore_attempts, it) } else null,
+        ), confirmEnabled = !busy && secure, onConfirm = { onConfirm(action) }, onDismiss = { onAsk(null) })
+    }
+}
+
+/** What the owner enters for [choice]: a GPM PIN, or the backup device's PIN, password or (in the list) pattern. */
+private fun restoreSecretLabel(choice: RecoveryRestoreChoice, pattern: Boolean): Int = when {
+    choice.vaultType == 3 -> R.string.passwords_restore_gpm_pin
+    choice.format == 1 -> R.string.passwords_restore_pin
+    choice.format == 3 && pattern -> R.string.passwords_restore_pattern
+    else -> R.string.passwords_restore_password
 }

@@ -20,9 +20,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Opt-in UI check of the pages Passwords' Settings opens, on a private emulator only: no screen lock (owner presence,
- * which this test can supply), no network (nothing reaches Google) and one synthetic Google account added here and
- * removed afterwards. Pages that load from Google show their failure state; every page must still show Back, its title
+ * Opt-in UI check of the pages Passwords' Settings opens and the recovery pages its Recovery rows open, on a private
+ * emulator only: no screen lock (owner presence, which this test can supply), no network (nothing reaches Google) and
+ * one synthetic Google account added here and removed afterwards. Pages that load from Google show their failure state,
+ * and recovery pages without a screen lock only say they need one; every page must still show Back, its title
  * and the account, go back, and lock again when left. Accessibility nodes are read across processes, so the
  * encryption page's own process is covered too. No real account, password or vault is read or changed.
  */
@@ -49,7 +50,7 @@ class PasswordOwnerPagesAndroidTest {
     }
 
     @Test fun everyPageShowsBackTitleAndAccountThenGoesBack() {
-        for ((page, title) in PAGES) {
+        for ((page, title) in PAGES + RECOVERY_PAGES) {
             open(page)
             node(text(title))
             node(ACCOUNT)
@@ -59,7 +60,7 @@ class PasswordOwnerPagesAndroidTest {
     }
 
     @Test fun pagesLockAgainWhenLeftAndOpenAgainForTheOwner() {
-        for ((page, title) in PAGES.filter { it.first != PasswordEncryptionActivity::class.java }) {
+        for ((page, title) in (PAGES + RECOVERY_PAGES).filter { it.first != PasswordEncryptionActivity::class.java }) {
             open(page)
             node(text(title))
             // The breach check waits for the owner's tap before it unlocks; the others ask at once.
@@ -104,7 +105,7 @@ class PasswordOwnerPagesAndroidTest {
     private fun open(page: Class<*>, back: Boolean = false) {
         context.startActivity(Intent(context, page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
             if (back) Intent.FLAG_ACTIVITY_REORDER_TO_FRONT else 0)
-            .putExtra("account", ACCOUNT).putExtra("google_user_id", USER_ID))
+            .putExtra("account", ACCOUNT).putExtra("google_user_id", USER_ID).putExtra("domain", "chromesync"))
     }
     private fun leave() {
         instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
@@ -146,6 +147,14 @@ class PasswordOwnerPagesAndroidTest {
             SyncedPasskeyManagerActivity::class.java to R.string.passwords_synced_passkeys,
             PasswordSharingActivity::class.java to R.string.passwords_share,
             PasswordWifiSyncActivity::class.java to R.string.passwords_wifi_title,
+        )
+        // The pages Recovery's rows open (password recovery where a page serves both domains).
+        val RECOVERY_PAGES = listOf(
+            org.microg.gms.auth.folsom.ui.SecurityDomainLifecycleActivity::class.java to R.string.passwords_domain_manage,
+            RecoverableVaultActivity::class.java to R.string.passwords_recoverable_vault_passwords,
+            GpmPinRenewalActivity::class.java to R.string.passwords_pin_renewal_title,
+            EnclavePinActivity::class.java to R.string.passwords_enclave_pin_title,
+            RecoveryRestoreActivity::class.java to R.string.passwords_restore_passwords,
         )
     }
 }
