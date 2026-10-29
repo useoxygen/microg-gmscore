@@ -15,6 +15,26 @@ class AgentSignInAccessTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private val vault = "google:${UUID.randomUUID()}"
 
+    @Test fun lockedBackgroundDeliveryCannotConvertAskNeverOrFreshAuthenticationIntoAnAlwaysGrant() {
+        val access = AgentSignInAccess(context)
+        for (level in AgentSignInAccess.Level.values()) for (once in listOf(false, true)) for (authentication in listOf(false, true)) {
+            val tag = "locked-$level-$once-$authentication"
+            val initial = access.get(vault, tag)
+            access.setOwnerPolicy(vault, tag, initial.incarnation, level, authentication)
+            val state = access.get(vault, tag)
+            var delivered = false
+            val action = {
+                access.redeem(vault, tag, state.incarnation, once, deviceAuthenticated = authentication) {
+                    if (!AgentSignInLockPolicy.deliveryAllowed(true, true, once, authentication)) throw SecurityException()
+                    delivered = true
+                }
+            }
+            if (level == AgentSignInAccess.Level.ALWAYS && !once && !authentication) action()
+            else assertThrows(SecurityException::class.java) { action() }
+            assertEquals(level == AgentSignInAccess.Level.ALWAYS && !once && !authentication, delivered)
+        }
+    }
+
     @Test fun askRequiresOwnerOnceAndNeverOverridesOwnerOnce() {
         val access = AgentSignInAccess(context) { 1234 }
         val state = access.get(vault, "login")
