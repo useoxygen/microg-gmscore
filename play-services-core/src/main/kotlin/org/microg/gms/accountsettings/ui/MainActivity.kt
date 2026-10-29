@@ -8,6 +8,7 @@
 
 package org.microg.gms.accountsettings.ui
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
@@ -209,7 +210,7 @@ open class MainActivity : AppCompatActivity() {
 
         val ignoreAccount = intent?.getBooleanExtra(EXTRA_IGNORE_ACCOUNT, false) ?: false
         val accountName = if (ignoreAccount) null else {
-            val accounts = AccountManager.get(this).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+            val accounts = DeviceAccount.visible(this, AccountManager.get(this).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
             val accountName = intent.getStringExtra(EXTRA_ACCOUNT_NAME) ?: intent.getParcelableExtra<Account>("account")?.name ?: getSelectedAccountName()
             accounts.find { it.name.equals(accountName) }?.name
         }

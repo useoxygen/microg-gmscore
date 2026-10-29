@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.calendar
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.Manifest
 import android.accounts.*
 import android.content.ContentResolver
@@ -68,7 +69,7 @@ class CalendarSyncActivity : ComponentActivity() {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 @Suppress("UNUSED_EXPRESSION")
                 revision
-                val accounts = AccountManager.get(this@CalendarSyncActivity).getAccountsByType("com.google")
+                val accounts = DeviceAccount.visible(this@CalendarSyncActivity, AccountManager.get(this@CalendarSyncActivity).getAccountsByType("com.google"))
                     .sortedBy { it.name != intent.getStringExtra("account_name") }
                 if (accounts.isEmpty()) Text(stringResource(R.string.contacts_sync_no_accounts))
                 for (account in accounts.take(100)) {

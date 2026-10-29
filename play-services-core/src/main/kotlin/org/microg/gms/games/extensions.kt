@@ -5,6 +5,7 @@
 
 package org.microg.gms.games
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentValues
@@ -359,7 +360,7 @@ suspend fun requestGameToken(
 }
 
 suspend fun fetchAllSelfPlayers(context: Context): List<Pair<Account, String>> {
-    val googleAccounts = AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+    val googleAccounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
     return googleAccounts.mapNotNull { account ->
         val playerStr = GamesConfigurationService.getPlayer(context, account)
         val playerJSONObject = if (playerStr == null) {

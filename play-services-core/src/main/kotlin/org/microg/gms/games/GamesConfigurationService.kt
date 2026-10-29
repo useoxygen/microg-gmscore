@@ -5,6 +5,7 @@
 
 package org.microg.gms.games
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Service
@@ -104,7 +105,7 @@ class GamesConfigurationService : Service() {
 
     private fun getGlobalDefaultAccount(): Account? {
         val name = preferences.getString(PREF_ACCOUNT_GLOBAL, null)
-        val accounts: Array<Account> = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+        val accounts: Array<Account> = DeviceAccount.visible(this@GamesConfigurationService, accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
         for (account in accounts) {
             if (account.name.equals(name)) return account
         }
@@ -115,7 +116,7 @@ class GamesConfigurationService : Service() {
         if (packageName == null) return getGlobalDefaultAccount()
         val name = preferences.getString(PREF_ACCOUNT_PREFIX + getPackageNameSuffix(packageName), null)
         if (name.isNullOrBlank()) return getGlobalDefaultAccount()
-        val accounts: Array<Account> = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+        val accounts: Array<Account> = DeviceAccount.visible(this@GamesConfigurationService, accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
         for (account in accounts) {
             if (account.name.equals(name)) return account
         }

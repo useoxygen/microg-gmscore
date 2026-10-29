@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.signin
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
@@ -72,7 +73,7 @@ class AuthSignInActivity : AppCompatActivity() {
 
     private fun initView(packageName: String) {
         val accountManager = getSystemService<AccountManager>() ?: return finishResult(CommonStatusCodes.INTERNAL_ERROR, "No account manager")
-        val accounts = accountManager.getAccountsByType(DEFAULT_ACCOUNT_TYPE)
+        val accounts = DeviceAccount.visible(this, accountManager.getAccountsByType(DEFAULT_ACCOUNT_TYPE))
         if (accounts.isNotEmpty()) {
             val account = config?.options?.account
             if (account != null) {
@@ -129,7 +130,7 @@ class AuthSignInActivity : AppCompatActivity() {
         val binding = SigninPickerBinding.inflate(layoutInflater)
         binding.appName = packageManager.getApplicationLabel(packageName).toString()
         binding.appIcon = packageManager.getApplicationIcon(packageName)
-        val accounts = getSystemService<AccountManager>()!!.getAccountsByType(DEFAULT_ACCOUNT_TYPE) + Account(DEFAULT_ACCOUNT, DEFAULT_ACCOUNT_TYPE)
+        val accounts = DeviceAccount.visible(this, getSystemService<AccountManager>()!!.getAccountsByType(DEFAULT_ACCOUNT_TYPE)) + Account(DEFAULT_ACCOUNT, DEFAULT_ACCOUNT_TYPE)
         binding.pickerList.adapter = object : ArrayAdapter<Account>(this, 0, accounts) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val v = convertView ?: layoutInflater.inflate(R.layout.signin_account_row, parent, false)
@@ -237,7 +238,7 @@ class AuthSignInActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_CODE_ADD_ACCOUNT) {
             val accountManager = getSystemService<AccountManager>() ?: return finish()
-            val accounts = accountManager.getAccountsByType(DEFAULT_ACCOUNT_TYPE)
+            val accounts = DeviceAccount.visible(this, accountManager.getAccountsByType(DEFAULT_ACCOUNT_TYPE))
             if (accounts.isNotEmpty()) {
                 openAccountPicker(config?.packageName!!)
             } else {

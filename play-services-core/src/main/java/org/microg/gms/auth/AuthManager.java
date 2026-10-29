@@ -6,6 +6,7 @@
 package org.microg.gms.auth;
 
 import android.accounts.Account;
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.AccountManager;
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -120,8 +121,8 @@ public class AuthManager {
 
     public void setPermitted(boolean value) {
         setUserData(buildPermKey(), value ? "1" : "0");
-        if (SDK_INT >= 26 && value && packageName != null) {
-            // Make account persistently visible as we already granted access
+        if (SDK_INT >= 26 && value && packageName != null && DeviceAccount.INSTANCE.mayShow(context, getAccount())) {
+            // Make account persistently visible as we already granted access (never Cyclon's device account, CYC-927)
             accountManager.setAccountVisibility(getAccount(), packageName, AccountManager.VISIBILITY_VISIBLE);
         }
     }
@@ -220,8 +221,8 @@ public class AuthManager {
     public void setAuthToken(String service, String auth) {
         if (service.startsWith("weblogin:")) return;
         getAccountManager().setAuthToken(getAccount(), buildTokenKey(service), auth);
-        if (SDK_INT >= 26 && packageName != null && auth != null) {
-            // Make account persistently visible as we already granted access
+        if (SDK_INT >= 26 && packageName != null && auth != null && DeviceAccount.INSTANCE.mayShow(context, getAccount())) {
+            // Make account persistently visible as we already granted access (never Cyclon's device account, CYC-927)
             accountManager.setAccountVisibility(getAccount(), packageName, AccountManager.VISIBILITY_VISIBLE);
         }
     }

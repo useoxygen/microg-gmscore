@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package com.google.android.gms.credential.manager
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.os.Bundle
@@ -236,7 +237,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     Text(loginTitle(entry), style = MaterialTheme.typography.titleMedium)
                     DialogBody(stringResource(R.string.passwords_move_description), Modifier.padding(top = 8.dp, bottom = 8.dp))
                     CyclonHairline()
-                    val accounts = AccountManager.get(this@PasswordManagerActivity).getAccountsByType("com.google").toList()
+                    val accounts = DeviceAccount.visible(this@PasswordManagerActivity, AccountManager.get(this@PasswordManagerActivity).getAccountsByType("com.google")).toList()
                     (listOf<Account?>(null) + accounts).filter { it != selected }.forEach { destination ->
                         CyclonRow(destination?.name ?: stringResource(R.string.passwords_on_device),
                             stringResource(if (destination == null) R.string.passwords_on_device_summary else R.string.passwords_storage_account),
@@ -346,7 +347,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     @Composable
     private fun StoragePicker() {
         val p = Cyclon.palette
-        val accounts = AccountManager.get(this@PasswordManagerActivity).getAccountsByType("com.google").toList()
+        val accounts = DeviceAccount.visible(this@PasswordManagerActivity, AccountManager.get(this@PasswordManagerActivity).getAccountsByType("com.google")).toList()
         val open = storageOpen || !storageChosen
         val account = selected
         val title = when {
@@ -622,7 +623,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         unlocked = true; message = null
         afterAuthentication?.let { action -> afterAuthentication = null; action(); return }
         if (storageChosen) { perform { }; return }
-        val accounts = AccountManager.get(this).getAccountsByType("com.google")
+        val accounts = DeviceAccount.visible(this, AccountManager.get(this).getAccountsByType("com.google"))
         val requested = intent.getStringExtra(EXTRA_KEY_ACCOUNT_NAME)
         val expectedUserId = intent.getStringExtra("google_user_id")
         val account = if (requested != null) accounts.singleOrNull { it.name == requested } else accounts.singleOrNull()

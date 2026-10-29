@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.auth.credentials
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
@@ -76,7 +77,7 @@ class LegacyPasswordActivity : PasswordOwnerActivity() {
                 val value = request ?: throw SecurityException()
                 val loaded = withContext(Dispatchers.IO) {
                     LegacyPasswordRequests(this@LegacyPasswordActivity).recheck(value)
-                    val stores = listOf<Account?>(null) + AccountManager.get(this@LegacyPasswordActivity).getAccountsByType("com.google").toList()
+                    val stores = listOf<Account?>(null) + DeviceAccount.visible(this@LegacyPasswordActivity, AccountManager.get(this@LegacyPasswordActivity).getAccountsByType("com.google")).toList()
                     stores.flatMap { account ->
                         val userId = PasswordOwnerOperations(this@LegacyPasswordActivity).identity(account).userId
                         val repository = vault(account, userId)

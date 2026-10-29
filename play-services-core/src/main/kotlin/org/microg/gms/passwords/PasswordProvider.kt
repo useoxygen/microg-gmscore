@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.content.Context
 import androidx.annotation.RequiresApi
@@ -30,7 +31,7 @@ object PasswordProvider {
         val caller = PasswordCaller.from(request.callingAppInfo ?: throw SecurityException())
         val tickets = PasswordRequestTickets(context)
         return BeginCreateCredentialResponse.Builder().apply {
-            AccountManager.get(context).getAccountsByType("com.google").forEach { account ->
+            DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google")).forEach { account ->
                 val repo = runCatching { PasswordRepository(context, account) }.getOrNull()
                 if (repo?.enabled == true && repo.store.locked { it.load().metadata != null }) {
                     addCreateEntry(CreateEntry(account.name,
@@ -42,7 +43,7 @@ object PasswordProvider {
         }.build()
     }
     private fun vaults(context: Context): List<Pair<android.accounts.Account?, PasswordVault>> =
-        listOf(null to DevicePasswordVault(context)) + AccountManager.get(context).getAccountsByType("com.google").mapNotNull { account ->
+        listOf(null to DevicePasswordVault(context)) + DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google")).mapNotNull { account ->
             runCatching { account to PasswordRepository(context, account) }.getOrNull()
         }
 }

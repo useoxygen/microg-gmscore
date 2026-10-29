@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.signin
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Service
@@ -88,7 +89,7 @@ class SignInConfigurationService : Service() {
     private fun getDefaultAccount(packageName: String): Account? {
         val name = preferences.getString(DEFAULT_ACCOUNT_PREFIX + getPackageNameSuffix(packageName), null)
         if (name.isNullOrBlank()) return null
-        val accounts: Array<Account> = accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+        val accounts: Array<Account> = DeviceAccount.visible(this@SignInConfigurationService, accountManager.getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
         for (account in accounts) {
             if (account.name.equals(name)) return account
         }

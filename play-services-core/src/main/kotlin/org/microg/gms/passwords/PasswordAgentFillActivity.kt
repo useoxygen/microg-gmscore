@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.os.Bundle
@@ -69,7 +70,7 @@ class PasswordAgentFillActivity : PasswordOwnerActivity() {
             try {
                 val available = withContext(Dispatchers.IO) {
                     if (!selected.valid(this@PasswordAgentFillActivity)) throw SecurityException()
-                    val accounts: List<Account?> = listOf(null) + AccountManager.get(this@PasswordAgentFillActivity).getAccountsByType("com.google").take(20)
+                    val accounts: List<Account?> = listOf(null) + DeviceAccount.visible(this@PasswordAgentFillActivity, AccountManager.get(this@PasswordAgentFillActivity).getAccountsByType("com.google")).take(20)
                     accounts.flatMap { account -> runCatching {
                         val stableId = stableUserId(account)
                         val vault = vault(account)

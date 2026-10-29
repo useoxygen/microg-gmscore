@@ -36,7 +36,7 @@ internal class ServiceHealthReader(private val context: Context) {
             }?.getBoolean("connected")
         } else null
         val contacts = observe {
-            val accounts = AccountManager.get(context).getAccountsByType("com.google")
+            val accounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google"))
             check(accounts.size <= 100)
             accounts.map { account ->
                 val prefs = ContactSyncPreferences(context, account)
@@ -48,7 +48,7 @@ internal class ServiceHealthReader(private val context: Context) {
         }
         val masterSync = observe { ContentResolver.getMasterSyncAutomatically() }
         val calendars = observe {
-            val accounts = AccountManager.get(context).getAccountsByType("com.google")
+            val accounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google"))
             check(accounts.size <= 100)
             accounts.map { account ->
                 val prefs = CalendarSyncPreferences(context, account)

@@ -16,6 +16,7 @@
 
 package org.microg.gms.people;
 
+import org.microg.gms.cyclon.DeviceAccount;
 import android.Manifest;
 import android.accounts.Account;
 import android.accounts.AccountManager;
@@ -59,7 +60,7 @@ public class PeopleServiceImpl extends IPeopleService.Stub {
         AccountManager accountManager = AccountManager.get(context);
         Bundle accountMetadata = new Bundle();
         String accountType = AuthConstants.DEFAULT_ACCOUNT_TYPE;
-        for (Account account : accountManager.getAccountsByType(accountType)) {
+        for (Account account : DeviceAccount.INSTANCE.visible(context, accountManager.getAccountsByType(accountType))) {
             if (accountName == null || account.name.equals(accountName)) {
                 accountMetadata.putParcelable(account.name, new AccountMetadata());
             }

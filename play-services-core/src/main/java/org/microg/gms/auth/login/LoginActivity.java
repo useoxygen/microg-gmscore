@@ -16,6 +16,7 @@
 
 package org.microg.gms.auth.login;
 
+import org.microg.gms.cyclon.DeviceAccount;
 import android.accounts.Account;
 import android.accounts.AccountAuthenticatorResponse;
 import android.accounts.AccountManager;
@@ -552,7 +553,7 @@ public class LoginActivity extends AssistantActivity {
         @JavascriptInterface
         public final String getAccounts() {
             Log.d(TAG, "JSBridge: getAccounts");
-            Account[] accountsByType = accountManager.getAccountsByType(accountType);
+            Account[] accountsByType = DeviceAccount.INSTANCE.visible(LoginActivity.this, accountManager.getAccountsByType(accountType));
             JSONArray json = new JSONArray();
             for (Account account : accountsByType) {
                 json.put(account.name);

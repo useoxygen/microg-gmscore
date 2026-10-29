@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.credentials.provider
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.content.Intent
@@ -73,7 +74,7 @@ open class GoogleIdService : CredentialProviderService() {
         request: BeginGetCredentialRequest
     ): List<CredentialEntry> = option.candidateQueryData.toGoogleIdRequestParams().let { params ->
         val callingPackage = request.callingAppInfo?.packageName.orEmpty()
-        val accounts = AccountManager.get(this).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE)
+        val accounts = DeviceAccount.visible(this, AccountManager.get(this).getAccountsByType(AuthConstants.DEFAULT_ACCOUNT_TYPE))
         if (accounts.isEmpty()) {
             listOf(createCredentialEntry(
                 option = option,

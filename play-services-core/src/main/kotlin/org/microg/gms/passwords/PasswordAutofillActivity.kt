@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.cyclon.DeviceAccount
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.assist.AssistStructure
@@ -75,7 +76,7 @@ class PasswordAutofillActivity : PasswordOwnerActivity() {
                 else {
                     val available = withContext(Dispatchers.IO) {
                         val local = runCatching { DevicePasswordVault(this@PasswordAutofillActivity).acceptsAutomaticSave(prepared.first.realm) }.getOrDefault(false)
-                        local to AccountManager.get(this@PasswordAutofillActivity).getAccountsByType("com.google").filter {
+                        local to DeviceAccount.visible(this@PasswordAutofillActivity, AccountManager.get(this@PasswordAutofillActivity).getAccountsByType("com.google")).filter {
                             runCatching { PasswordRepository(this@PasswordAutofillActivity, it).acceptsAutomaticSave(prepared.first.realm) }.getOrDefault(false)
                         }
                     }
