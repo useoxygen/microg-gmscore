@@ -75,8 +75,12 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     private var currentPhase: PasswordEncryptionPhase? = null
     private val lease = UUID.randomUUID().toString()
     private var question by mutableStateOf<Question?>(null)
+    // Google's unlock covers this page, which then locks; the page stays and asks for the owner again on return.
+    private var recovering = false
+    private var recovered = false
     private val verifyLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (::account.isInitialized) refreshStatus(syncFirst = result.resultCode == RESULT_OK)
+        recovering = false
+        recovered = result.resultCode == RESULT_OK
     }
 
     /** A confirmation the owner answers before Google's page opens or a change is closed. */
@@ -112,10 +116,15 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
         if (!::account.isInitialized || initialized) return
         initialized = true
         ownerSessionStarted = true
-        refreshStatus()
+        refreshStatus(syncFirst = recovered)
+        recovered = false
     }
     override fun onOwnerAuthenticationFailed() { finish() }
-    override fun onOwnerLocked() { if (ownerSessionStarted) { invalidate(); finish() } }
+    override fun onOwnerLocked() {
+        if (!ownerSessionStarted) return
+        invalidate()
+        if (recovering) showText(R.string.passwords_unlock_description) else finish()
+    }
     override fun onResume() {
         super.onResume()
         if (::account.isInitialized && !initialized && ownsLease(lease) && !isFinishing) authenticateOwner()
@@ -193,7 +202,9 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
                     val finished = try {
                         if (state.operation == PasswordEncryptionOperation.ENROLL) {
                             val keys = state.deliveredKeys
+                            // Staged keys Google no longer proves (a newer epoch, no member proof) can never finish it.
                             try { keys.isNotEmpty() && repository.completeEnrollment(before, keys, state.id) }
+                            catch (_: ProtocolException) { false } catch (_: VaultLockedException) { false }
                             finally { keys.forEach(VersionedTrustedVaultKey::destroy) }
                         } else repository.reconcileDeletion(before, state.operation, state.id)
                     } catch (_: ConflictException) { false } catch (_: VaultResetException) { false }
@@ -240,8 +251,9 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     }
 
     /** Google's account unlock for this phone, the same recovery the Passwords screen offers for a locked account. */
-    private fun verifyIdentity() {
-        try { verify() } catch (_: Exception) { finish(); return }
+    private fun verifyIdentity() = runWork { repository, token ->
+        withContext(Dispatchers.IO) { repository.prepareRecovery() }
+        verify(token); recovering = true
         verifyLauncher.launch(Intent(this, GenericActivity::class.java)
             .putExtra(GenericActivity.EXTRA_ACCOUNT_NAME, account.name)
             .putExtra(GenericActivity.EXTRA_ACCOUNT_ID, accountId)

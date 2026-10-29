@@ -259,6 +259,18 @@ internal class PasswordEncryptionRepository(context: Context, private val accoun
     /** Unlocked keys from Google's account recovery reach the vault on its next sync. */
     fun syncSoon() { verify(); repository.schedule() }
 
+    /**
+     * Google's unlock reads the encryption this phone last synced. A sync first records encryption another device turned
+     * on (it stops at the lock, keeping the new metadata for recovery), so the unlock opens for the vault Google has now.
+     */
+    fun prepareRecovery() {
+        verify()
+        try { repository.refresh() } catch (_: VaultLockedException) {}
+        verify()
+        repository.trustedVaultRecoveryParent(expectedUserId)
+        verify()
+    }
+
     enum class Status { OFF, ON, ON_LOCKED, OTHER }
 
     /** Google's current encryption setting, from one read of the account's metadata, and whether this phone can use it. */
