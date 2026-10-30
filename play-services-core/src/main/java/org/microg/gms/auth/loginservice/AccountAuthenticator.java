@@ -124,6 +124,14 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
         return PLAY_STORE_TOKEN.equals(authTokenType) && isImageStore(context, requestingPackage, overridePackage);
     }
 
+    /** Records the grant for [authManager] (its account type set) when [isImageStorePlayToken], as tapping Allow would. */
+    static void grantImageStorePlayToken(Context context, AuthManager authManager, String requestingPackage, String overridePackage,
+            String authTokenType) {
+        if (isImageStorePlayToken(context, requestingPackage, overridePackage, authTokenType) && !authManager.isPermitted()) {
+            authManager.setPermitted(true);
+        }
+    }
+
     /**
      * Whether [requestingPackage] is an app store the image ships, asking to act as the Play Store. A system app can
      * only be updated with the signing identity of its preinstalled APK, so the package name of a system app identifies
@@ -172,9 +180,9 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
             if (isPackageOverrideAllowed(account, app, overridePackage, overrideCert)) {
                 authManager = new AuthManager(context, account.name, overridePackage, authTokenType);
                 authManager.setPackageSignature(PackageManagerUtilsKt.toHexString(PackageManagerUtilsKt.digest(overrideCert, "SHA1"), ""));
-                if (isImageStorePlayToken(context, app, overridePackage, authTokenType) && !authManager.isPermitted()) {
-                    authManager.setPermitted(true);
-                }
+                // The account type first: AuthManager keeps the first account it builds (com.google.work requests).
+                authManager.setAccountType(account.type);
+                grantImageStorePlayToken(context, authManager, app, overridePackage, authTokenType);
             } else {
                 Bundle result = new Bundle();
                 Intent i = new Intent(context, AskPackageOverrideActivity.class);

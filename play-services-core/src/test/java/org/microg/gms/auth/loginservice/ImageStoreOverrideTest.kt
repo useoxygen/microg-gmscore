@@ -2,11 +2,15 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.auth.loginservice
 
+import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.microg.gms.auth.AuthManager
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -61,5 +65,41 @@ class ImageStoreOverrideTest {
         install("org.example.store", system = true)
         assertFalse(AccountAuthenticator.isImageStorePlayToken(context, "org.example.store", "com.android.vending",
             AccountAuthenticator.PLAY_STORE_TOKEN))
+    }
+
+    private fun playManager(type: String, service: String = AccountAuthenticator.PLAY_STORE_TOKEN): AuthManager {
+        val account = Account("owner@example.com", type)
+        shadowOf(AccountManager.get(context)).addAccount(account)
+        return AuthManager(context, account.name, "com.android.vending", service).apply {
+            setPackageSignature("38918a453d07199354f8b19af05ec6562ced5788")
+            setAccountType(type)
+        }
+    }
+
+    // API 25: AuthManager.setPermitted's account-visibility call has no Robolectric implementation from API 26 on.
+    @Config(sdk = [25])
+    @Test fun theGrantIsRecordedOnTheRequestsOwnAccount() {
+        install("com.aurora.store", system = true)
+        for (type in listOf("com.google", "com.google.work")) {
+            val manager = playManager(type)
+            assertFalse(manager.isPermitted)
+            AccountAuthenticator.grantImageStorePlayToken(context, manager, "com.aurora.store", "com.android.vending",
+                AccountAuthenticator.PLAY_STORE_TOKEN)
+            assertTrue(manager.isPermitted)
+            assertEquals(type, manager.account.type)
+        }
+    }
+
+    @Test fun noGrantForAnotherTokenOrCaller() {
+        install("com.aurora.store", system = true)
+        install("org.example.store", system = true)
+        val other = playManager("com.google", "oauth2:https://www.googleapis.com/auth/gmail.readonly")
+        AccountAuthenticator.grantImageStorePlayToken(context, other, "com.aurora.store", "com.android.vending",
+            "oauth2:https://www.googleapis.com/auth/gmail.readonly")
+        assertFalse(other.isPermitted)
+        val stranger = playManager("com.google")
+        AccountAuthenticator.grantImageStorePlayToken(context, stranger, "org.example.store", "com.android.vending",
+            AccountAuthenticator.PLAY_STORE_TOKEN)
+        assertFalse(stranger.isPermitted)
     }
 }
