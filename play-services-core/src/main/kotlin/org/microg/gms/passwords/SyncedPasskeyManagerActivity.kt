@@ -9,6 +9,10 @@ import android.view.View
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -93,8 +97,13 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                     }
                     if (!state.reset) item { CyclonSectionLabel(stringResource(R.string.passwords_synced_passkeys)) }
                     if (!state.reset && state.entries.isEmpty()) item { CyclonNote(stringResource(R.string.passwords_passkey_management_empty)) }
-                    // One group: a list of passkeys is short, and a group cannot span lazy items.
-                    if (state.entries.isNotEmpty()) item { CyclonGroup { state.entries.forEach { entry -> key(entry.data.tag) { Column {
+                    // Lazy rows: an account can hold thousands of passkeys. Each row draws the group's rule above it, as
+                    // CyclonGroup does between its rows.
+                    itemsIndexed(state.entries, key = { _, entry -> entry.data.tag }) { index, entry ->
+                        val line = Cyclon.page.line
+                        CompositionLocalProvider(LocalCyclonInset provides CyclonTextInset) { Column(Modifier.fillMaxWidth().drawBehind {
+                            if (index > 0) drawRect(line, Offset(CyclonTextInset.toPx(), 0f), Size(size.width - 2 * CyclonTextInset.toPx(), 1.dp.toPx()))
+                        }) {
                         CyclonRow(entry.data.rpId, listOfNotNull(entry.data.username.ifEmpty { null }, entry.data.displayName.ifEmpty { null },
                             stringResource(R.string.passwords_passkey_management_hidden).takeIf { entry.data.hidden },
                             stringResource(R.string.passwords_passkey_management_shadowed).takeIf { entry.shadowed },
@@ -108,7 +117,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                                 deleting = entry
                             }
                         }
-                    } } } } }
+                    } } }
                 }
             }
             editing?.takeIf { unlocked }?.let { entry ->
