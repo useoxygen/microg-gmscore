@@ -113,6 +113,17 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
     /** App stores the Cyclon image ships, which act as the Play Store with the phone's account (CYC-838 fallback). */
     static final List<String> IMAGE_STORES = Arrays.asList("com.aurora.store");
 
+    /** The Play Store's own token, the one the image's store asks for as the Play Store. */
+    static final String PLAY_STORE_TOKEN = "oauth2:https://www.googleapis.com/auth/googleplay";
+
+    /**
+     * Whether the image's store asks for the Play Store's own token as the Play Store, which then needs no consent even
+     * with "Trust Google" off, as the Play Store asks no one on a Pixel (CYC-969). Any other token still asks.
+     */
+    static boolean isImageStorePlayToken(Context context, String requestingPackage, String overridePackage, String authTokenType) {
+        return PLAY_STORE_TOKEN.equals(authTokenType) && isImageStore(context, requestingPackage, overridePackage);
+    }
+
     /**
      * Whether [requestingPackage] is an app store the image ships, asking to act as the Play Store. A system app can
      * only be updated with the signing identity of its preinstalled APK, so the package name of a system app identifies
@@ -161,6 +172,9 @@ public class AccountAuthenticator extends AbstractAccountAuthenticator {
             if (isPackageOverrideAllowed(account, app, overridePackage, overrideCert)) {
                 authManager = new AuthManager(context, account.name, overridePackage, authTokenType);
                 authManager.setPackageSignature(PackageManagerUtilsKt.toHexString(PackageManagerUtilsKt.digest(overrideCert, "SHA1"), ""));
+                if (isImageStorePlayToken(context, app, overridePackage, authTokenType) && !authManager.isPermitted()) {
+                    authManager.setPermitted(true);
+                }
             } else {
                 Bundle result = new Bundle();
                 Intent i = new Intent(context, AskPackageOverrideActivity.class);

@@ -45,4 +45,21 @@ class ImageStoreOverrideTest {
         install("com.aurora.store", system = true)
         assertFalse(AccountAuthenticator.isImageStore(context, "com.aurora.store", "com.google.android.gm"))
     }
+
+    @Test fun theImagesStoreGetsThePlayStoresTokenWithoutConsent() {
+        install("com.aurora.store", system = true)
+        assertTrue(AccountAuthenticator.isImageStorePlayToken(context, "com.aurora.store", "com.android.vending",
+            AccountAuthenticator.PLAY_STORE_TOKEN))
+    }
+
+    @Test fun anyOtherTokenOrCallerStillNeedsConsent() {
+        install("com.aurora.store", system = true)
+        assertFalse(AccountAuthenticator.isImageStorePlayToken(context, "com.aurora.store", "com.android.vending",
+            "oauth2:https://www.googleapis.com/auth/gmail.readonly"))
+        assertFalse(AccountAuthenticator.isImageStorePlayToken(context, "com.aurora.store", "com.google.android.gm",
+            AccountAuthenticator.PLAY_STORE_TOKEN))
+        install("org.example.store", system = true)
+        assertFalse(AccountAuthenticator.isImageStorePlayToken(context, "org.example.store", "com.android.vending",
+            AccountAuthenticator.PLAY_STORE_TOKEN))
+    }
 }
