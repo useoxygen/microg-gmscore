@@ -41,6 +41,8 @@ class MigrationResultsActivity : ComponentActivity() {
             // second used to leave the screen exactly as it was (CYC-968).
             var retrying by remember { mutableStateOf(emptySet<String>()) }
             var retryNote by remember { mutableStateOf<String?>(null) }
+            // Retry feedback belongs to the transfer it was started in; another transfer starts without it.
+            LaunchedEffect(sessionId) { retrying = emptySet(); retryNote = null }
             DisposableEffect(Unit) {
                 val receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) { refresh++ }
@@ -72,7 +74,7 @@ class MigrationResultsActivity : ComponentActivity() {
                 scope.launch {
                     withContext(Dispatchers.IO) { queue.retry(id, packageName) }
                     // Only now: a refresh before the retry is recorded would report the old failure as its outcome.
-                    retrying = names
+                    if (sessionId == id) retrying = retrying + names
                     refresh++
                 }
             }
