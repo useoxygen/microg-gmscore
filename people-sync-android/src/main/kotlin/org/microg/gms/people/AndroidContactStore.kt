@@ -21,7 +21,15 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     private val prefs: ContactSyncPreferences, private val groupStore: AndroidGroupStore? = null,
     private val groupApi: GroupsApi? = null, private val backendOwner: String = OWNER,
     private val checkpointBinding: String = PeopleApi.READ_FIELDS, private val deferCheckpoint: Boolean = false) : ContactStore, PhotoStore {
-    companion object { const val OWNER = "microg-people-v1" }
+    companion object {
+        const val OWNER = "microg-people-v1"
+        // Photos installed before CYC-965 were inserted with IS_PRIMARY=1. AOSP's DataRowHandler.insert then runs
+        // setIsPrimary, an UPDATE whose data_updated trigger leaves the new row at DATA_VERSION=1 before anyone edits it.
+        internal const val LEGACY_PHOTO_MARKER = "microg-photo:"
+        // Installed without IS_PRIMARY, so the row keeps DATA_VERSION=0 until it is edited. The aggregator picks a
+        // contact's photo by IS_SUPER_PRIMARY and account priority, never by IS_PRIMARY, so nothing else changes.
+        internal const val PHOTO_MARKER = "microg-photo2:"
+    }
     private val scope = "${RawContacts.ACCOUNT_NAME}=? AND ${RawContacts.ACCOUNT_TYPE}=? AND ${RawContacts.DATA_SET} IS NULL"
     private val args get() = arrayOf(account.name, account.type)
     private fun syncUri(uri: Uri) = uri.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
@@ -412,10 +420,12 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         if (it.count != 1) throw UnreadableContact()
         if (it.isNull(3) && (it.isNull(4) || it.getBlob(4).isEmpty())) return@use ContactPhotos.NONE
         val marker = it.getString(2)
+        val version = it.getLong(1)
         // AOSP initializes DATA_VERSION=0 and increments it on every data update.
         // A sync-created immutable row carries its nonce only while unedited.
-        if (marker?.startsWith("microg-photo:") == true && it.getLong(1) == 0L) "sync:$marker"
-        else "${it.getLong(0)}:${it.getLong(1)}"
+        val untouched = marker != null && (marker.startsWith(PHOTO_MARKER) && version == 0L ||
+            marker.startsWith(LEGACY_PHOTO_MARKER) && version <= 1L)
+        if (untouched) "sync:$marker" else "${it.getLong(0)}:$version"
     }
     override fun photoContacts(): List<PhotoContact> = contacts().map { row ->
         val state = state(row.id)
@@ -456,6 +466,24 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     }
     override fun rejectPhoto(existing: PhotoContact) = rejected(existing.contact)
     private fun textDirty(contact: LocalContact) = contact.deleted || contact.unsupported || contact.fields != contact.baseline
+    /** Clears DIRTY on contacts that match their baseline in every field and photo (CYC-965: photos installed with
+     *  IS_PRIMARY read as edited, which kept them out of every pull and counted a conflict each pass). Only with labels
+     *  mapped, where a starred change is a memberships field; each row is cleared only if unchanged since it was read. */
+    fun clearUnchangedDirty(): Int {
+        check(prefs.mode != SyncMode.OFF)
+        if (groupStore == null) return 0
+        var cleared = 0
+        // Only owned DIRTY rows without a journal are read in full; a clean address book costs one query.
+        for (contact in readContacts("$scope AND ${RawContacts.SYNC4}=? AND ${RawContacts.DIRTY}!=0 AND ${RawContacts.SYNC3} IS NULL", args + backendOwner)) {
+            if (contact.resource == null || textDirty(contact) || photoDirty(contact)) continue
+            try {
+                provider.applyBatch(arrayListOf(assertVersion(contact), ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI))
+                    .withSelection(rawScope(contact.id), args).withValue(RawContacts.DIRTY, 0).withExpectedCount(1).build()))
+                cleared++
+            } catch (error: android.content.OperationApplicationException) { /* Edited meanwhile: the next pass decides. */ }
+        }
+        return cleared
+    }
     private fun photoState(json: JSONObject, token: String, remote: Person, hash: String?): JSONObject = json.apply {
         val ref = ContactPhotos.reference(remote)
         put("_photo", JSONObject().put("token", token).put("remote", ref ?: JSONObject.NULL).put("revision", ContactPhotos.revision(remote)).put("hash", hash ?: JSONObject.NULL))
@@ -477,13 +505,13 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
     override fun installPhoto(existing: PhotoContact, remote: Person, bytes: ByteArray?) {
         check(prefs.mode != SyncMode.OFF)
         val prepared = bytes?.let(PhotoEncoding::providerBytes)
-        val marker = "microg-photo:" + UUID.randomUUID()
+        val marker = PHOTO_MARKER + UUID.randomUUID()
         val token = if (prepared == null) ContactPhotos.NONE else "sync:$marker"
         val operations = arrayListOf(assertVersion(existing.contact), ContentProviderOperation.newDelete(syncUri(Data.CONTENT_URI))
             .withSelection("${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(existing.contact.id.toString(), Photo.CONTENT_ITEM_TYPE)).build())
         if (prepared != null) operations.add(ContentProviderOperation.newInsert(syncUri(Data.CONTENT_URI))
             .withValue(Data.RAW_CONTACT_ID, existing.contact.id).withValue(Data.MIMETYPE, Photo.CONTENT_ITEM_TYPE)
-            .withValue(Data.SYNC1, marker).withValue(Data.IS_PRIMARY, 1).withValue(Photo.PHOTO, prepared).build())
+            .withValue(Data.SYNC1, marker).withValue(Photo.PHOTO, prepared).build())
         val values = ContentValues().apply {
             put(RawContacts.SYNC2, photoState(state(existing.contact.id), token, remote, bytes?.let(ContactPhotos::hash)).toString())
             putNull(RawContacts.SYNC3) // Closes a lost-reply photo journal in the same batch.
