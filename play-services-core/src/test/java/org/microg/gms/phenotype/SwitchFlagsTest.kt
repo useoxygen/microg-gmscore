@@ -19,10 +19,12 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [35])
-class SwitchContactRestoreFlagsTest {
+class SwitchFlagsTest {
     private val provider get() = Robolectric.buildContentProvider(ConfigurationProvider::class.java).create().get()
     private val namespace = "com.google.android.apps.pixelmigrate"
     private val flagName = "D2d__enable_contacts_restore_to_google_account"
+    private val limitName = "backup_ios_app_matching_service_request_apps_limit"
+    private val expectedRows = mapOf(flagName to "true", limitName to "1000")
     private val uri get() = Uri.parse("content://com.google.android.gms.phenotype/$namespace")
 
     private fun rows(provider: ConfigurationProvider, uri: Uri = this.uri): Map<String, String> =
@@ -46,15 +48,15 @@ class SwitchContactRestoreFlagsTest {
             }
         })
 
-    @Test fun directProviderReadEnablesOnlyTheExistingGoogleDestinationPath() {
-        assertEquals(mapOf(flagName to "true"), rows(provider))
+    @Test fun directProviderReadEnablesTheGoogleDestinationPathAndRaisesTheAppMatchingLimit() {
+        assertEquals(expectedRows, rows(provider))
     }
 
     @Test fun foreignAndMalformedNamespacesDoNotReceiveContactFlags() {
         val provider = provider
         listOf("foreign.package", "$namespace#com.google.android.apps.restore", "$namespace.other").forEach {
-            assertNull(SwitchContactRestoreFlags.rows(it))
-            assertNull(SwitchContactRestoreFlags.flags(it))
+            assertNull(SwitchFlags.rows(it))
+            assertNull(SwitchFlags.flags(it))
             assertTrue(rows(provider, Uri.parse("content://com.google.android.gms.phenotype/$it")).isEmpty())
         }
         listOf("$uri/extra", "$uri?flag=$flagName", "$uri#fragment",
@@ -63,7 +65,7 @@ class SwitchContactRestoreFlagsTest {
         }
     }
 
-    @Test fun snapshotAndCommittedServiceReadsAgreeWithTheProviderOnTypedBoolean() {
+    @Test fun snapshotAndCommittedServiceReadsAgreeWithTheProviderOnTypedValues() {
         val service = PhenotypeServiceImpl("com.google.android.apps.restore")
         val expected = rows(provider)
         listOf(false, true).forEach { committed ->
@@ -77,11 +79,15 @@ class SwitchContactRestoreFlagsTest {
             val configuration = requireNotNull(actual).field4.single()
             assertEquals(0, configuration.id)
             assertTrue(configuration.removeNames.isEmpty())
-            val flag = configuration.flags.single()
-            assertEquals(Flag.DATA_TYPE_BOOL, flag.dataType)
-            assertEquals(0, flag.flagType)
-            assertTrue(flag.bool)
-            assertEquals(expected, mapOf(flag.name to flag.bool.toString()))
+            val flags = configuration.flags.associateBy { it.name }
+            assertEquals(expected.keys, flags.keys)
+            flags.values.forEach { assertEquals(0, it.flagType) }
+            assertEquals(Flag.DATA_TYPE_BOOL, flags.getValue(flagName).dataType)
+            assertTrue(flags.getValue(flagName).bool)
+            assertEquals(Flag.DATA_TYPE_LONG, flags.getValue(limitName).dataType)
+            assertEquals(1000L, flags.getValue(limitName).long)
+            assertEquals(expected, flags.mapValues { (_, flag) ->
+                if (flag.dataType == Flag.DATA_TYPE_LONG) flag.long.toString() else flag.bool.toString() })
         }
     }
 
@@ -111,6 +117,20 @@ class SwitchContactRestoreFlagsTest {
         assertThrows(IllegalArgumentException::class.java) { provider.update(uri, values, null, null) }
         assertThrows(IllegalArgumentException::class.java) { provider.delete(uri, null, null) }
         assertNull(provider.call("setFlagOverrides", namespace, null))
-        assertEquals(mapOf(flagName to "true"), rows(provider))
+        assertEquals(expectedRows, rows(provider))
+    }
+
+    @Test fun individualFlagReadReturnsTheRaisedAppMatchingLimit() {
+        val service = PhenotypeServiceImpl("com.google.android.apps.restore")
+        var called = false
+        service.getFlag(callback(9) { data ->
+            called = true
+            assertEquals(1, data.readInt())
+            val flag = Flag.CREATOR.createFromParcel(data)
+            assertEquals(limitName, flag.name)
+            assertEquals(Flag.DATA_TYPE_LONG, flag.dataType)
+            assertEquals(1000L, flag.long)
+        }, namespace, limitName, Flag.DATA_TYPE_LONG)
+        assertTrue(called)
     }
 }
