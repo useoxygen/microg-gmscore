@@ -37,6 +37,17 @@ class MigrationResultsActivity : ComponentActivity() {
             var selectionClosed by remember { mutableStateOf(false) }
             var refresh by remember { mutableStateOf(0) }
             var showSessions by remember { mutableStateOf(false) }
+            // The apps an owner Retry is still working on, and what to tell them: a Retry that failed again in under a
+            // second used to leave the screen exactly as it was (CYC-968).
+            var retrying by remember { mutableStateOf(emptySet<String>()) }
+            var retryNote by remember { mutableStateOf<String?>(null) }
+            // Retries tapped but not recorded yet (queue.retry can take a while): no outcome is reported before they are.
+            var submitting by remember { mutableStateOf(0) }
+            // Advanced by every Retry tap and registration: a refresh that read its receipts before one only reports
+            // an outcome if none happened since (refresh++ does not cancel a refresh already reading).
+            var retryGeneration by remember { mutableStateOf(0) }
+            // Retry feedback belongs to the transfer it was started in; another transfer starts without it.
+            LaunchedEffect(sessionId) { retrying = emptySet(); retryNote = null }
             DisposableEffect(Unit) {
                 val receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context, intent: Intent) { refresh++ }
@@ -45,6 +56,7 @@ class MigrationResultsActivity : ComponentActivity() {
                 onDispose { unregisterReceiver(receiver) }
             }
             LaunchedEffect(sessionId, refresh) {
+                val readAt = retryGeneration
                 val receipt = withContext(Dispatchers.IO) {
                     val ids = queue.sessions()
                     val id = sessionId?.takeIf { it in ids } ?: queue.currentSessionId()
@@ -58,12 +70,27 @@ class MigrationResultsActivity : ComponentActivity() {
                 retryable = receipt.second?.let { id ->
                     withContext(Dispatchers.IO) { queue.retryDocuments(id).mapNotNull { it.getString("package_name") }.toSet() }
                 }.orEmpty()
+                if (retrying.isNotEmpty() && submitting == 0 && retryGeneration == readAt) {
+                    MigrationResultText.retryOutcome(results.filter { it.getString("package_name") in retrying })
+                        ?.let { retryNote = it; retrying = emptySet() }
+                }
             }
             fun retry(packageName: String? = null) {
                 val id = sessionId ?: return
+                val names = packageName?.let(::setOf) ?: retryable
+                retryNote = "Trying again…"
+                submitting++
+                retryGeneration++
                 scope.launch {
-                    withContext(Dispatchers.IO) { queue.retry(id, packageName) }
-                    refresh++
+                    try {
+                        withContext(Dispatchers.IO) { queue.retry(id, packageName) }
+                        // Only now: a refresh before the retry is recorded would report the old failure as its outcome.
+                        if (sessionId == id) retrying = retrying + names
+                        retryGeneration++
+                    } finally {
+                        submitting--
+                        refresh++
+                    }
                 }
             }
             MaterialTheme {
@@ -84,7 +111,8 @@ class MigrationResultsActivity : ComponentActivity() {
                             }
                         }
                         if (results.isEmpty()) Text("No apps were selected for this transfer.")
-                        if (retryable.isNotEmpty()) Button(onClick = { retry() }) { Text("Retry failed apps") }
+                        if (retryable.isNotEmpty()) Button(onClick = { retry() }, enabled = retrying.isEmpty() && submitting == 0) { Text("Retry failed apps") }
+                        retryNote?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             items(results, key = { it.getString("package_name").orEmpty() }) { result ->
                                 val name = result.getString("package_name").orEmpty()
@@ -123,6 +151,16 @@ class MigrationResultsActivity : ComponentActivity() {
 }
 
 internal object MigrationResultText {
+    /** What an owner Retry came to once all its apps are settled; null while any is still being tried. */
+    fun retryOutcome(rows: List<Bundle>): String? {
+        if (rows.isEmpty() || !rows.all { it.getBoolean("terminal") }) return null
+        val failed = rows.filter { !it.getBoolean("installed") }
+        if (failed.isEmpty()) return if (rows.size == 1) "Retry worked: the app is installed." else "Retry worked: all ${rows.size} apps are installed."
+        val reasons = failed.map(::description).distinct()
+        val count = if (failed.size == 1) "1 app still couldn't be installed" else "${failed.size} apps still couldn't be installed"
+        return if (reasons.size == 1) "$count: ${reasons.single()}" else "$count. See the reasons below."
+    }
+
     fun description(result: Bundle): String {
         if (result.getBoolean("installed")) return "Installed and verified"
         return when (result.getString("error") ?: result.getString("errorCode")) {
