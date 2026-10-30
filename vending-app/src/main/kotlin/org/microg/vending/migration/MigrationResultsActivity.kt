@@ -43,6 +43,9 @@ class MigrationResultsActivity : ComponentActivity() {
             var retryNote by remember { mutableStateOf<String?>(null) }
             // Retries tapped but not recorded yet (queue.retry can take a while): no outcome is reported before they are.
             var submitting by remember { mutableStateOf(0) }
+            // Advanced by every Retry tap and registration: a refresh that read its receipts before one only reports
+            // an outcome if none happened since (refresh++ does not cancel a refresh already reading).
+            var retryGeneration by remember { mutableStateOf(0) }
             // Retry feedback belongs to the transfer it was started in; another transfer starts without it.
             LaunchedEffect(sessionId) { retrying = emptySet(); retryNote = null }
             DisposableEffect(Unit) {
@@ -53,6 +56,7 @@ class MigrationResultsActivity : ComponentActivity() {
                 onDispose { unregisterReceiver(receiver) }
             }
             LaunchedEffect(sessionId, refresh) {
+                val readAt = retryGeneration
                 val receipt = withContext(Dispatchers.IO) {
                     val ids = queue.sessions()
                     val id = sessionId?.takeIf { it in ids } ?: queue.currentSessionId()
@@ -66,7 +70,7 @@ class MigrationResultsActivity : ComponentActivity() {
                 retryable = receipt.second?.let { id ->
                     withContext(Dispatchers.IO) { queue.retryDocuments(id).mapNotNull { it.getString("package_name") }.toSet() }
                 }.orEmpty()
-                if (retrying.isNotEmpty() && submitting == 0) {
+                if (retrying.isNotEmpty() && submitting == 0 && retryGeneration == readAt) {
                     MigrationResultText.retryOutcome(results.filter { it.getString("package_name") in retrying })
                         ?.let { retryNote = it; retrying = emptySet() }
                 }
@@ -76,11 +80,13 @@ class MigrationResultsActivity : ComponentActivity() {
                 val names = packageName?.let(::setOf) ?: retryable
                 retryNote = "Trying again…"
                 submitting++
+                retryGeneration++
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) { queue.retry(id, packageName) }
                         // Only now: a refresh before the retry is recorded would report the old failure as its outcome.
                         if (sessionId == id) retrying = retrying + names
+                        retryGeneration++
                     } finally {
                         submitting--
                         refresh++
