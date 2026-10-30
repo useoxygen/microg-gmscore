@@ -59,7 +59,7 @@ class EnclavePinActivity : PasswordOwnerActivity() {
         render()
         authenticateOwner()
     }
-    private fun render() = setContent { CyclonMaterialTheme(glass = true) {
+    private fun render() = setContent { CyclonMaterialTheme(settingsLook = true) {
         EnclavePinScreen(account.name, unlocked, hasSecureScreenLock, busy, failed, status, change, arbitrary, pin, repeated,
             validInput(), confirmation,
             onBack = { cancel(); clearInput(); finish() }, onUnlock = ::authenticateOwner,
@@ -172,7 +172,7 @@ internal fun EnclavePinScreen(
                     enabled = !busy && inputValid) { onAsk(EnclavePinAction.SET) }
             if (status?.phase in setOf(EnclavePinPhase.VAULT_PREPARED, EnclavePinPhase.VAULT_CONFIRMED))
                 CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_continue), enabled = !busy) { onAsk(EnclavePinAction.CONTINUE) }
-            CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
             if (status?.id != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
                 onAsk(EnclavePinAction.CLOSE)
             }

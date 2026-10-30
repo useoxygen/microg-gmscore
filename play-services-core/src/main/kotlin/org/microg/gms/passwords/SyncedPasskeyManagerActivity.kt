@@ -53,14 +53,14 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme(glass = true) { PasswordOwnerSurface {
+        setContent { CyclonMaterialTheme(settingsLook = true) { PasswordOwnerSurface {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
                 item {
                     PasswordOwnerHeader(stringResource(R.string.passwords_synced_passkeys), account.name, onBack = ::finish)
                     if (!unlocked) PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner)
                     else {
                         CyclonNote(stringResource(R.string.passwords_passkey_management_description))
-                        PasswordOwnerActions { CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(refresh = true) } }
+                        PasswordOwnerActions { CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(refresh = true) } }
                     }
                     PasswordOwnerStatus(busy, message?.let { stringResource(it) })
                 }
@@ -93,7 +93,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                     }
                     if (!state.reset) item { CyclonSectionLabel(stringResource(R.string.passwords_synced_passkeys)) }
                     if (!state.reset && state.entries.isEmpty()) item { CyclonNote(stringResource(R.string.passwords_passkey_management_empty)) }
-                    // One island: a list of passkeys is short, and an island cannot span lazy items.
+                    // One group: a list of passkeys is short, and a group cannot span lazy items.
                     if (state.entries.isNotEmpty()) item { CyclonGroup { state.entries.forEach { entry -> key(entry.data.tag) { Column {
                         CyclonRow(entry.data.rpId, listOfNotNull(entry.data.username.ifEmpty { null }, entry.data.displayName.ifEmpty { null },
                             stringResource(R.string.passwords_passkey_management_hidden).takeIf { entry.data.hidden },
@@ -114,7 +114,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
             editing?.takeIf { unlocked }?.let { entry ->
                 var username by remember(entry.data.tag) { mutableStateOf(entry.data.username) }
                 var display by remember(entry.data.tag) { mutableStateOf(entry.data.displayName) }
-                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { editing = null }, title = { Text(stringResource(R.string.passwords_passkey_management_edit)) },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { editing = null }, title = { Text(stringResource(R.string.passwords_passkey_management_edit)) },
                     text = { PasswordDialogProtection(); Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(entry.data.rpId, style = MaterialTheme.typography.titleMedium)
                         OutlinedTextField(username, { if (it.length <= 1024) username = it }, Modifier.fillMaxWidth(), colors = cyclonFieldColors(),
@@ -133,7 +133,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
             }
             deleting?.takeIf { unlocked }?.let { entry ->
                 val group = deletionGroup(entry)
-                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { deleting = null }, title = { Text(stringResource(R.string.passwords_delete)) },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { deleting = null }, title = { Text(stringResource(R.string.passwords_delete)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         PasswordDialogText(stringResource(R.string.passwords_passkey_management_delete_warning, group.size))
@@ -145,7 +145,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                     dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { deleting = null } })
             }
             resolving?.takeIf { unlocked }?.let { retry -> screen?.operation?.let { operation ->
-                AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { resolving = null },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { resolving = null },
                     title = { Text(stringResource(if (retry) R.string.passwords_retry_owner else R.string.passwords_passkey_management_close)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -161,7 +161,7 @@ class SyncedPasskeyManagerActivity : PasswordOwnerActivity() {
                     } },
                     dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { resolving = null } })
             } }
-            if (closeCreate && unlocked) AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { closeCreate = false },
+            if (closeCreate && unlocked) AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { closeCreate = false },
                 title = { Text(stringResource(R.string.passwords_passkey_management_close_create)) },
                 text = { PasswordDialogProtection(); PasswordDialogText(stringResource(R.string.passwords_passkey_management_close_warning), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(android.R.string.ok), enabled = !busy) {

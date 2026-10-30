@@ -75,7 +75,7 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
             (requestScope == null || !intent.hasExtra("lifecycle_caller"))) { finish(); return }
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme(glass = true) {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             RecoveryRestoreScreen(account.name, domain, unlocked, hasSecureScreenLock, busy, failed, status,
                 status?.canFinish == true && matchesScope(status?.requestScopeDigest), choices, selected, secret, confirmation,
                 onBack = { cancel(); clearSecret(); finish() }, onUnlock = ::authenticateOwner,
@@ -236,7 +236,7 @@ internal fun RecoveryRestoreScreen(
                 }) { onAsk(RecoveryRestoreAction.RESTORE) }
             }
             if (canFinish) CyclonInkButton(stringResource(R.string.passwords_restore_finish), enabled = !busy) { onAsk(RecoveryRestoreAction.FINISH) }
-            CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
             if (status?.attemptId != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
                 onAsk(RecoveryRestoreAction.CLOSE)
             }

@@ -33,7 +33,7 @@ class PasswordBreachActivity : PasswordOwnerActivity() {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 26) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme(glass = true) {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             PasswordOwnerPage(stringResource(R.string.passwords_breach_assess), intent.getStringExtra("account"), onBack = { cancel(); finish() }) {
                 if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
                 CyclonNote(stringResource(R.string.passwords_breach_description))
@@ -44,7 +44,7 @@ class PasswordBreachActivity : PasswordOwnerActivity() {
                             Modifier.padding(horizontal = CyclonTextInset, vertical = 8.dp), color = Cyclon.palette.ink, size = 15)
                     }
                     CyclonProgress(true, Modifier.padding(horizontal = CyclonTextInset, vertical = 4.dp))
-                    PasswordOwnerActions { CyclonGlassButton(stringResource(android.R.string.cancel), onClick = ::cancel) }
+                    PasswordOwnerActions { CyclonSecondaryButton(stringResource(android.R.string.cancel), onClick = ::cancel) }
                 } else PasswordOwnerActions { CyclonInkButton(stringResource(R.string.passwords_breach_start), onClick = ::start) }
                 result?.let { value ->
                     PasswordOwnerText(stringResource(R.string.passwords_breach_result, value.checked, value.leaked), Modifier.padding(top = 8.dp))

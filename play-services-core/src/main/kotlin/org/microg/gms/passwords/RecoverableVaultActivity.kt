@@ -50,7 +50,7 @@ class RecoverableVaultActivity : PasswordOwnerActivity() {
         parent = intent.getStringExtra("password_parent")
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme(glass = true) {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             RecoverableVaultScreen(account.name, domain, unlocked, hasSecureScreenLock, busy, failed, status, confirmation,
                 onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner, onAsk = { confirmation = it },
                 onRefresh = { perform(RecoverableVaultAction.REFRESH) }, onConfirm = { action -> confirmation = null; perform(action) })
@@ -150,7 +150,7 @@ internal fun RecoverableVaultScreen(
             }
             if (status?.attemptId != null && !status.complete && status.phase != RecoverableVaultPhase.REVOKED)
                 CyclonInkButton(stringResource(R.string.passwords_recoverable_vault_continue), enabled = !busy) { onAsk(RecoverableVaultAction.CONTINUE) }
-            CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
             if (status?.attemptId != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
                 onAsk(RecoverableVaultAction.CLOSE)
             }

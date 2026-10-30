@@ -53,7 +53,7 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); userId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme(glass = true) {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             PasswordOwnerPage(stringResource(R.string.passwords_wifi_title), account.name, onBack = ::finish) {
                 if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
                 CyclonNote(stringResource(R.string.passwords_wifi_description))
@@ -66,7 +66,7 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
                     }))
                     if (access in setOf(PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED,
                             PasswordWifiAccess.LOCATION_DISABLED, PasswordWifiAccess.APP_OP_DENIED)) PasswordOwnerActions {
-                        CyclonGlassButton(stringResource(when (access) {
+                        CyclonSecondaryButton(stringResource(when (access) {
                             PasswordWifiAccess.LOCATION_PERMISSION_REQUIRED -> R.string.passwords_wifi_allow_location
                             PasswordWifiAccess.LOCATION_DISABLED -> R.string.passwords_wifi_open_location
                             else -> R.string.passwords_wifi_open_permissions
@@ -89,7 +89,7 @@ class PasswordWifiSyncActivity : PasswordOwnerActivity() {
                 }
                 PasswordOwnerStatus(busy, message?.let { stringResource(it) })
             }
-            prompt?.takeIf { unlocked }?.let { question -> AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { prompt = null },
+            prompt?.takeIf { unlocked }?.let { question -> AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { prompt = null },
                 title = { Text(stringResource(R.string.passwords_wifi_title)) },
                 text = { PasswordDialogProtection(); PasswordDialogText(stringResource(question), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(android.R.string.ok)) {

@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.R
 import org.microg.gms.cyclon.Cyclon
-import org.microg.gms.cyclon.CyclonGlassPage
+import org.microg.gms.cyclon.CyclonSettingsPage
 import org.microg.gms.cyclon.CyclonInkButton
 import org.microg.gms.cyclon.CyclonProgress
 import org.microg.gms.cyclon.CyclonTextAction
@@ -35,20 +35,20 @@ import org.microg.gms.cyclon.LocalCyclonInset
 
 /*
  * The frame of the pages Passwords' Settings opens (encryption, recovery, breach check, passkeys, sharing, Wi-Fi) and of
- * the recovery pages that Recovery's rows open: the manager's head (round back button, large title, the account under
- * it), then the page on Chat only's glass: rows on islands, sentences and pills between them. Use inside
- * CyclonMaterialTheme with glass on.
+ * the recovery pages that Recovery's rows open, in Android Settings' look: a Settings sub-page head (back mark and title in
+ * one row, the account under it), then flat rows in groups, sentences and pills between them. Use inside
+ * CyclonMaterialTheme with settingsLook on.
  */
 
-/** The glass page under the system bars, for a page that scrolls itself (a LazyColumn). */
+/** Settings' page under the system bars, for a page that scrolls itself (a LazyColumn). */
 @Composable
 internal fun PasswordOwnerSurface(content: @Composable () -> Unit) {
-    CyclonGlassPage(Modifier.fillMaxSize()) {
+    CyclonSettingsPage(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) { content() }
     }
 }
 
-/** Back above the page's title, and the Google account it is about under it. */
+/** Back and the page's title in one row, and the Google account it is about under it. */
 @Composable
 internal fun PasswordOwnerHeader(title: String, account: String?, onBack: () -> Unit) {
     CyclonTopBar(title, stringResource(R.string.cyclon_back), onBack, status = account?.takeIf { it.isNotBlank() })
@@ -81,7 +81,7 @@ internal fun PasswordOwnerStatus(busy: Boolean, message: String?) {
     message?.let { PasswordOwnerText(it) }
 }
 
-/** A sentence the owner should read: ink body text where words start, between islands or in one. */
+/** A sentence the owner should read: ink body text where words start, between groups or in one. */
 @Composable
 internal fun PasswordOwnerText(text: String, modifier: Modifier = Modifier) {
     Text(text, modifier.padding(horizontal = LocalCyclonInset.current, vertical = 8.dp),
@@ -110,7 +110,7 @@ internal fun PasswordDialogText(text: String, modifier: Modifier = Modifier, scr
 @Composable
 internal fun PasswordOwnerConfirm(title: String, account: String, messages: List<String>, confirmEnabled: Boolean,
                                   onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = onDismiss, title = { Text(title) },
+    AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = onDismiss, title = { Text(title) },
         text = {
             PasswordDialogProtection()
             Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -452,11 +452,11 @@ class PasswordEncryptionActivity : PasswordOwnerActivity() {
     private fun composed(scrolls: Boolean = true, onBack: () -> Unit = { unlessBusy { closeOwnerScreen() } },
                          content: @Composable ColumnScope.() -> Unit) = ComposeView(this).apply {
         val accountName = if (::account.isInitialized) account.name else null
-        setContent { CyclonMaterialTheme(glass = true) {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             if (scrolls) PasswordOwnerPage(stringResource(R.string.passwords_encryption_manage), accountName, onBack, content)
             // Above the WebView: only as tall as the header, so Google's page keeps the rest of the screen.
-            else CyclonGlassPage(Modifier.fillMaxWidth()) { Column { PasswordOwnerHeader(stringResource(R.string.passwords_encryption_manage), accountName, onBack); content() } }
-            question?.let { asked -> AlertDialog(containerColor = Cyclon.glass.dialog, onDismissRequest = { question = null },
+            else CyclonSettingsPage(Modifier.fillMaxWidth()) { Column { PasswordOwnerHeader(stringResource(R.string.passwords_encryption_manage), accountName, onBack); content() } }
+            question?.let { asked -> AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { question = null },
                 title = { Text(stringResource(asked.title)) },
                 text = { PasswordDialogProtection(); PasswordDialogText(stringResource(asked.message), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(asked.confirm)) { question = null; asked.accept() } },

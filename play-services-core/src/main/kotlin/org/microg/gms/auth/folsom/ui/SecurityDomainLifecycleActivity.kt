@@ -70,7 +70,7 @@ class SecurityDomainLifecycleActivity : PasswordOwnerActivity() {
             verifyIdentity()
         } catch (_: Exception) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme(glass = true) {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             SecurityDomainLifecycleScreen(account.name, domain, requested, intent.getStringExtra("lifecycle_caller"), externalPublic,
                 unlocked, hasSecureScreenLock, busy, message, status, confirmation, retry, closing,
                 onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner,
@@ -196,12 +196,12 @@ internal fun SecurityDomainLifecycleScreen(
                     actions.forEach { action ->
                         // Allowing this phone (or the requested step) leads; replacing the key and the reset stay quieter.
                         if (action == DomainLifecycleKind.ROTATE || action == DomainLifecycleKind.RESET && requested == null)
-                            CyclonGlassButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
+                            CyclonSecondaryButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
                         else CyclonInkButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
                     }
                 }
             }
-            CyclonGlassButton(stringResource(R.string.passwords_refresh), enabled = !busy && secure, onClick = onRefresh)
+            CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy && secure, onClick = onRefresh)
         }
     }
     if (confirmation != null || retry || closing) {
