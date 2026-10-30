@@ -78,6 +78,7 @@ class ContactSyncService : Service() {
                     val groupReport = GroupsSync(api, groups, currentMode).sync()
                     val store = AndroidContactStore(provider, account, prefs, groups, api, PrivatePeopleApi.OWNER, privatePeopleContext.binding, deferCheckpoint = true)
                     store.configureMode()
+                    store.clearUnchangedDirty().takeIf { it > 0 }?.let { Log.i("GmsContactSync", "stage=clear_unchanged_dirty cleared=$it") }
                     val contactReport = ContactsSync(api, store, currentMode).sync()
                     val photoReport = if (groupReport.skipped > 0 || contactReport.skipped > 0) SyncReport(0, 0, 0, 0)
                         else PhotosSync(api, api, store, mode = currentMode).sync()

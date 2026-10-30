@@ -114,7 +114,8 @@ class ContactProviderTest {
         })
         return id
     }
-    @Test fun privateGroupsMembershipsStarredAndEncodedPhotoDownloadRoundTrip() {
+    /** One synced private contact with labels and a downloaded photo, in Download only mode. */
+    private fun withPrivatePhotoContact(block: (android.content.ContentProviderClient, AndroidGroupStore, AndroidContactStore) -> Unit) {
         val bitmap = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
         val out = java.io.ByteArrayOutputStream(); bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out); bitmap.recycle()
         fun meta() = JSONObject().put("containerType", "CONTACT").put("encodedContainerId", "17")
@@ -141,9 +142,19 @@ class ContactProviderTest {
             val store = AndroidContactStore(provider, account, prefs, groups, api, PrivatePeopleApi.OWNER, api.context.binding)
             ContactsSync(api, store) { SyncMode.DOWNLOAD }.sync()
             PhotosSync(api, api, store) { SyncMode.DOWNLOAD }.sync()
+            block(provider, groups, store)
+        }
+    }
+    private fun photoRow(provider: android.content.ContentProviderClient, id: Long): Pair<Long, Long> = provider.query(Data.CONTENT_URI,
+        arrayOf(Data._ID, Data.DATA_VERSION), "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?",
+        arrayOf(id.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE), null)!!.use { assertTrue(it.moveToFirst()); it.getLong(0) to it.getLong(1) }
+    @Test fun privateGroupsMembershipsStarredAndEncodedPhotoDownloadRoundTrip() = withPrivatePhotoContact { provider, groups, store ->
+        run {
             val local = store.contacts().single()
             assertEquals(setOf("starred", "myContacts", "42").map(PrivatePeopleApi::groupResource).toSet(), Memberships.fromField(local.fields["memberships"]))
-            assertFalse(local.dirty); assertTrue(store.photoContacts().single().token.startsWith("sync:microg-photo:"))
+            assertFalse(local.dirty); assertTrue(store.photoContacts().single().token.startsWith("sync:microg-photo2:"))
+            // Installed without IS_PRIMARY: the provider's setIsPrimary UPDATE would bump the row before any edit (CYC-965).
+            assertEquals(0L, photoRow(provider, local.id).second)
             assertEquals("fixture-group-cursor", groups.groupCheckpoint()); assertEquals("fixture-contact-cursor", store.checkpoint())
             provider.query(ContactsContract.Groups.CONTENT_URI, arrayOf(ContactsContract.Groups.AUTO_ADD, ContactsContract.Groups.FAVORITES, ContactsContract.Groups.GROUP_IS_READ_ONLY),
                 "${ContactsContract.Groups._ID}=?", arrayOf(groups.id(PrivatePeopleApi.groupResource("myContacts")).toString()), null)!!.use {
@@ -155,6 +166,40 @@ class ContactProviderTest {
             catch (expected: GroupInUse) { }
             assertEquals(3, Memberships.fromField(store.contacts().single().fields["memberships"]).size)
         }
+    }
+    @Test fun legacyPrimaryPhotoReadsUntouchedAndItsFalseDirtyClears() = withPrivatePhotoContact { provider, _, store ->
+        val local = store.contacts().single()
+        val photo = ContactsContract.CommonDataKinds.Photo.PHOTO
+        val syncData = Data.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
+        val syncRaw = RawContacts.CONTENT_URI.buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build()
+        val bytes = provider.query(Data.CONTENT_URI, arrayOf(photo), "${Data._ID}=?", arrayOf(photoRow(provider, local.id).first.toString()), null)!!
+            .use { assertTrue(it.moveToFirst()); it.getBlob(0) }
+        // A photo installed before CYC-965: legacy marker, inserted with IS_PRIMARY=1, and the false DIRTY it caused.
+        val legacy = AndroidContactStore.LEGACY_PHOTO_MARKER + UUID.randomUUID()
+        provider.delete(syncData, "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=?", arrayOf(local.id.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE))
+        provider.insert(syncData, ContentValues().apply {
+            put(Data.RAW_CONTACT_ID, local.id); put(Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+            put(Data.SYNC1, legacy); put(Data.IS_PRIMARY, 1); put(photo, bytes)
+        })
+        assertEquals("the provider's setIsPrimary bumps the new row", 1L, photoRow(provider, local.id).second)
+        val state = provider.query(syncRaw, arrayOf(RawContacts.SYNC2), "${RawContacts._ID}=?", arrayOf(local.id.toString()), null)!!
+            .use { assertTrue(it.moveToFirst()); JSONObject(it.getString(0)) }
+        state.getJSONObject("_photo").put("token", "sync:$legacy")
+        assertEquals(1, provider.update(syncRaw, ContentValues().apply { put(RawContacts.SYNC2, state.toString()); put(RawContacts.DIRTY, 1) },
+            "${RawContacts._ID}=?", arrayOf(local.id.toString())))
+        assertTrue(store.contacts().single().dirty)
+        assertEquals("sync:$legacy", store.photoContacts().single().token)
+        assertEquals(1, store.clearUnchangedDirty())
+        assertFalse(store.contacts().single().dirty)
+        assertEquals(0, store.clearUnchangedDirty())
+        // An actual photo edit on the phone still counts, and keeps its DIRTY.
+        val edited = bytes.copyOf().also { it[it.size - 1] = (it[it.size - 1] + 1).toByte() }
+        assertEquals(1, resolver.update(Data.CONTENT_URI, ContentValues().apply { put(photo, edited) }, "${Data._ID}=?",
+            arrayOf(photoRow(provider, local.id).first.toString())))
+        assertNotEquals("sync:$legacy", store.photoContacts().single().token)
+        assertTrue(store.contacts().single().dirty)
+        assertEquals(0, store.clearUnchangedDirty())
+        assertTrue(store.contacts().single().dirty)
     }
     @Test fun privateBackendKeepsLegacyRowsAndCursorsSeparateAndForcesReadOnly() {
         resolver.acquireContentProviderClient(ContactsContract.AUTHORITY)!!.use { provider ->

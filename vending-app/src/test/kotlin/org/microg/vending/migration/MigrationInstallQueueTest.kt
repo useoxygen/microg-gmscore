@@ -173,6 +173,44 @@ class MigrationInstallQueueTest {
         queue.dispatch("org.example.app")
         assertEquals(false, installs.last())
     }
+    /** CYC-968 (10-30): the last apps of a copy failed with not_signed_in while the store's session was being lost. */
+    @Test fun aStoreWithoutASessionKeepsTheAppPendingAndIsAskedToPrepareOne() {
+        val installs = mutableListOf<Boolean>()
+        val controls = mutableListOf<Int>()
+        var signedIn = false
+        val queue = MigrationInstallQueue(context, { operation, _ ->
+            controls += operation
+            if (operation == 6) signedIn = true
+            Bundle().apply { putBoolean("owner_account_fallback", true); putBoolean("ready", true) }
+        }) { operation, name ->
+            when {
+                operation == 3 -> state("none")
+                signedIn -> state("queued")
+                else -> MigrationInstallQueue.unavailable(name, "not_signed_in")
+            }
+        }.apply { sentOptions = { operation, options -> if (operation == 2) installs += options!!.getBoolean("owner_account_approved") } }
+        queue.select(selected())
+        assertFalse(queue.dispatch("org.example.app")) // anonymous: no session, try the Google account
+        assertFalse(queue.dispatch("org.example.app")) // Google account: no session either, ask Aurora to prepare
+        assertTrue(queue.throttled)
+        assertEquals(1, controls.count { it == 6 })
+        assertFalse(queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single().getBoolean("terminal"))
+        assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(false, true, true), installs)
+        assertTrue(queue.pending().isEmpty())
+    }
+    @Test fun aStoreThatNeverGetsASessionShowsTheOwnerARetryableFailure() {
+        val controls = mutableListOf<Int>()
+        val queue = MigrationInstallQueue(context, { operation, _ -> controls += operation; Bundle() }) { operation, name ->
+            if (operation == 3) state("none") else MigrationInstallQueue.unavailable(name, "session_expired")
+        }
+        queue.select(selected())
+        repeat(3) { queue.dispatch("org.example.app") }
+        assertEquals(3, controls.count { it == 6 })
+        val failed = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertEquals("session_expired", failed.getString("error")); assertTrue(failed.getBoolean("terminal"))
+        assertEquals(listOf("org.example.app"), queue.retryDocuments(queue.currentSessionId()!!).map { it.getString("package_name") })
+    }
     @Test fun theGoogleAccountErrorIsNotReplacedByAnOlderFailedDownload() {
         val installs = mutableListOf<Boolean>()
         val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, name ->

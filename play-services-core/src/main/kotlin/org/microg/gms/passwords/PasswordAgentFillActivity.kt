@@ -26,6 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owner-selected account and entry; passwords are never drawn, copied, persisted in a ticket or sent to an agent. */
 class PasswordAgentFillActivity : PasswordOwnerActivity() {
+    // Core opens this picker for its fill path; Core decides the display.
+    override val ownerDisplayOnly get() = false
     private class Choice(val account: Account?, val selection: NativePasswordSelection, val username: String, val incarnation: String)
     private var choices by mutableStateOf<List<Choice>>(emptyList())
     private var busy by mutableStateOf(false)

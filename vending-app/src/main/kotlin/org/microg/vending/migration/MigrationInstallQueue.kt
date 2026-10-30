@@ -373,8 +373,12 @@ internal class MigrationInstallQueue(private val context: Context,
                 .putBoolean("$id:$name:owner_retry", ownerRetry).putInt("$id:$name:throttle_count", 0).commit())
             return false
         }
-        if (requestedInstall && result.getString("error") == RATE_LIMITED) {
+        val sessionFailure = requestedInstall && result.getString("error") in SESSION_FAILURES
+        if (requestedInstall && (result.getString("error") == RATE_LIMITED || sessionFailure)) {
             // Aurora refused before enqueuing, so this is no uncertain install. Keep it pending, and keep the owner's retry.
+            // Without a store session (and after the Google account fallback), ask Aurora to prepare one before the next
+            // round instead of failing the app: on 10-30 a copy's last apps failed this way while the store recovered.
+            if (sessionFailure) control(6)
             throttled = true
             val refusals = prefs.getInt("$id:$name:throttle_count", 0) + 1
             check(prefs.edit().putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:owner_retry", ownerRetry)
@@ -418,6 +422,8 @@ internal class MigrationInstallQueue(private val context: Context,
         private const val MAX_RATE_LIMITED = 3
         /** The anonymous session's own limits: Play throttling it, not listing the app in its country, or no session. */
         private val ANONYMOUS_FAILURES = setOf(RATE_LIMITED, "not_found", "anonymous_sign_in_required", "not_signed_in", "session_expired")
+        /** The store had no usable session: says nothing about the app, so it is tried again like a rate limit. */
+        private val SESSION_FAILURES = setOf("anonymous_sign_in_required", "not_signed_in", "session_expired")
         /** Aurora's codes for Play refusing the anonymous session a download it had queued (DownloadFailure). */
         private val DOWNLOAD_REFUSALS = setOf("app_not_purchased", RATE_LIMITED)
         private val ACTIVE = setOf("queued", "purchasing", "downloading", "verifying", "completed", "installing")
