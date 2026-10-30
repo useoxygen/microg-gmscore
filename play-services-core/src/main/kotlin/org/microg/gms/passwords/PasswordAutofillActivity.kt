@@ -30,6 +30,8 @@ import java.security.MessageDigest
 
 @RequiresApi(28)
 class PasswordAutofillActivity : PasswordOwnerActivity() {
+    // Opened for the requesting app, on whatever display that app uses.
+    override val ownerDisplayOnly get() = false
     private var saving by mutableStateOf(false)
     private var busy by mutableStateOf(false)
     private var failed by mutableStateOf(false)

@@ -29,6 +29,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** Protected explicit resolution of one finite consent-sync attempt. No recovery keys enter the UI or result. */
 class FolsomConsentActivity : PasswordOwnerActivity() {
+    // Opened for the requesting app, on whatever display that app uses.
+    override val ownerDisplayOnly get() = false
     private lateinit var account: Account
     private lateinit var accountId: String
     private lateinit var domain: String

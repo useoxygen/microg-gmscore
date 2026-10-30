@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** Private owner decision. A Binder resolution supplies only a bounded public-key request, never a private key. */
 class SecurityDomainLifecycleActivity : PasswordOwnerActivity() {
+    // Also opened for apps (key retrieval), on whatever display they use.
+    override val ownerDisplayOnly get() = false
     private lateinit var account: Account
     private lateinit var accountId: String
     private var domain by mutableStateOf("chromesync")

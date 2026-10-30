@@ -29,6 +29,8 @@ import java.security.MessageDigest
 
 /** Native legacy API resolution. No caller-provided realm or default Google account. */
 class LegacyPasswordActivity : PasswordOwnerActivity() {
+    // Opened for the requesting app, on whatever display that app uses.
+    override val ownerDisplayOnly get() = false
     private class Choice(val account: Account?, val userId: String?, val label: String, val username: String, val original: ByteArray?)
     private var request: LegacyPasswordRequest? = null
     private var choices by mutableStateOf<List<Choice>>(emptyList())
