@@ -22,6 +22,8 @@ import org.microg.gms.passwords.VersionedTrustedVaultKey
 
 /** Account-bound recovery is a foreground owner action. Password recovery never offers a reset. */
 class GenericActivity : PasswordOwnerActivity() {
+    // Also opened for apps (passkeys, key retrieval), on whatever display they use.
+    override val ownerDisplayOnly get() = false
     private lateinit var account: Account
     private lateinit var accountId: String
     private lateinit var domain: String

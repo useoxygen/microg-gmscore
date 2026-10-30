@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
 
 @RequiresApi(34)
 class PasswordProxyActivity : PasswordOwnerActivity() {
+    // Opened for the requesting app, on whatever display that app uses.
+    override val ownerDisplayOnly get() = false
     private var get: ProviderGetCredentialRequest? = null
     private var create: ProviderCreateCredentialRequest? = null
     override fun onCreate(savedInstanceState: Bundle?) {

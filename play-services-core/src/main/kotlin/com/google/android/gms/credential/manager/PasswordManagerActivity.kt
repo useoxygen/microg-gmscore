@@ -112,12 +112,15 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
             afterAuthentication = { perform {
                 val bytes = exportBytes ?: throw VaultLockedException()
                 try {
+                    if (!hasSecureScreenLock) throw VaultLockedException()
                     ownerOperations.verifyIdentity(exportIdentity ?: throw VaultLockedException())
                     if (SystemClock.elapsedRealtime() - exportCreatedMillis !in 0..300_000L) throw VaultLockedException()
                     contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: throw ProtocolException()
                 } finally { clearExport() }
             } }
-            authenticateOwner()
+            // Exports write every password out, so confirm the screen lock again right before writing.
+            if (hasSecureScreenLock) reconfirmOwner()
+            else { afterAuthentication = null; clearExport(); message = R.string.passwords_export_needs_lock }
         }
     }
 
@@ -147,7 +150,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                         val account = selected
                         val identity = ownerOperations.identity(account)
                         accessEditing = null
-                        perform {
+                        val save = { perform {
                                 if (!ownerOperations.identity(account).same(identity)) throw VaultLockedException()
                                 val repo = repository(account)
                                 fun set(current: PasswordData) {
@@ -161,7 +164,12 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                                     is DevicePasswordVault -> repo.withAgentEntry(entry.id, ::set)
                                     else -> throw VaultLockedException()
                                 }
-                        }
+                        } }
+                        // Always skips asking, so it needs the screen lock right now. Without a lock,
+                        // only Cyclon's own sign-in card can grant it.
+                        if (level != AgentSignInAccess.Level.ALWAYS) save()
+                        else if (!hasSecureScreenLock) message = R.string.passwords_assistant_always_on_card
+                        else { afterAuthentication = { if (hasSecureScreenLock) save() }; reconfirmOwner() }
                     })
             } }
             if (editorOpen && unlocked) PasswordEditor(editing, onDismiss = { editorOpen = false; editing = null }) { data ->
@@ -507,11 +515,15 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         }
         if (enabled) {
             CyclonSectionLabel(stringResource(R.string.passwords_section_backup))
-            CyclonRow(stringResource(R.string.passwords_export), onClick = { archiveImport = false }, enabled = !busy)
+            CyclonRow(stringResource(R.string.passwords_export), onClick = {
+                if (hasSecureScreenLock) archiveImport = false else message = R.string.passwords_export_needs_lock
+            }, enabled = !busy)
             CyclonRow(stringResource(R.string.passwords_import), onClick = {
                 csvImportRequested = false; importDocument.launch(arrayOf("application/octet-stream", "application/x-cyclon-passwords"))
             }, enabled = !busy)
-            CyclonRow(stringResource(R.string.passwords_export_csv), onClick = { csvExportOpen = true }, enabled = !busy)
+            CyclonRow(stringResource(R.string.passwords_export_csv), onClick = {
+                if (hasSecureScreenLock) csvExportOpen = true else message = R.string.passwords_export_needs_lock
+            }, enabled = !busy)
             CyclonRow(stringResource(R.string.passwords_import_csv), onClick = {
                 csvImportRequested = true; importDocument.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
             }, enabled = !busy)
@@ -642,7 +654,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         }
     }
     override fun onOwnerAuthenticationFailed() {
-        clearExport(); afterAuthentication = null
+        // A cancelled re-confirmation clears access, so show the locked page again.
+        onOwnerLocked(); clearExport(); afterAuthentication = null
         message = R.string.passwords_access_failed
     }
     override fun onOwnerLocked() {
@@ -806,7 +819,9 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
                     style = MaterialTheme.typography.bodySmall, color = p.muted)
                 Column(Modifier.selectableGroup()) {
                     AgentSignInAccess.Level.values().forEach { level ->
-                        val choiceEnabled = !busy && !(requireAuthentication && level == AgentSignInAccess.Level.ALWAYS)
+                        val always = level == AgentSignInAccess.Level.ALWAYS
+                        if (always && !hasSecureScreenLock && current != level) return@forEach
+                        val choiceEnabled = !busy && !(requireAuthentication && always) && (hasSecureScreenLock || !always)
                         CyclonChoiceRow(stringResource(accessLabel(level)), stringResource(when (level) {
                             AgentSignInAccess.Level.ASK -> R.string.passwords_assistant_ask_description
                             AgentSignInAccess.Level.ALWAYS -> R.string.passwords_assistant_always_description
@@ -814,6 +829,8 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
                         }), selected == level, enabled = choiceEnabled, inset = 0.dp) { selected = level }
                     }
                 }
+                if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_assistant_always_on_card),
+                    Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = p.ink)
                 CyclonHairline()
                 CyclonSwitchRow(stringResource(R.string.passwords_assistant_require_authentication),
                     stringResource(R.string.passwords_assistant_require_authentication_description), requireAuthentication,
