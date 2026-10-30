@@ -157,6 +157,20 @@ class MigrationResultsTest {
         assertEquals("Finish app selection", notification.extras.getCharSequence("android.title").toString())
         assertFalse(notification.extras.getCharSequence("android.text").toString().contains("installed"))
     }
+    private fun row(name: String, status: String, error: String? = null, installed: Boolean = false, terminal: Boolean = true) =
+        result(status, error, installed).apply { putString("package_name", name); putBoolean("terminal", terminal) }
+    /** CYC-968: a Retry that failed again in under a second used to leave the screen as it was. */
+    @Test fun retrySaysWhatItCameToOnceItsAppsSettle() {
+        assertNull(MigrationResultText.retryOutcome(listOf(row("a", "queued", terminal = false))))
+        assertEquals("Retry worked: the app is installed.",
+            MigrationResultText.retryOutcome(listOf(row("a", "installed", installed = true))))
+        val stillNoSession = MigrationResultText.retryOutcome(listOf(row("a", "unavailable", "not_signed_in"),
+            row("b", "installed", installed = true)))!!
+        assertTrue(stillNoSession.startsWith("1 app still couldn't be installed: "))
+        assertTrue(stillNoSession.contains("anonymous session"))
+        assertEquals("2 apps still couldn't be installed. See the reasons below.", MigrationResultText.retryOutcome(
+            listOf(row("a", "unavailable", "not_signed_in"), row("b", "failed", "not_found"))))
+    }
     @Test fun failureReasonsAreReadableAndDoNotExposeUnknownCodes() {
         assertTrue(MigrationResultText.description(result("failed", "not_found")).contains("not available"))
         assertTrue(MigrationResultText.description(result("failed", "rate_limited")).contains("Try again later"))
