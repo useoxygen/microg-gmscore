@@ -211,12 +211,14 @@ internal class MigrationInstallQueue(private val context: Context,
         putBoolean("terminal", prefs.getBoolean("$id:$name:terminal", false))
     }
     /**
-     * The lowest version that counts as installed: the one Switch listed, until the app falls back to the phone's Google
-     * account. Play then offers the version it has for that account, which can be older (10-30 on customer-98: Blindmate,
-     * Tinder, Tesla Robotaxi and tricount failed with selected_version_unavailable); as on a Pixel, that version is the app.
+     * The lowest version that counts as installed: the one Switch listed, or, once the app fell back to the phone's
+     * Google account, the version Play offered that account for the download. That one can be older (10-30 on
+     * customer-98: Blindmate, Tinder, Tesla Robotaxi and tricount failed with selected_version_unavailable); as on a
+     * Pixel, it is the app. Until the account's offer is known, an older copy already on the phone does not count.
      */
-    private fun expectedVersion(id: String, name: String): Long =
-        if (prefs.getBoolean("$id:$name:owner_account", false)) 0 else prefs.getLong("$id:$name:expectedVersion", 0)
+    private fun expectedVersion(id: String, name: String): Long = prefs.getLong("$id:$name:expectedVersion", 0).let { listed ->
+        if (prefs.getBoolean("$id:$name:owner_account", false)) prefs.getLong("$id:$name:ownerVersion", listed) else listed
+    }
     private fun satisfies(name: String, result: Bundle, id: String): Boolean = result.getBoolean("installed") &&
         result.getLong("installed_version_code") >= expectedVersion(id, name)
     private fun removed(result: Bundle): Boolean = result.getString("status") == "installed" &&
@@ -256,7 +258,7 @@ internal class MigrationInstallQueue(private val context: Context,
                 if (ownerFallback == null) return@map result.apply { putBoolean("installed", false); putBoolean("terminal", false) }
                 // Play refused the anonymous session the download itself (run 6: "not purchased / unavailable in your
                 // country"). As on a Pixel, Play may install with the phone's Google account: queue it once more for that.
-                check(prefs.edit().putStringSet("$id:pending", pending(id) + name).putBoolean("$id:$name:owner_account", true)
+                check(prefs.edit().putStringSet("$id:pending", pending(id) + name).putBoolean("$id:$name:owner_account", true).remove("$id:$name:ownerVersion")
                     .putBoolean("$id:$name:uncertain", false).putBoolean("$id:$name:terminal", false)
                     .putInt("$id:$name:throttle_count", 0).commit())
                 result.putString("status", "queued"); result.remove("error"); result.remove("errorCode")
@@ -364,7 +366,8 @@ internal class MigrationInstallQueue(private val context: Context,
                 .putBoolean("$id:$name:owner_retry", false).commit())
             requestedInstall = true
             bridge(2, name, options(id).apply {
-                putLong("minimum_version_code", expectedVersion(id, name))
+                // The Google account gets whatever version Play offers it; the reply's version_code becomes the floor.
+                putLong("minimum_version_code", if (prefs.getBoolean("$id:$name:owner_account", false)) 0 else expectedVersion(id, name))
                 putBoolean("owner_approved_retry", ownerRetry)
                 putBoolean("owner_account_approved", prefs.getBoolean("$id:$name:owner_account", false))
                 // summary() queues a download Play refuses the anonymous session once more for the Google account.
@@ -372,11 +375,14 @@ internal class MigrationInstallQueue(private val context: Context,
             })
         } else current
         if (result.getString("error") == "store_unavailable") return false
+        if (requestedInstall && prefs.getBoolean("$id:$name:owner_account", false) && result.getLong("version_code") > 0) {
+            check(prefs.edit().putLong("$id:$name:ownerVersion", result.getLong("version_code")).commit())
+        }
         if (requestedInstall && result.getString("error") in ANONYMOUS_FAILURES &&
             !prefs.getBoolean("$id:$name:owner_account", false) && ownerAccountSupported()) {
             // As on a Pixel, Play may install with the phone's Google account. Aurora refused before enqueuing,
             // so this is no uncertain install: keep the app pending for the account and keep the owner's retry.
-            check(prefs.edit().putBoolean("$id:$name:owner_account", true).putBoolean("$id:$name:uncertain", false)
+            check(prefs.edit().putBoolean("$id:$name:owner_account", true).remove("$id:$name:ownerVersion").putBoolean("$id:$name:uncertain", false)
                 .putBoolean("$id:$name:owner_retry", ownerRetry).putInt("$id:$name:throttle_count", 0).commit())
             return false
         }
