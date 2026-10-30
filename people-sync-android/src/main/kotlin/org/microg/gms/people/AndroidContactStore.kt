@@ -473,8 +473,9 @@ class AndroidContactStore(private val provider: ContentProviderClient, private v
         check(prefs.mode != SyncMode.OFF)
         if (groupStore == null) return 0
         var cleared = 0
-        for (contact in contacts()) {
-            if (!contact.dirty || contact.pending != null || contact.resource == null || textDirty(contact) || photoDirty(contact)) continue
+        // Only owned DIRTY rows without a journal are read in full; a clean address book costs one query.
+        for (contact in readContacts("$scope AND ${RawContacts.SYNC4}=? AND ${RawContacts.DIRTY}!=0 AND ${RawContacts.SYNC3} IS NULL", args + backendOwner)) {
+            if (contact.resource == null || textDirty(contact) || photoDirty(contact)) continue
             try {
                 provider.applyBatch(arrayListOf(assertVersion(contact), ContentProviderOperation.newUpdate(syncUri(RawContacts.CONTENT_URI))
                     .withSelection(rawScope(contact.id), args).withValue(RawContacts.DIRTY, 0).withExpectedCount(1).build()))
