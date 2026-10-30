@@ -108,6 +108,43 @@ class MigrationInstallQueueTest {
             assertEquals(2, installs.size)
         }
     }
+    /** 10-30 customer-98: the Google account's Play offered an older version than Switch listed (Blindmate, Tinder). */
+    @Test fun theGoogleAccountFallbackAcceptsTheVersionPlayOffersThatAccount() {
+        val minimums = mutableListOf<Long>()
+        var download = state("none")
+        val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, _ ->
+            if (operation == 3) Bundle(download)
+            else (if (minimums.size == 1) state("queued") else state("queued").apply { putLong("version_code", 9) }).also { download = it }
+        }.apply { sentOptions = { operation, options -> if (operation == 2) minimums += options!!.getLong("minimum_version_code") } }
+        queue.select(selected())
+        assertTrue(queue.dispatch("org.example.app"))
+        download = state("failed").apply { putString("errorCode", "app_not_purchased") }
+        queue.summary()
+        assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(12L, 0L), minimums)
+        download = state("installed", installed = true, version = 9).apply { putLong("version_code", 9) }
+        val installed = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertTrue(installed.getBoolean("installed")); assertTrue(installed.getBoolean("terminal"))
+        assertEquals("installed", installed.getString("status"))
+    }
+    /** Review of #80: falling back to the Google account alone must not certify an older copy already on the phone. */
+    @Test fun anOlderCopyAlreadyOnThePhoneStillWaitsForTheGoogleAccountsOffer() {
+        val minimums = mutableListOf<Long>()
+        val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, name ->
+            when {
+                operation == 3 -> state("none", installed = true, version = 8)
+                minimums.size == 1 -> MigrationInstallQueue.unavailable(name, "not_found")
+                else -> state("queued").apply { putLong("version_code", 10) }
+            }
+        }.apply { sentOptions = { operation, options -> if (operation == 2) minimums += options!!.getLong("minimum_version_code") } }
+        queue.select(selected())
+        assertFalse(queue.dispatch("org.example.app"))
+        assertEquals(setOf("org.example.app"), queue.pending())
+        assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(12L, 0L), minimums)
+        val waiting = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertFalse(waiting.getBoolean("installed")); assertFalse(waiting.getBoolean("all_installed"))
+    }
     @Test fun anAuroraThatCannotBeAskedLeavesTheRefusedDownloadOpenUntilItCan() {
         var reachable = false
         var download = state("none")
