@@ -108,6 +108,24 @@ class MigrationInstallQueueTest {
             assertEquals(2, installs.size)
         }
     }
+    /** 10-30 customer-98: the Google account's Play offered an older version than Switch listed (Blindmate, Tinder). */
+    @Test fun theGoogleAccountFallbackAcceptsTheVersionPlayOffersThatAccount() {
+        val minimums = mutableListOf<Long>()
+        var download = state("none")
+        val queue = MigrationInstallQueue(context, { _, _ -> Bundle().apply { putBoolean("owner_account_fallback", true) } }) { operation, _ ->
+            if (operation == 3) Bundle(download) else state("queued").also { download = it }
+        }.apply { sentOptions = { operation, options -> if (operation == 2) minimums += options!!.getLong("minimum_version_code") } }
+        queue.select(selected())
+        assertTrue(queue.dispatch("org.example.app"))
+        download = state("failed").apply { putString("errorCode", "app_not_purchased") }
+        queue.summary()
+        assertTrue(queue.dispatch("org.example.app"))
+        assertEquals(listOf(12L, 0L), minimums)
+        download = state("installed", installed = true, version = 9)
+        val installed = queue.summary().getParcelableArray("cyclon_app_results")!!.map { it as Bundle }.single()
+        assertTrue(installed.getBoolean("installed")); assertTrue(installed.getBoolean("terminal"))
+        assertEquals("installed", installed.getString("status"))
+    }
     @Test fun anAuroraThatCannotBeAskedLeavesTheRefusedDownloadOpenUntilItCan() {
         var reachable = false
         var download = state("none")
