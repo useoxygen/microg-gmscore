@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.accounts.Account
+import org.microg.gms.cyclon.Cyclon
 import android.accounts.AccountManager
 import android.content.Intent
 import android.os.Bundle
@@ -50,7 +51,7 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
         account = Account(name, "com.google"); accountId = id
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             PasswordOwnerPage(stringResource(R.string.passwords_recovery_enroll_phone), account.name, onBack = { cancel(); finish() }) {
                 if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
                 CyclonNote(stringResource(R.string.passwords_recovery_enroll_description))
@@ -62,7 +63,7 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
                     if (status != null && status?.attemptId == null) CyclonInkButton(stringResource(R.string.passwords_recovery_enroll_allow), enabled = !busy) {
                         confirmation = RecoveryEnrollmentAction.ENROLL
                     }
-                    CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(RecoveryEnrollmentAction.REFRESH) }
+                    CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy) { perform(RecoveryEnrollmentAction.REFRESH) }
                     if (status?.attemptId != null && status?.phase != EnrollmentPhase.ENROLLED) {
                         CyclonTextAction(stringResource(R.string.passwords_retry_owner), enabled = !busy) { confirmation = RecoveryEnrollmentAction.RETRY }
                         CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
@@ -71,17 +72,19 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
                     }
                 }
                 CyclonSectionLabel(stringResource(R.string.passwords_section_recovery))
-                RecoveryRow(R.string.passwords_recovery_enroll_recover, ::recoverWithGoogle)
-                RecoveryRow(R.string.passwords_domain_manage, ::manageRecovery)
-                RecoveryRow(R.string.passwords_recoverable_vault_passwords) { manageRecoverableVault("chromesync") }
-                RecoveryRow(R.string.passwords_recoverable_vault_passkeys) { manageRecoverableVault("hw_protected") }
-                RecoveryRow(R.string.passwords_pin_renewal_title, ::managePinRecovery)
-                RecoveryRow(R.string.passwords_enclave_pin_title, ::manageEnclavePin)
-                RecoveryRow(R.string.passwords_restore_passwords) { restoreRecovery("chromesync") }
-                RecoveryRow(R.string.passwords_restore_passkeys) { restoreRecovery("hw_protected") }
+                CyclonGroup {
+                    RecoveryRow(R.string.passwords_recovery_enroll_recover, ::recoverWithGoogle)
+                    RecoveryRow(R.string.passwords_domain_manage, ::manageRecovery)
+                    RecoveryRow(R.string.passwords_recoverable_vault_passwords) { manageRecoverableVault("chromesync") }
+                    RecoveryRow(R.string.passwords_recoverable_vault_passkeys) { manageRecoverableVault("hw_protected") }
+                    RecoveryRow(R.string.passwords_pin_renewal_title, ::managePinRecovery)
+                    RecoveryRow(R.string.passwords_enclave_pin_title, ::manageEnclavePin)
+                    RecoveryRow(R.string.passwords_restore_passwords) { restoreRecovery("chromesync") }
+                    RecoveryRow(R.string.passwords_restore_passkeys) { restoreRecovery("hw_protected") }
+                }
             }
             confirmation?.takeIf { unlocked }?.let { action ->
-                AlertDialog(onDismissRequest = { confirmation = null },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { confirmation = null },
                     title = { Text(stringResource(R.string.passwords_recovery_enroll_phone)) },
                     text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(account.name, style = MaterialTheme.typography.titleMedium, color = Cyclon.palette.ink)
@@ -98,7 +101,7 @@ class PasswordRecoveryEnrollmentActivity : PasswordOwnerActivity() {
         } }
         authenticateOwner()
     }
-    /** A page this one opens, as a Settings row. */
+    /** A page this one opens, as a row of the Recovery group. */
     @Composable private fun RecoveryRow(title: Int, open: () -> Unit) {
         CyclonRow(stringResource(title), onClick = open, enabled = !busy, trailing = { CyclonChevron() })
     }

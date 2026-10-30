@@ -17,34 +17,38 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.google.android.gms.R
 import org.microg.gms.cyclon.Cyclon
+import org.microg.gms.cyclon.CyclonSettingsPage
 import org.microg.gms.cyclon.CyclonInkButton
 import org.microg.gms.cyclon.CyclonProgress
 import org.microg.gms.cyclon.CyclonTextAction
+import org.microg.gms.cyclon.CyclonTextInset
 import org.microg.gms.cyclon.CyclonTopBar
+import org.microg.gms.cyclon.LocalCyclonInset
 
 /*
  * The frame of the pages Passwords' Settings opens (encryption, recovery, breach check, passkeys, sharing, Wi-Fi) and of
- * the recovery pages that Recovery's rows open: the manager's compact top bar (‹, title, Space Mono account line), then
- * the page in Cyclon rows and pills. Use inside CyclonMaterialTheme.
+ * the recovery pages that Recovery's rows open, in Android Settings' look: a Settings sub-page head (back mark and title in
+ * one row, the account under it), then flat rows in groups, sentences and pills between them. Use inside
+ * CyclonMaterialTheme with settingsLook on.
  */
 
-/** Paper under the system bars, for a page that scrolls itself (a LazyColumn). */
+/** Settings' page under the system bars, for a page that scrolls itself (a LazyColumn). */
 @Composable
 internal fun PasswordOwnerSurface(content: @Composable () -> Unit) {
-    Surface(Modifier.fillMaxSize()) {
+    CyclonSettingsPage(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) { content() }
     }
 }
 
-/** ‹ Back beside the page's title, and the Google account it is about under it. */
+/** Back and the page's title in one row, and the Google account it is about under it. */
 @Composable
 internal fun PasswordOwnerHeader(title: String, account: String?, onBack: () -> Unit) {
     CyclonTopBar(title, stringResource(R.string.cyclon_back), onBack, status = account?.takeIf { it.isNotBlank() })
@@ -73,21 +77,22 @@ internal fun PasswordOwnerLocked(secure: Boolean, enabled: Boolean = true, onUnl
 /** The thin progress bar and the page's latest result, as on the Passwords page. */
 @Composable
 internal fun PasswordOwnerStatus(busy: Boolean, message: String?) {
-    CyclonProgress(busy, Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+    CyclonProgress(busy, Modifier.padding(horizontal = CyclonTextInset, vertical = 4.dp))
     message?.let { PasswordOwnerText(it) }
 }
 
-/** A sentence the owner should read: ink body text at the page's margins. */
+/** A sentence the owner should read: ink body text where words start, between groups or in one. */
 @Composable
 internal fun PasswordOwnerText(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.ink)
+    Text(text, modifier.padding(horizontal = LocalCyclonInset.current, vertical = 8.dp),
+        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp), color = Cyclon.palette.ink)
 }
 
 /** The page's pills, wrapping at large font sizes. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun PasswordOwnerActions(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    FlowRow(modifier.padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
+    FlowRow(modifier.padding(horizontal = CyclonTextInset, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
 }
 
@@ -105,7 +110,7 @@ internal fun PasswordDialogText(text: String, modifier: Modifier = Modifier, scr
 @Composable
 internal fun PasswordOwnerConfirm(title: String, account: String, messages: List<String>, confirmEnabled: Boolean,
                                   onConfirm: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) },
+    AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = onDismiss, title = { Text(title) },
         text = {
             PasswordDialogProtection()
             Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

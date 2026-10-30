@@ -75,7 +75,7 @@ class RecoveryRestoreActivity : PasswordOwnerActivity() {
             (requestScope == null || !intent.hasExtra("lifecycle_caller"))) { finish(); return }
         if (!validAccount()) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             RecoveryRestoreScreen(account.name, domain, unlocked, hasSecureScreenLock, busy, failed, status,
                 status?.canFinish == true && matchesScope(status?.requestScopeDigest), choices, selected, secret, confirmation,
                 onBack = { cancel(); clearSecret(); finish() }, onUnlock = ::authenticateOwner,
@@ -198,13 +198,15 @@ internal fun RecoveryRestoreScreen(
         if (status != null && status.attemptId == null) {
             CyclonSectionLabel(stringResource(R.string.passwords_restore_backups))
             if (choices.isEmpty()) CyclonNote(stringResource(R.string.passwords_restore_empty))
-            Column(Modifier.selectableGroup()) {
-                choices.forEachIndexed { index, choice ->
-                    val chosen = selected?.let { MessageDigest.isEqual(it.digest, choice.digest) } == true
-                    CyclonChoiceRow(stringResource(R.string.passwords_restore_backup, index + 1),
-                        listOfNotNull(stringResource(restoreSecretLabel(choice, pattern = true)),
-                            choice.remainingAttempts?.let { stringResource(R.string.passwords_restore_attempts, it) }).joinToString("\n"),
-                        chosen, enabled = !busy) { onSelect(choice) }
+            else CyclonGroup {
+                Column(Modifier.selectableGroup()) {
+                    choices.forEachIndexed { index, choice ->
+                        val chosen = selected?.let { MessageDigest.isEqual(it.digest, choice.digest) } == true
+                        CyclonChoiceRow(stringResource(R.string.passwords_restore_backup, index + 1),
+                            listOfNotNull(stringResource(restoreSecretLabel(choice, pattern = true)),
+                                choice.remainingAttempts?.let { stringResource(R.string.passwords_restore_attempts, it) }).joinToString("\n"),
+                            chosen, enabled = !busy) { onSelect(choice) }
+                    }
                 }
             }
             selected?.let { choice ->
@@ -212,7 +214,7 @@ internal fun RecoveryRestoreScreen(
                     CyclonNote(stringResource(R.string.passwords_restore_pattern_description))
                     AndroidView(factory = { context -> RecoveryPatternView(context, onPattern).also(onPatternView) },
                         update = { it.isEnabled = !busy },
-                        modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth().aspectRatio(1f).semantics { password() })
+                        modifier = Modifier.padding(horizontal = CyclonTextInset).fillMaxWidth().aspectRatio(1f).semantics { password() })
                 } else OutlinedTextField(value = String(secret), onValueChange = { value ->
                     if (!busy && value.length <= 1024 && (choice.format != 1 || value.all { it in '0'..'9' }) &&
                         (choice.vaultType != 3 || choice.format != 1 || value.length <= 6) &&
@@ -222,7 +224,7 @@ internal fun RecoveryRestoreScreen(
                 }, enabled = !busy, singleLine = true, label = { Text(stringResource(restoreSecretLabel(choice, pattern = false))) },
                     visualTransformation = PasswordVisualTransformation(), colors = cyclonFieldColors(),
                     keyboardOptions = KeyboardOptions(keyboardType = if (choice.format == 1) KeyboardType.NumberPassword else KeyboardType.Password),
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp).fillMaxWidth().semantics { password() })
+                    modifier = Modifier.padding(horizontal = CyclonFieldInset, vertical = 6.dp).fillMaxWidth().semantics { password() })
             }
         }
         PasswordOwnerActions {
@@ -234,7 +236,7 @@ internal fun RecoveryRestoreScreen(
                 }) { onAsk(RecoveryRestoreAction.RESTORE) }
             }
             if (canFinish) CyclonInkButton(stringResource(R.string.passwords_restore_finish), enabled = !busy) { onAsk(RecoveryRestoreAction.FINISH) }
-            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
+            CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy, onClick = onRefresh)
             if (status?.attemptId != null) CyclonTextAction(stringResource(R.string.passwords_recovery_enroll_close_attempt), enabled = !busy) {
                 onAsk(RecoveryRestoreAction.CLOSE)
             }

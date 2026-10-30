@@ -2,6 +2,7 @@
 package org.microg.gms.passwords
 
 import android.accounts.AccountManager
+import org.microg.gms.cyclon.Cyclon
 import android.os.Bundle
 import android.view.View
 import androidx.activity.compose.setContent
@@ -42,7 +43,7 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 28) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             PasswordOwnerPage(stringResource(R.string.passwords_share), intent.getStringExtra("account"), onBack = ::finish) {
                 if (!unlocked) {
                     PasswordOwnerLocked(hasSecureScreenLock, enabled = !busy, onUnlock = ::authenticateOwner)
@@ -50,51 +51,62 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
                     return@PasswordOwnerPage
                 }
                 CyclonNote(stringResource(R.string.passwords_sharing_family_description))
-                PasswordOwnerActions { CyclonLineButton(stringResource(R.string.passwords_sharing_refresh), enabled = !busy) { perform {} } }
+                PasswordOwnerActions { CyclonSecondaryButton(stringResource(R.string.passwords_sharing_refresh), enabled = !busy) { perform {} } }
                 PasswordOwnerStatus(busy, stringResource(R.string.passwords_sharing_failed).takeIf { failed })
                 screen?.let { state ->
                     if (!state.keysAvailable) PasswordOwnerText(stringResource(R.string.passwords_sharing_unavailable))
                     if (state.recipients.none { it.eligible }) PasswordOwnerText(stringResource(R.string.passwords_sharing_no_recipients))
                     val shareable = state.passwords.filter { it.data.canFillRealm(it.data.realm) }
-                    if (shareable.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_saved))
-                    shareable.forEach { entry ->
-                        CyclonRow(sharingTitle(entry.data.realm), entry.data.username.ifEmpty { null }, summaryLines = 1,
-                            leading = { CyclonMonogram(sharingTitle(entry.data.realm)) }, trailing = {
-                                CyclonTextAction(stringResource(R.string.passwords_sharing_share),
-                                    enabled = !busy && state.keysAvailable && state.recipients.any { it.eligible }) {
-                                    requireOwner(); selectedPassword = entry
-                                }
-                            })
-                    }
-                    if (state.incoming.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_sharing_incoming))
-                    state.incoming.forEach { incoming ->
-                        CyclonRow(incoming.invitation.sender.name.ifEmpty { incoming.invitation.sender.email },
-                            incoming.invitation.sender.email.takeIf { incoming.invitation.sender.name.isNotEmpty() }, divider = false,
-                            leading = { CyclonMonogram(incoming.invitation.sender.name.ifEmpty { incoming.invitation.sender.email }) })
-                        incoming.passwords.forEach { CyclonRow(sharingTitle(it.realm), it.username.ifEmpty { null }, divider = false, inset = 70.dp, summaryLines = 1) }
-                        Row(Modifier.padding(start = 54.dp)) {
-                            CyclonTextAction(stringResource(R.string.passwords_sharing_receive), enabled = !busy) { requireOwner(); selectedIncoming = incoming }
-                            CyclonTextAction(stringResource(R.string.passwords_sharing_dismiss), enabled = !busy) { requireOwner(); dismissIncoming = incoming }
+                    if (shareable.isNotEmpty()) {
+                        CyclonSectionLabel(stringResource(R.string.passwords_saved))
+                        CyclonGroup {
+                            shareable.forEach { entry ->
+                                CyclonRow(sharingTitle(entry.data.realm), entry.data.username.ifEmpty { null }, summaryLines = 1,
+                                    leading = { CyclonMonogram(sharingTitle(entry.data.realm)) }, trailing = {
+                                        CyclonTextAction(stringResource(R.string.passwords_sharing_share),
+                                            enabled = !busy && state.keysAvailable && state.recipients.any { it.eligible }) {
+                                            requireOwner(); selectedPassword = entry
+                                        }
+                                    })
+                            }
                         }
-                        CyclonHairline(Modifier.padding(start = 20.dp))
+                    }
+                    if (state.incoming.isNotEmpty()) {
+                        CyclonSectionLabel(stringResource(R.string.passwords_sharing_incoming))
+                        CyclonGroup { state.incoming.forEach { incoming -> Column {
+                            // The shared logins and the actions line up with the sender's name, after the monogram.
+                            val under = LocalCyclonInset.current + 50.dp
+                            CyclonRow(incoming.invitation.sender.name.ifEmpty { incoming.invitation.sender.email },
+                                incoming.invitation.sender.email.takeIf { incoming.invitation.sender.name.isNotEmpty() },
+                                leading = { CyclonMonogram(incoming.invitation.sender.name.ifEmpty { incoming.invitation.sender.email }) })
+                            incoming.passwords.forEach { CyclonRow(sharingTitle(it.realm), it.username.ifEmpty { null }, inset = under, summaryLines = 1) }
+                            Row(Modifier.padding(start = under - 16.dp, bottom = 4.dp)) {
+                                CyclonTextAction(stringResource(R.string.passwords_sharing_receive), enabled = !busy) { requireOwner(); selectedIncoming = incoming }
+                                CyclonTextAction(stringResource(R.string.passwords_sharing_dismiss), enabled = !busy) { requireOwner(); dismissIncoming = incoming }
+                            }
+                        } } }
                     }
                     val open = state.operations.filter { !it.phase.terminal }
-                    if (open.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_changes))
-                    open.forEach { operation ->
-                        if (operation.kind == SharingOperationKind.SEND) {
-                            if (operation.phase in setOf(SharingOperationPhase.PREPARED, SharingOperationPhase.LAUNCHED, SharingOperationPhase.INDETERMINATE))
-                                CyclonRow(stringResource(R.string.passwords_sharing_delivery_pending), trailing = {
-                                    CyclonTextAction(stringResource(R.string.passwords_resolve), enabled = !busy) { requireOwner(); resolveSend = operation }
-                                })
-                            else CyclonRow(stringResource(R.string.passwords_sharing_delivery_pending))
+                    if (open.isNotEmpty()) {
+                        CyclonSectionLabel(stringResource(R.string.passwords_changes))
+                        CyclonGroup {
+                            open.forEach { operation ->
+                                if (operation.kind == SharingOperationKind.SEND) {
+                                    if (operation.phase in setOf(SharingOperationPhase.PREPARED, SharingOperationPhase.LAUNCHED, SharingOperationPhase.INDETERMINATE))
+                                        CyclonRow(stringResource(R.string.passwords_sharing_delivery_pending), trailing = {
+                                            CyclonTextAction(stringResource(R.string.passwords_resolve), enabled = !busy) { requireOwner(); resolveSend = operation }
+                                        })
+                                    else CyclonRow(stringResource(R.string.passwords_sharing_delivery_pending))
+                                }
+                                else CyclonRow(stringResource(R.string.passwords_sharing_finish_receiving), onClick = { perform { it.resume(operation.id) } },
+                                    enabled = !busy, trailing = { CyclonChevron() })
+                            }
                         }
-                        else CyclonRow(stringResource(R.string.passwords_sharing_finish_receiving), onClick = { perform { it.resume(operation.id) } },
-                            enabled = !busy, trailing = { CyclonChevron() })
                     }
                 }
             }
             selectedPassword?.takeIf { unlocked }?.let { entry ->
-                AlertDialog(onDismissRequest = { selectedPassword = null; selectedRecipient = null },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { selectedPassword = null; selectedRecipient = null },
                     title = { Text(stringResource(R.string.passwords_sharing_choose_recipient)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
                         Text(sharingTitle(entry.data.realm), style = MaterialTheme.typography.titleMedium)
@@ -118,7 +130,7 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
                     dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { selectedPassword = null; selectedRecipient = null } })
             }
             selectedIncoming?.takeIf { unlocked }?.let { incoming ->
-                AlertDialog(onDismissRequest = { selectedIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_receive)) },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { selectedIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_receive)) },
                     text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(incoming.invitation.sender.email, style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.muted)
@@ -133,14 +145,14 @@ class PasswordSharingActivity : PasswordOwnerActivity() {
                     } }, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { selectedIncoming = null } })
             }
             dismissIncoming?.takeIf { unlocked }?.let { incoming ->
-                AlertDialog(onDismissRequest = { dismissIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_dismiss)) },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { dismissIncoming = null }, title = { Text(stringResource(R.string.passwords_sharing_dismiss)) },
                     text = { PasswordDialogProtection(); PasswordDialogText(incoming.invitation.sender.email) },
                     confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_dismiss), enabled = !busy) {
                         dismissIncoming = null; perform { it.dismiss(incoming) }
                     } }, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { dismissIncoming = null } })
             }
             resolveSend?.takeIf { unlocked }?.let { operation ->
-                AlertDialog(onDismissRequest = { resolveSend = null }, title = { Text(stringResource(R.string.passwords_sharing_resolve_send)) },
+                AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = { resolveSend = null }, title = { Text(stringResource(R.string.passwords_sharing_resolve_send)) },
                     text = { PasswordDialogProtection(); PasswordDialogText(stringResource(R.string.passwords_sharing_resolve_warning), scrolls = true) },
                     confirmButton = { CyclonTextAction(stringResource(R.string.passwords_sharing_allow_new_attempt), enabled = !busy) {
                         resolveSend = null; perform { it.resolveUnknownSend(operation.id, acknowledgesPossibleDelivery = true) }

@@ -21,11 +21,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.R
 
@@ -34,10 +36,13 @@ import com.google.android.gms.R
  * cyclon_* colours, the owner's highlight as primary for on/selected states and progress only.
  * Text uses the bundled Manrope with Core's type scale (OwnerTheme.kt), as Theme.CyclonServices
  * does for the XML screens. Content without a Surface (Cyclon Services screens draw their own
- * paper) still gets ink, and cards and fields have 8dp corners.
+ * paper) still gets ink, and cards and fields have 8dp corners. With [settingsLook] (pages built of
+ * CyclonComponents, the password pages) everything takes Android Settings' Words look instead:
+ * its page, ink, muted and line colours, ink where the highlight was, Inter Tight (the system
+ * family cyclon-words), and dialogs on its sheet with 30dp corners and a 22sp medium title.
  */
 @Composable
-fun CyclonMaterialTheme(content: @Composable () -> Unit) {
+fun CyclonMaterialTheme(settingsLook: Boolean = false, content: @Composable () -> Unit) {
     val paper = colorResource(R.color.cyclon_paper)
     val ink = colorResource(R.color.cyclon_ink)
     val muted = colorResource(R.color.cyclon_muted)
@@ -60,9 +65,57 @@ fun CyclonMaterialTheme(content: @Composable () -> Unit) {
         surfaceContainerLow = paper, surfaceContainer = paper, surfaceContainerHigh = raised,
         surfaceContainerHighest = cell
     )
+    if (settingsLook) {
+        val w = cyclonPage(isSystemInDarkTheme())
+        val settings = scheme.copy(
+            primary = w.ink, onPrimary = w.onInk, primaryContainer = w.fill2, onPrimaryContainer = w.ink, inversePrimary = w.ink,
+            secondary = w.ink, onSecondary = w.onInk, secondaryContainer = w.fill2, onSecondaryContainer = w.ink,
+            tertiary = w.ink, onTertiary = w.onInk, tertiaryContainer = w.fill2, onTertiaryContainer = w.ink,
+            background = w.page, onBackground = w.ink, surface = w.page, onSurface = w.ink,
+            surfaceVariant = w.fill2, onSurfaceVariant = w.muted, surfaceTint = w.page,
+            inverseSurface = w.ink, inverseOnSurface = w.page, error = w.red,
+            outline = w.faint, outlineVariant = w.line,
+            surfaceBright = w.page, surfaceDim = w.page, surfaceContainerLowest = w.page,
+            surfaceContainerLow = w.page, surfaceContainer = w.page, surfaceContainerHigh = w.sheet,
+            surfaceContainerHighest = w.fill2
+        )
+        MaterialTheme(colorScheme = settings, shapes = CyclonShapes.copy(extraLarge = RoundedCornerShape(30.dp)),
+            typography = SettingsTypography) {
+            CompositionLocalProvider(LocalContentColor provides w.ink, content = content)
+        }
+        return
+    }
     MaterialTheme(colorScheme = colors, shapes = CyclonShapes, typography = CyclonTypography) {
         CompositionLocalProvider(LocalContentColor provides ink, content = content)
     }
+}
+
+// Inter Tight, as Settings names it (the system family cyclon-words, vendor/cyclon android/branding/fonts); a phone
+// without it falls back to the system's sans-serif.
+@OptIn(ExperimentalTextApi::class)
+private val CyclonWords = FontFamily(
+    Font(DeviceFontFamilyName("cyclon-words"), FontWeight.Normal),
+    Font(DeviceFontFamilyName("cyclon-words"), FontWeight.Medium),
+    Font(DeviceFontFamilyName("cyclon-words"), FontWeight.SemiBold),
+)
+
+/**
+ * Settings' type in the Words look (values-v36/cyclon_words.xml): Inter Tight throughout, medium titles and labels,
+ * a 22sp medium dialog title tracked -0.02em, 13sp section labels and summaries.
+ */
+private val SettingsTypography = Typography().run {
+    fun TextStyle.w() = copy(fontFamily = CyclonWords)
+    Typography(
+        displayLarge = displayLarge.w(), displayMedium = displayMedium.w(), displaySmall = displaySmall.w(),
+        headlineLarge = headlineLarge.w(), headlineMedium = headlineMedium.w(),
+        headlineSmall = headlineSmall.w().copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium, letterSpacing = (-0.02).em),
+        titleLarge = titleLarge.w().copy(fontWeight = FontWeight.Medium), titleMedium = titleMedium.w().copy(fontWeight = FontWeight.Medium),
+        titleSmall = titleSmall.w(), bodyLarge = bodyLarge.w().copy(fontSize = 18.sp, lineHeight = 24.sp, letterSpacing = (-0.01).em),
+        bodyMedium = bodyMedium.w().copy(fontSize = 15.sp, lineHeight = 21.sp, letterSpacing = 0.em),
+        bodySmall = bodySmall.w().copy(fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 0.em),
+        labelLarge = labelLarge.w().copy(fontWeight = FontWeight.Medium, fontSize = 16.sp, letterSpacing = 0.em),
+        labelMedium = labelMedium.w(), labelSmall = labelSmall.w(),
+    )
 }
 
 // Manrope is variable and its default axis is 200: each weight names its axis value, as Core's family does.

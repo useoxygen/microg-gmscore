@@ -34,7 +34,7 @@ internal fun PasswordCheckupPanel(entries: List<PasswordView>, query: String, di
         val grouped = reports.filter { (_, risks) -> risks.any { it.kind in kinds } }
         if (grouped.isNotEmpty()) {
             CyclonSectionLabel(stringResource(title) + " · ${grouped.size}")
-            grouped.forEach { (entry, risks) ->
+            CyclonGroup { grouped.forEach { (entry, risks) -> Column {
                 val reasons = risks.filter { it.kind in kinds }.map { risk ->
                     stringResource(when (risk.kind) {
                         PasswordRiskKind.LEAKED -> R.string.passwords_checkup_leaked
@@ -44,9 +44,10 @@ internal fun PasswordCheckupPanel(entries: List<PasswordView>, query: String, di
                     })
                 }
                 val site = entry.brandName?.takeIf { it.isNotBlank() } ?: Uri.parse(entry.data.realm).host?.takeIf { it.isNotBlank() } ?: entry.data.realm
-                CyclonRow(site, (listOf(entry.data.username).filter { it.isNotEmpty() } + reasons).joinToString("\n"), divider = false,
+                CyclonRow(site, (listOf(entry.data.username).filter { it.isNotEmpty() } + reasons).joinToString("\n"),
                     leading = { CyclonMonogram(site) })
-                FlowRow(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp)) {
+                // The actions' words in line with the row's (an action pads its words 16dp).
+                FlowRow(Modifier.padding(start = LocalCyclonInset.current - 16.dp, end = 4.dp, bottom = 4.dp)) {
                     CyclonTextAction(stringResource(R.string.passwords_edit), enabled = !busy) { onEdit(entry) }
                     PasswordCheckup.website(entry.data)?.let { url ->
                         CyclonTextAction(stringResource(R.string.passwords_checkup_open_site), enabled = !busy) { onWebsite(url) }
@@ -56,8 +57,7 @@ internal fun PasswordCheckupPanel(entries: List<PasswordView>, query: String, di
                         enabled = !busy) { onDismissal(entry, !dismissed) }
                     CyclonTextAction(stringResource(R.string.passwords_delete), enabled = !busy) { onDelete(entry) }
                 }
-                CyclonHairline(Modifier.padding(start = 20.dp))
-            }
+            } } }
         }
     }
 }

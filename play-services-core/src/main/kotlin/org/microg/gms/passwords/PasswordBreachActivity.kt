@@ -33,7 +33,7 @@ class PasswordBreachActivity : PasswordOwnerActivity() {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 26) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             PasswordOwnerPage(stringResource(R.string.passwords_breach_assess), intent.getStringExtra("account"), onBack = { cancel(); finish() }) {
                 if (!unlocked) { PasswordOwnerLocked(hasSecureScreenLock, onUnlock = ::authenticateOwner); return@PasswordOwnerPage }
                 CyclonNote(stringResource(R.string.passwords_breach_description))
@@ -41,13 +41,12 @@ class PasswordBreachActivity : PasswordOwnerActivity() {
                     progress?.let { value ->
                         CyclonVoice(if (value.saving) stringResource(R.string.passwords_breach_saving)
                             else stringResource(R.string.passwords_breach_progress, value.checked, value.total),
-                            Modifier.padding(horizontal = 20.dp, vertical = 8.dp), color = Cyclon.palette.ink)
+                            Modifier.padding(horizontal = CyclonTextInset, vertical = 8.dp), color = Cyclon.palette.ink, size = 15)
                     }
-                    CyclonProgress(true, Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
-                    PasswordOwnerActions { CyclonLineButton(stringResource(android.R.string.cancel), onClick = ::cancel) }
+                    CyclonProgress(true, Modifier.padding(horizontal = CyclonTextInset, vertical = 4.dp))
+                    PasswordOwnerActions { CyclonSecondaryButton(stringResource(android.R.string.cancel), onClick = ::cancel) }
                 } else PasswordOwnerActions { CyclonInkButton(stringResource(R.string.passwords_breach_start), onClick = ::start) }
                 result?.let { value ->
-                    CyclonHairline(Modifier.padding(top = 8.dp))
                     PasswordOwnerText(stringResource(R.string.passwords_breach_result, value.checked, value.leaked), Modifier.padding(top = 8.dp))
                     if (value.knownLeaked != 0) PasswordOwnerText(stringResource(R.string.passwords_breach_known, value.knownLeaked))
                     if (value.unassessed != 0) PasswordOwnerText(stringResource(R.string.passwords_breach_unassessed, value.unassessed))

@@ -2,6 +2,7 @@
 package com.google.android.gms.credential.manager
 
 import org.microg.gms.cyclon.DeviceAccount
+import org.microg.gms.cyclon.Cyclon
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.os.Bundle
@@ -20,16 +21,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -39,6 +36,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
@@ -128,7 +126,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 26) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme { Surface(Modifier.fillMaxSize()) {
+        setContent { CyclonMaterialTheme(settingsLook = true) { CyclonSettingsPage(Modifier.fillMaxSize()) {
             BackHandler(enabled = detailId != null) { detailId = null }
             val scroll = rememberScrollState()
             LaunchedEffect(showSettings, showCheckup, detailId) { scroll.scrollTo(0) }
@@ -185,7 +183,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     repository().refresh()
                 }
             }
-            checkupDismissal?.takeIf { unlocked }?.let { (entry, dismissed) -> AlertDialog(
+            checkupDismissal?.takeIf { unlocked }?.let { (entry, dismissed) -> AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { checkupDismissal = null },
                 title = { Text(stringResource(if (dismissed) R.string.passwords_checkup_dismiss_question else R.string.passwords_checkup_restore_question)) },
                 text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -214,7 +212,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 blockedSiteOpen = false
                 perform { repository().upsert(Proto.field(1, data.encode())); repository().refresh() }
             }
-            deleting?.takeIf { unlocked }?.let { entry -> AlertDialog(
+            deleting?.takeIf { unlocked }?.let { entry -> AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { deleting = null },
                 title = { Text(stringResource(if (entry.data.blocked) R.string.passwords_allow_save_question else R.string.passwords_delete_question)) },
                 text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -227,19 +225,19 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 } } },
                 dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { deleting = null } }
             ) }
-            resolving?.takeIf { unlocked }?.let { change -> AlertDialog(
+            resolving?.takeIf { unlocked }?.let { change -> AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { resolving = null }, title = { Text(stringResource(R.string.passwords_resolve_question)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_resolve_description)) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_retry_owner)) { resolving = null; perform { repository().retryChange(change.id, true); repository().refresh() } } },
                 dismissButton = { CyclonTextAction(stringResource(R.string.passwords_drop_owner)) { resolving = null; perform { repository().dropChange(change.id) } } }
             ) }
-            if (resetOpen && unlocked) AlertDialog(
+            if (resetOpen && unlocked) AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { resetOpen = false }, title = { Text(stringResource(R.string.passwords_reset_question)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_reset_description)) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_reset_accept)) { resetOpen = false; perform { repository().acceptRemoteReset(); repository().refresh() } } },
                 dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { resetOpen = false } }
             )
-            moving?.takeIf { unlocked }?.let { entry -> AlertDialog(
+            moving?.takeIf { unlocked }?.let { entry -> AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { moving = null }, title = { Text(stringResource(R.string.passwords_move_question)) },
                 text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
                     Text(loginTitle(entry), style = MaterialTheme.typography.titleMedium)
@@ -249,13 +247,13 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     (listOf<Account?>(null) + accounts).filter { it != selected }.forEach { destination ->
                         CyclonRow(destination?.name ?: stringResource(R.string.passwords_on_device),
                             stringResource(if (destination == null) R.string.passwords_on_device_summary else R.string.passwords_storage_account),
-                            inset = 0.dp, onClick = { moving = null; perform {
+                            inset = 0.dp, divider = true, onClick = { moving = null; perform {
                                 ownerOperations.resume(ownerOperations.move(selected, destination, entry.chromeBytes))
                             } }, trailing = { CyclonChevron() })
                     }
                 } }, confirmButton = {}, dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { moving = null } }
             ) }
-            droppingTransfer?.takeIf { unlocked }?.let { id -> AlertDialog(
+            droppingTransfer?.takeIf { unlocked }?.let { id -> AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { droppingTransfer = null }, title = { Text(stringResource(R.string.passwords_transfer_drop_question)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_transfer_drop_description)) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_transfer_drop)) { droppingTransfer = null; perform { ownerOperations.drop(id) } } },
@@ -281,7 +279,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     }
                 }
             } }
-            if (csvExportOpen && unlocked) AlertDialog(
+            if (csvExportOpen && unlocked) AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { csvExportOpen = false }, title = { Text(stringResource(R.string.passwords_export_csv)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_export_csv_warning), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_export_csv)) {
@@ -293,7 +291,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 } },
                 dismissButton = { CyclonTextAction(stringResource(android.R.string.cancel)) { csvExportOpen = false } }
             )
-            if (csvImportOpen && unlocked) AlertDialog(
+            if (csvImportOpen && unlocked) AlertDialog(containerColor = Cyclon.page.dialog, 
                 onDismissRequest = { csvImportOpen = false; importUri = null }, title = { Text(stringResource(R.string.passwords_import_csv)) },
                 text = { PasswordDialogProtection(); DialogBody(stringResource(R.string.passwords_import_csv_warning), scrolls = true) },
                 confirmButton = { CyclonTextAction(stringResource(R.string.passwords_import_csv)) {
@@ -314,16 +312,14 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     /** The top bar with its count, then where passwords are saved, tabs and the chosen tab; changes awaiting the owner last. */
     @Composable
     private fun MainPage() {
-        val p = Cyclon.palette
         val saved = entries.count { !it.data.blocked }
         CyclonTopBar(stringResource(R.string.passwords_title), stringResource(R.string.cyclon_back), ::finish, trailing = {
             if (unlocked && storageChosen && enabled && (saved > 0 || message == null))
-                CyclonVoice(resources.getQuantityString(R.plurals.passwords_count, saved, saved), size = 12)
+                CyclonVoice(resources.getQuantityString(R.plurals.passwords_count, saved, saved), size = 14)
         })
         if (!unlocked) {
-            Text(stringResource(if (hasSecureScreenLock) R.string.passwords_unlock_description else R.string.passwords_no_lock_description),
-                Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium, color = p.ink)
-            Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+            PasswordOwnerText(stringResource(if (hasSecureScreenLock) R.string.passwords_unlock_description else R.string.passwords_no_lock_description))
+            Row(Modifier.padding(horizontal = CyclonTextInset, vertical = 8.dp)) {
                 CyclonInkButton(stringResource(if (hasSecureScreenLock) R.string.passwords_unlock else R.string.passwords_open),
                     enabled = !busy, onClick = ::authenticateOwner)
             }
@@ -339,7 +335,6 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
             enabled = { it != 1 || enabled }) { tab ->
             showSettings = tab == 2; showCheckup = tab == 1; detailId = null
         }
-        CyclonHairline()
         when {
             showSettings -> SettingsTab()
             showCheckup -> CheckupTab()
@@ -349,8 +344,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     }
 
     /**
-     * Where passwords are saved, in one line: the chosen account (with its sync state) or this device. Opening it shows
-     * every choice with its explanation; it is open until the owner has chosen, as the list needs a choice.
+     * Where passwords are saved, in one group: the chosen account (with its sync state) or this device. Opening it
+     * shows every choice with its explanation; it is open until the owner has chosen, as the list needs a choice.
      */
     @Composable
     private fun StoragePicker() {
@@ -370,34 +365,31 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
             else -> stringResource(R.string.passwords_on_device_summary)
         }
         val state = stringResource(if (open) R.string.passwords_storage_expanded else R.string.passwords_storage_collapsed)
-        val shape = RoundedCornerShape(8.dp)
-        Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().clip(shape)
-            .border(BorderStroke(1.dp, p.line), shape)) {
+        CyclonGroup(Modifier.padding(top = 4.dp)) {
             Row(Modifier.fillMaxWidth().clickable(enabled = storageChosen, role = Role.Button,
                     onClickLabel = stringResource(R.string.passwords_storage_change)) { storageOpen = !storageOpen }
                 .semantics { stateDescription = state }
-                .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (account != null && storageChosen) CyclonMonogram(account.name, size = 24.dp)
+                .heightIn(min = 52.dp).padding(horizontal = LocalCyclonInset.current, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (account != null && storageChosen) CyclonMonogram(account.name, size = 28.dp)
                 else CyclonDeviceGlyph()
                 Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.bodyMedium, color = p.ink)
-                    summary?.let { CyclonVoice(it.lowercase(), size = 12) }
+                    Text(title, style = MaterialTheme.typography.bodyLarge, color = p.ink)
+                    summary?.let { CyclonVoice(it, size = 14) }
                 }
                 if (storageChosen) Icon(if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     contentDescription = null, tint = p.muted)
             }
-            if (open) {
-                CyclonHairline()
-                if (accounts.isEmpty()) CyclonNote(stringResource(R.string.passwords_no_accounts), inset = 12.dp)
-                if (!storageChosen) CyclonNote(stringResource(R.string.passwords_choose_storage), color = p.ink, inset = 12.dp)
+            if (open) Column {
+                if (accounts.isEmpty()) CyclonNote(stringResource(R.string.passwords_no_accounts))
+                if (!storageChosen) CyclonNote(stringResource(R.string.passwords_choose_storage), color = p.ink)
                 Column(Modifier.selectableGroup()) {
                     accounts.forEach { choice ->
                         CyclonChoiceRow(choice.name, stringResource(R.string.passwords_storage_account),
-                            selected = storageChosen && choice == selected, enabled = !busy, inset = 12.dp) { choose(choice) }
+                            selected = storageChosen && choice == selected, enabled = !busy) { choose(choice) }
                     }
                     CyclonChoiceRow(stringResource(R.string.passwords_on_device), stringResource(R.string.passwords_on_device_summary),
-                        selected = storageChosen && selected == null, enabled = !busy, inset = 12.dp) { choose(null) }
+                        selected = storageChosen && selected == null, enabled = !busy) { choose(null) }
                 }
             }
         }
@@ -405,18 +397,18 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
 
     @Composable
     private fun StatusBlock() {
-        CyclonProgress(busy, Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
-        message?.let { Text(stringResource(it), Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.bodyMedium, color = Cyclon.palette.ink) }
+        CyclonProgress(busy, Modifier.padding(horizontal = CyclonTextInset, vertical = 4.dp))
+        message?.let { PasswordOwnerText(stringResource(it)) }
     }
 
     /** Recovery needs the owner in Settings: one row pointing there from the other tabs. */
     @Composable
     private fun SettingsNeeded() {
         if (trustedRecovery || remoteReset || message == R.string.passwords_locked || message == R.string.passwords_no_vault) {
-            CyclonHairline(Modifier.padding(top = 8.dp))
-            CyclonRow(stringResource(R.string.passwords_open_settings), onClick = { showSettings = true; showCheckup = false; detailId = null },
-                trailing = { CyclonChevron() })
+            CyclonGroup(Modifier.padding(top = 4.dp)) {
+                CyclonRow(stringResource(R.string.passwords_open_settings), onClick = { showSettings = true; showCheckup = false; detailId = null },
+                    trailing = { CyclonChevron() })
+            }
         }
     }
 
@@ -425,10 +417,9 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         SettingsNeeded()
         if (selected != null && !enabled) {
             CyclonNote(stringResource(R.string.passwords_sync_off), Modifier.padding(top = 8.dp))
-            CyclonHairline()
-            CyclonSwitchRow(stringResource(R.string.passwords_sync), null, enabled, onChange = ::setSync, enabled = !busy)
+            CyclonGroup { CyclonSwitchRow(stringResource(R.string.passwords_sync), null, enabled, onChange = ::setSync, enabled = !busy) }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.fillMaxWidth().padding(start = CyclonFieldInset, end = CyclonFieldInset, top = 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CyclonSearchField(query, { query = it }, stringResource(R.string.passwords_search), Modifier.weight(1f))
             // Syncing applies to an account; the device vault has nothing to sync with.
@@ -441,10 +432,12 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         if (enabled || visible.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_saved))
         if (enabled && visible.isEmpty() && !busy)
             CyclonNote(stringResource(if (query.isBlank()) R.string.passwords_empty else R.string.passwords_no_results))
-        visible.forEach { entry ->
-            CyclonRow(loginTitle(entry), entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) },
-                onClick = { detailId = entry.id }, enabled = !busy, summaryLines = 1,
-                leading = { CyclonMonogram(loginTitle(entry), loginPackage(entry)) }, trailing = { CyclonChevron() })
+        if (visible.isNotEmpty()) CyclonGroup {
+            visible.forEach { entry ->
+                CyclonRow(loginTitle(entry), entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) },
+                    onClick = { detailId = entry.id }, enabled = !busy, summaryLines = 1,
+                    leading = { CyclonMonogram(loginTitle(entry), loginPackage(entry)) }, trailing = { CyclonChevron() })
+            }
         }
     }
 
@@ -452,12 +445,13 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     private fun CheckupTab() {
         SettingsNeeded()
         CyclonSearchField(query, { query = it }, stringResource(R.string.passwords_search),
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp))
-        Column(Modifier.selectableGroup()) {
-            CyclonChoiceRow(stringResource(R.string.passwords_checkup_active), null, !dismissedCheckup) { dismissedCheckup = false }
-            CyclonChoiceRow(stringResource(R.string.passwords_checkup_dismissed), null, dismissedCheckup) { dismissedCheckup = true }
+            Modifier.fillMaxWidth().padding(start = CyclonFieldInset, end = CyclonFieldInset, top = 12.dp, bottom = 4.dp))
+        CyclonGroup {
+            Column(Modifier.selectableGroup()) {
+                CyclonChoiceRow(stringResource(R.string.passwords_checkup_active), null, !dismissedCheckup) { dismissedCheckup = false }
+                CyclonChoiceRow(stringResource(R.string.passwords_checkup_dismissed), null, dismissedCheckup) { dismissedCheckup = true }
+            }
         }
-        CyclonHairline()
         PasswordCheckupPanel(entries, query, dismissedCheckup, busy,
             onEdit = { editing = it; editorOpen = true }, onDelete = { deleting = it },
             onDismissal = { entry, dismissed -> checkupDismissal = entry to dismissed },
@@ -471,15 +465,17 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         val account = selected
         if (account != null) {
             CyclonSectionLabel(stringResource(R.string.passwords_section_sync))
-            CyclonSwitchRow(stringResource(R.string.passwords_sync), account.name, enabled, onChange = ::setSync, enabled = !busy)
-            if (enabled) CyclonRow(stringResource(R.string.passwords_refresh), onClick = { perform { repository().refresh() } }, enabled = !busy)
+            CyclonGroup {
+                CyclonSwitchRow(stringResource(R.string.passwords_sync), account.name, enabled, onChange = ::setSync, enabled = !busy)
+                if (enabled) CyclonRow(stringResource(R.string.passwords_refresh), onClick = { perform { repository().refresh() } }, enabled = !busy)
+            }
         }
         if (enabled) {
             if (message == R.string.passwords_locked && !trustedRecovery) {
                 OutlinedTextField(passphrase, { passphrase = it }, label = { Text(stringResource(R.string.passwords_passphrase)) },
-                    colors = cyclonFieldColors(), singleLine = true, modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp),
+                    colors = cyclonFieldColors(), singleLine = true, modifier = Modifier.fillMaxWidth().padding(start = CyclonFieldInset, end = CyclonFieldInset, top = 16.dp),
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-                Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+                Row(Modifier.padding(horizontal = CyclonTextInset, vertical = 12.dp)) {
                     CyclonInkButton(stringResource(R.string.passwords_unlock), enabled = !busy && passphrase.isNotEmpty()) {
                         showCheckup = false
                         val secret = passphrase.toByteArray(Charsets.UTF_8); passphrase = ""
@@ -487,15 +483,16 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     }
                 }
             }
-            if (trustedRecovery && account != null)
+            if (trustedRecovery && account != null) CyclonGroup {
                 CyclonRow(stringResource(R.string.passwords_recover_account_keys), onClick = ::recoverAccountKeys, enabled = !busy, trailing = { CyclonChevron() })
+            }
             if (remoteReset) {
                 CyclonNote(stringResource(R.string.passwords_reset_pending), Modifier.padding(top = 8.dp), color = Cyclon.palette.ink)
-                Row(Modifier.padding(horizontal = 20.dp)) {
-                    CyclonLineButton(stringResource(R.string.passwords_reset_accept), enabled = !busy) { resetOpen = true }
+                Row(Modifier.padding(horizontal = CyclonTextInset)) {
+                    CyclonSecondaryButton(stringResource(R.string.passwords_reset_accept), enabled = !busy) { resetOpen = true }
                 }
             }
-            if (message == R.string.passwords_no_vault) Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+            if (message == R.string.passwords_no_vault) Row(Modifier.padding(horizontal = CyclonTextInset, vertical = 12.dp)) {
                 CyclonInkButton(stringResource(R.string.passwords_create_vault), enabled = !busy) {
                     perform { repository().initializeEmptyVault(); repository().refresh() }
                 }
@@ -503,40 +500,50 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         }
         if (account != null && (android.os.Build.VERSION.SDK_INT >= 28 || enabled)) {
             CyclonSectionLabel(stringResource(R.string.passwords_section_security))
-            if (android.os.Build.VERSION.SDK_INT >= 28) AccountPageRow(R.string.passwords_encryption_manage, PasswordEncryptionActivity::class.java)
+            CyclonGroup {
+                if (android.os.Build.VERSION.SDK_INT >= 28) AccountPageRow(R.string.passwords_encryption_manage, PasswordEncryptionActivity::class.java)
+                if (enabled) {
+                    AccountPageRow(R.string.passwords_recovery_enroll_phone, PasswordRecoveryEnrollmentActivity::class.java)
+                    AccountPageRow(R.string.passwords_breach_assess, PasswordBreachActivity::class.java)
+                    AccountPageRow(R.string.passwords_synced_passkeys, SyncedPasskeyManagerActivity::class.java)
+                }
+            }
             if (enabled) {
-                AccountPageRow(R.string.passwords_recovery_enroll_phone, PasswordRecoveryEnrollmentActivity::class.java)
-                AccountPageRow(R.string.passwords_breach_assess, PasswordBreachActivity::class.java)
-                AccountPageRow(R.string.passwords_synced_passkeys, SyncedPasskeyManagerActivity::class.java)
                 CyclonSectionLabel(stringResource(R.string.passwords_section_sharing))
-                AccountPageRow(R.string.passwords_share, PasswordSharingActivity::class.java)
-                AccountPageRow(R.string.passwords_wifi_title, PasswordWifiSyncActivity::class.java)
+                CyclonGroup {
+                    AccountPageRow(R.string.passwords_share, PasswordSharingActivity::class.java)
+                    AccountPageRow(R.string.passwords_wifi_title, PasswordWifiSyncActivity::class.java)
+                }
             }
         }
         if (enabled) {
             CyclonSectionLabel(stringResource(R.string.passwords_section_backup))
-            CyclonRow(stringResource(R.string.passwords_export), onClick = {
-                if (hasSecureScreenLock) archiveImport = false else message = R.string.passwords_export_needs_lock
-            }, enabled = !busy)
-            CyclonRow(stringResource(R.string.passwords_import), onClick = {
-                csvImportRequested = false; importDocument.launch(arrayOf("application/octet-stream", "application/x-cyclon-passwords"))
-            }, enabled = !busy)
-            CyclonRow(stringResource(R.string.passwords_export_csv), onClick = {
-                if (hasSecureScreenLock) csvExportOpen = true else message = R.string.passwords_export_needs_lock
-            }, enabled = !busy)
-            CyclonRow(stringResource(R.string.passwords_import_csv), onClick = {
-                csvImportRequested = true; importDocument.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
-            }, enabled = !busy)
+            CyclonGroup {
+                CyclonRow(stringResource(R.string.passwords_export), onClick = {
+                    if (hasSecureScreenLock) archiveImport = false else message = R.string.passwords_export_needs_lock
+                }, enabled = !busy)
+                CyclonRow(stringResource(R.string.passwords_import), onClick = {
+                    csvImportRequested = false; importDocument.launch(arrayOf("application/octet-stream", "application/x-cyclon-passwords"))
+                }, enabled = !busy)
+                CyclonRow(stringResource(R.string.passwords_export_csv), onClick = {
+                    if (hasSecureScreenLock) csvExportOpen = true else message = R.string.passwords_export_needs_lock
+                }, enabled = !busy)
+                CyclonRow(stringResource(R.string.passwords_import_csv), onClick = {
+                    csvImportRequested = true; importDocument.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
+                }, enabled = !busy)
+            }
         }
         CyclonSectionLabel(stringResource(R.string.passwords_never_saved))
         CyclonNote(stringResource(R.string.passwords_never_saved_description))
-        CyclonHairline()
-        entries.filter { it.data.blocked }.forEach { entry ->
-            CyclonRow(loginTitle(entry), if (loginTitle(entry) != loginTarget(entry)) loginTarget(entry) else null, summaryLines = 1,
-                trailing = { CyclonTextAction(stringResource(R.string.passwords_allow_save), enabled = !busy) { deleting = entry } })
+        val blocked = entries.filter { it.data.blocked }
+        if (blocked.isNotEmpty() || enabled) CyclonGroup {
+            blocked.forEach { entry ->
+                CyclonRow(loginTitle(entry), if (loginTitle(entry) != loginTarget(entry)) loginTarget(entry) else null, summaryLines = 1,
+                    trailing = { CyclonTextAction(stringResource(R.string.passwords_allow_save), enabled = !busy) { deleting = entry } })
+            }
+            if (enabled) CyclonRow(stringResource(R.string.passwords_never_save_add), onClick = { blockedSiteOpen = true }, enabled = !busy,
+                trailing = { CyclonVoice("+", color = Cyclon.palette.ink, size = 20) })
         }
-        if (enabled) CyclonRow(stringResource(R.string.passwords_never_save_add), onClick = { blockedSiteOpen = true }, enabled = !busy,
-            trailing = { CyclonVoice("+", color = Cyclon.palette.ink, size = 20) })
     }
 
     @Composable
@@ -547,32 +554,38 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     /** Changes and transfers that still need the owner, on every tab. */
     @Composable
     private fun PendingWork() {
-        if (pendingChanges.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_changes))
-        pendingChanges.forEach { pending ->
-            CyclonRow(pending.realm, stringResource(if (pending.kind == MutationKind.DELETE) R.string.passwords_delete else R.string.passwords_save) + " · " +
-                stringResource(when (pending.phase) {
-                    MutationPhase.QUEUED -> R.string.passwords_change_waiting
-                    MutationPhase.CONFLICT -> R.string.passwords_change_conflict
-                    else -> R.string.passwords_change_uncertain
-                }), trailing = { CyclonTextAction(stringResource(R.string.passwords_resolve), enabled = !busy) { resolving = pending } })
+        if (pendingChanges.isNotEmpty()) {
+            CyclonSectionLabel(stringResource(R.string.passwords_changes))
+            CyclonGroup {
+                pendingChanges.forEach { pending ->
+                    CyclonRow(pending.realm, stringResource(if (pending.kind == MutationKind.DELETE) R.string.passwords_delete else R.string.passwords_save) + " · " +
+                        stringResource(when (pending.phase) {
+                            MutationPhase.QUEUED -> R.string.passwords_change_waiting
+                            MutationPhase.CONFLICT -> R.string.passwords_change_conflict
+                            else -> R.string.passwords_change_uncertain
+                        }), trailing = { CyclonTextAction(stringResource(R.string.passwords_resolve), enabled = !busy) { resolving = pending } })
+                }
+            }
         }
-        if (transfers.isNotEmpty()) CyclonSectionLabel(stringResource(R.string.passwords_transfers))
-        transfers.forEach { transfer ->
-            val after = PasswordData.decode(Proto.decode(transfer.desired).one(1)).realm
-            val source = if (transfer.source == null) stringResource(R.string.passwords_transfer_import_source)
-                else transfer.source?.accountName ?: stringResource(R.string.passwords_on_device)
-            val lines = mutableListOf(source + " → " + (transfer.destination.accountName ?: stringResource(R.string.passwords_on_device)))
-            transfer.original?.let { original ->
-                val before = PasswordData.decode(Proto.decode(original).one(1)).realm
-                if (before != after) lines += "$before → $after"
-            }
-            lines += stringResource(if (transfer.phase == PasswordTransferPhase.COPY) R.string.passwords_transfer_state_copy else R.string.passwords_transfer_state_remove)
-            CyclonRow(after, lines.joinToString("\n"), divider = false)
-            Row(Modifier.padding(horizontal = 4.dp)) {
-                CyclonTextAction(stringResource(R.string.passwords_transfer_resume), enabled = !busy) { perform { ownerOperations.resume(transfer.id) } }
-                CyclonTextAction(stringResource(R.string.passwords_transfer_drop), enabled = !busy) { droppingTransfer = transfer.id }
-            }
-            CyclonHairline(Modifier.padding(start = 20.dp))
+        if (transfers.isNotEmpty()) {
+            CyclonSectionLabel(stringResource(R.string.passwords_transfers))
+            CyclonGroup { transfers.forEach { transfer -> Column {
+                val after = PasswordData.decode(Proto.decode(transfer.desired).one(1)).realm
+                val source = if (transfer.source == null) stringResource(R.string.passwords_transfer_import_source)
+                    else transfer.source?.accountName ?: stringResource(R.string.passwords_on_device)
+                val lines = mutableListOf(source + " → " + (transfer.destination.accountName ?: stringResource(R.string.passwords_on_device)))
+                transfer.original?.let { original ->
+                    val before = PasswordData.decode(Proto.decode(original).one(1)).realm
+                    if (before != after) lines += "$before → $after"
+                }
+                lines += stringResource(if (transfer.phase == PasswordTransferPhase.COPY) R.string.passwords_transfer_state_copy else R.string.passwords_transfer_state_remove)
+                CyclonRow(after, lines.joinToString("\n"))
+                // The actions' words in line with the row's (an action pads its words 16dp).
+                Row(Modifier.padding(start = LocalCyclonInset.current - 16.dp, bottom = 4.dp)) {
+                    CyclonTextAction(stringResource(R.string.passwords_transfer_resume), enabled = !busy) { perform { ownerOperations.resume(transfer.id) } }
+                    CyclonTextAction(stringResource(R.string.passwords_transfer_drop), enabled = !busy) { droppingTransfer = transfer.id }
+                }
+            } } }
         }
     }
 
@@ -581,17 +594,18 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     @Composable
     private fun DetailPage(entry: PasswordView) {
         val access = assistantAccess[entry.id]
-        CyclonTopBar(loginTitle(entry), stringResource(R.string.passwords_back_to_passwords), { detailId = null }, titleSize = 22,
+        CyclonTopBar(loginTitle(entry), stringResource(R.string.passwords_back_to_passwords), { detailId = null },
             leading = { CyclonMonogram(loginTitle(entry), loginPackage(entry), 32.dp) })
         StatusBlock()
-        CyclonHairline(Modifier.padding(start = 20.dp))
-        DetailField(stringResource(if (loginPackage(entry) != null) R.string.passwords_app else R.string.passwords_website), loginTarget(entry))
-        DetailField(stringResource(R.string.passwords_username), entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) })
-        if (entry.data.displayName.isNotEmpty()) DetailField(stringResource(R.string.passwords_name), entry.data.displayName)
-        FlowRow(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
+        CyclonGroup(Modifier.padding(top = 4.dp)) {
+            DetailField(stringResource(if (loginPackage(entry) != null) R.string.passwords_app else R.string.passwords_website), loginTarget(entry))
+            DetailField(stringResource(R.string.passwords_username), entry.data.username.ifEmpty { stringResource(R.string.passwords_assistant_saved_login) })
+            if (entry.data.displayName.isNotEmpty()) DetailField(stringResource(R.string.passwords_name), entry.data.displayName)
+        }
+        FlowRow(Modifier.padding(horizontal = CyclonTextInset, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             CyclonInkButton(stringResource(R.string.passwords_edit), enabled = !busy) { editing = entry; editorOpen = true }
-            CyclonLineButton(stringResource(R.string.passwords_move), enabled = !busy) { moving = entry }
+            CyclonSecondaryButton(stringResource(R.string.passwords_move), enabled = !busy) { moving = entry }
             CyclonTextAction(stringResource(R.string.passwords_delete), enabled = !busy) { deleting = entry }
         }
         if (access != null) {
@@ -600,9 +614,11 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 stringResource(R.string.passwords_assistant_authentication_summary).takeIf { access.requireDeviceAuthentication },
                 access.lastUsed?.let { used -> stringResource(R.string.passwords_assistant_last_used,
                     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(used))) })
-            CyclonRow(stringResource(R.string.passwords_assistant_access_status, stringResource(accessLabel(access.level))),
-                details.joinToString("\n").ifEmpty { null }, onClick = { accessEditing = entry }, enabled = !busy,
-                trailing = { CyclonChevron() })
+            CyclonGroup {
+                CyclonRow(stringResource(R.string.passwords_assistant_access_status, stringResource(accessLabel(access.level))),
+                    details.joinToString("\n").ifEmpty { null }, onClick = { accessEditing = entry }, enabled = !busy,
+                    trailing = { CyclonChevron() })
+            }
         }
     }
 
@@ -777,15 +793,14 @@ private fun loginTitle(entry: PasswordView): String = entry.brandName?.takeIf { 
 private fun loginPackage(entry: PasswordView): String? =
     loginTarget(entry).takeIf { entry.data.realm.startsWith("android://") && it.isNotEmpty() }
 
-/** One read-only field of a login: its label above, the value in ink. */
+/** One read-only field of a login, a row of its group: its label above, the value in ink. */
 @Composable
 private fun DetailField(label: String, value: String) {
     val p = Cyclon.palette
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)) {
+    Column(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = LocalCyclonInset.current, vertical = 10.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = p.muted)
-        Text(value, style = MaterialTheme.typography.bodyLarge, color = p.ink)
+        Text(value, style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 23.sp), color = p.ink)
     }
-    CyclonHairline(Modifier.padding(start = 20.dp))
 }
 
 /** A dialog's explanation; [scrolls] for long warnings on small screens and large fonts. */
@@ -802,7 +817,7 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
     var selected by remember(entry.id, current) { mutableStateOf(current) }
     var requireAuthentication by remember(entry.id, currentRequireAuthentication) { mutableStateOf(currentRequireAuthentication) }
     val p = Cyclon.palette
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.passwords_assistant_access)) },
         text = {
             PasswordDialogProtection()
@@ -864,7 +879,7 @@ private fun PasswordEditor(existing: PasswordView?, onDismiss: () -> Unit, onSav
     var noteVisible by remember { mutableStateOf(false) }
     var invalid by remember { mutableStateOf(false) }
     val fields = cyclonFieldColors()
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = onDismiss,
         title = { Text(stringResource(if (existing == null) R.string.passwords_add else R.string.passwords_edit)) },
         text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(url, { url = it }, enabled = existing?.data?.realm?.startsWith("android://") != true, label = { Text(stringResource(R.string.passwords_site)) },
@@ -899,7 +914,7 @@ private fun PasswordEditor(existing: PasswordView?, onDismiss: () -> Unit, onSav
 @Composable
 private fun PasswordArchiveDialog(importing: Boolean, dismiss: () -> Unit, confirm: (CharArray) -> Unit) {
     var passphrase by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = dismiss,
+    AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = dismiss,
         title = { Text(stringResource(if (importing) R.string.passwords_import else R.string.passwords_export)) },
         text = { PasswordDialogProtection(); Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             DialogBody(stringResource(if (importing) R.string.passwords_import_description else R.string.passwords_archive_description))
@@ -918,7 +933,7 @@ private fun PasswordArchiveDialog(importing: Boolean, dismiss: () -> Unit, confi
 private fun BlockedSiteEditor(onDismiss: () -> Unit, onSave: (PasswordData) -> Unit) {
     var url by remember { mutableStateOf("") }
     var invalid by remember { mutableStateOf(false) }
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(containerColor = Cyclon.page.dialog, onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.passwords_never_save_add)) },
         text = { PasswordDialogProtection(); Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(url, { url = it }, label = { Text(stringResource(R.string.passwords_site)) }, singleLine = true,

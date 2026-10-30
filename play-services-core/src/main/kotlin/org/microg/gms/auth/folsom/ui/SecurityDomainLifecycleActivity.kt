@@ -10,10 +10,12 @@ import android.provider.Settings
 import android.view.View
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
@@ -68,7 +70,7 @@ class SecurityDomainLifecycleActivity : PasswordOwnerActivity() {
             verifyIdentity()
         } catch (_: Exception) { finish(); return }
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        setContent { CyclonMaterialTheme {
+        setContent { CyclonMaterialTheme(settingsLook = true) {
             SecurityDomainLifecycleScreen(account.name, domain, requested, intent.getStringExtra("lifecycle_caller"), externalPublic,
                 unlocked, hasSecureScreenLock, busy, message, status, confirmation, retry, closing,
                 onBack = { cancel(); finish() }, onUnlock = ::authenticateOwner,
@@ -165,9 +167,11 @@ internal fun SecurityDomainLifecycleScreen(
     }
     PasswordOwnerPage(stringResource(R.string.passwords_domain_manage), account, onBack) {
         if (!unlocked) { PasswordOwnerLocked(secure, enabled = !busy, onUnlock = onUnlock); return@PasswordOwnerPage }
-        if (requested == null) Column(Modifier.selectableGroup()) {
-            for ((id, label) in listOf("chromesync" to R.string.passwords_domain_passwords, "hw_protected" to R.string.passwords_domain_passkeys))
-                CyclonChoiceRow(stringResource(label), null, selected = id == domain, enabled = !busy) { onDomain(id) }
+        if (requested == null) CyclonGroup(Modifier.padding(top = 4.dp)) {
+            Column(Modifier.selectableGroup()) {
+                for ((id, label) in listOf("chromesync" to R.string.passwords_domain_passwords, "hw_protected" to R.string.passwords_domain_passkeys))
+                    CyclonChoiceRow(stringResource(label), null, selected = id == domain, enabled = !busy) { onDomain(id) }
+            }
         } else PasswordOwnerText(stringResource(if (domain == "chromesync") R.string.passwords_domain_passwords else R.string.passwords_domain_passkeys))
         if (!secure) PasswordOwnerText(stringResource(R.string.passwords_domain_lock_required))
         PasswordOwnerStatus(busy, message?.let { stringResource(it) })
@@ -175,7 +179,9 @@ internal fun SecurityDomainLifecycleScreen(
             status.operation == DomainLifecycleKind.RESET && !status.authorityCleared)
         status?.let { current ->
             CyclonSectionLabel(stringResource(R.string.passwords_section_recovery))
-            CyclonRow(stringResource(R.string.passwords_domain_devices, current.members), current.phase?.let { stringResource(phaseLabel(current)) })
+            CyclonGroup {
+                CyclonRow(stringResource(R.string.passwords_domain_devices, current.members), current.phase?.let { stringResource(phaseLabel(current)) })
+            }
         }
         fingerprint?.let { CyclonNote(it) }
         PasswordOwnerActions {
@@ -190,12 +196,12 @@ internal fun SecurityDomainLifecycleScreen(
                     actions.forEach { action ->
                         // Allowing this phone (or the requested step) leads; replacing the key and the reset stay quieter.
                         if (action == DomainLifecycleKind.ROTATE || action == DomainLifecycleKind.RESET && requested == null)
-                            CyclonLineButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
+                            CyclonSecondaryButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
                         else CyclonInkButton(stringResource(actionLabel(action)), enabled = !busy) { onAsk(action) }
                     }
                 }
             }
-            CyclonLineButton(stringResource(R.string.passwords_refresh), enabled = !busy && secure, onClick = onRefresh)
+            CyclonSecondaryButton(stringResource(R.string.passwords_refresh), enabled = !busy && secure, onClick = onRefresh)
         }
     }
     if (confirmation != null || retry || closing) {
