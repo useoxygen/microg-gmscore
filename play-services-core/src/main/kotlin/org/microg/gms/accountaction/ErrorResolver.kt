@@ -1,4 +1,4 @@
-// Modified by Cyclon in 2026: bounded CryptAuth screen lock proof, clearer diagnosis, unsupported-management notice.
+// Modified by Cyclon in 2026: bounded CryptAuth screen lock proof, clearer diagnosis, unsupported-management notice, notice cleared once the proof lets the account work.
 package org.microg.gms.accountaction
 
 import android.accounts.Account
@@ -236,7 +236,14 @@ private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFu
         }
     }
     if (proven == null) Log.i(TAG, "Screen lock proof for this account is already running; not starting another.")
-    return if (proven == true) retryFunction.run() else null
+    if (proven != true) return null
+    // The retry throws on any Google error, so a result means the account works again. The
+    // "Account action required" notice an earlier request posted (before the screen lock was set)
+    // would otherwise stay until tapped, telling the owner a working account still needs setup.
+    return retryFunction.run()?.also {
+        Log.i(TAG, "Screen lock proven and the token request succeeded; clearing the account's notice.")
+        context.cancelAccountNotificationChannel(account)
+    }
 }
 
 private fun Context.proveScreenlock(account: Account): CryptAuthAttempts.Outcome = try {
