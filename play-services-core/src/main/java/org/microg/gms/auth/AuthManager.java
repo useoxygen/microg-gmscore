@@ -16,7 +16,6 @@ import android.net.Uri;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
-import org.microg.gms.accountaction.AccountNotificationKt;
 import org.microg.gms.accountaction.ErrorResolverKt;
 import org.microg.gms.accountaction.Resolution;
 import org.microg.gms.common.NotOkayException;
@@ -336,20 +335,6 @@ public class AuthManager {
         }
     }
 
-    /**
-     * Google just issued this account a token, so an earlier "Account action required" (screen lock, check-in, push)
-     * is done, whichever request or process proved it. Never fails the token request.
-     */
-    private void clearAccountActionNotice() {
-        try {
-            if (AccountNotificationKt.clearAccountActionNotification(context, getAccount())) {
-                Log.i(TAG, "Google issued the account a token; cleared its \"Account action required\" notice.");
-            }
-        } catch (RuntimeException e) {
-            Log.w(TAG, "Could not clear the account action notice", e);
-        }
-    }
-
     @NonNull
     public AuthResponse requestAuth(boolean legacy) throws IOException {
         if (refusedForCaller()) throw new IOException("Account unavailable");
@@ -422,7 +407,6 @@ public class AuthManager {
             throw error;
         }
         if (contactsSelfRequest) Log.i("GmsContactSync", "stage=authorization http_status=200 token_present_server=" + (response.auth != null));
-        if (response.auth != null) clearAccountActionNotice();
         if (!isPermitted() && !isTrustGooglePermitted(context)) {
             response.auth = null;
         } else {
