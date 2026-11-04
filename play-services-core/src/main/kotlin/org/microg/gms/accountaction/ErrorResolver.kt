@@ -1,5 +1,5 @@
 // Modified by Cyclon in 2026: bounded CryptAuth screen lock proof, clearer diagnosis, unsupported-management notice,
-// action notice cleared once the screen lock is proven.
+// action notice cleared once the proven account gets its token.
 package org.microg.gms.accountaction
 
 import android.accounts.Account
@@ -189,7 +189,6 @@ fun <T> Resolution.initiateFromForegroundBlocking(context: Context, account: Acc
  * original error instead of a CryptAuth one
  */
 private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFunction: RetryFunction<T>): T? {
-    var provedNow = false
     val proven = context.withCryptAuthLock("proof", account.name, wait = false) {
         val bounds = context.cryptAuthStateFile("attempts", account.name)
         val saved = try { AtomicFile(bounds).readFully().decodeToString() } catch (e: IOException) { null }
@@ -221,7 +220,7 @@ private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFu
                 } finally {
                     cryptAuthAttempts.record(account.name, outcome)
                 }
-                (outcome == CryptAuthAttempts.Outcome.SUCCEEDED).also { provedNow = it }
+                outcome == CryptAuthAttempts.Outcome.SUCCEEDED
             }
         } } finally {
             // Saved after every decision, so times restore() normalized (clock set back) stay
@@ -239,19 +238,17 @@ private fun <T> resolveWithCryptAuth(context: Context, account: Account, retryFu
     }
     if (proven == null) Log.i(TAG, "Screen lock proof for this account is already running; not starting another.")
     if (proven != true) return null
-    // Google accepted the screen lock: the "Account action required" an earlier request posted is done, even if this
-    // retry fails for another reason (later requests then succeed without coming here).
-    if (provedNow) context.clearActionNotice(account, "Google accepted the screen lock proof")
-    val result = retryFunction.run()
-    if (!provedNow && result != null) context.clearActionNotice(account, "the token request after an earlier proof succeeded")
-    return result
-}
-
-private fun Context.clearActionNotice(account: Account, why: String) {
-    try {
-        if (clearAccountActionNotification(account)) Log.i(TAG, "Cleared the account's \"Account action required\": $why.")
-    } catch (e: RuntimeException) {
-        Log.w(TAG, "Could not clear the account action notice", e)
+    // The retry throws on any Google error: returning means Google issued the token now that the screen lock is
+    // proven, so the "Account action required" an earlier request posted is done. (If this retry fails for another
+    // reason, the notice stays until a later proof's retry or a tap; clearing before Google confirms could hide an
+    // account that still fails.)
+    return retryFunction.run().also {
+        try {
+            context.clearAccountActionNotification(account)
+            Log.i(TAG, "Screen lock proven and Google issued the token; cleared the account's action notice if shown.")
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "Could not clear the account action notice", e)
+        }
     }
 }
 
