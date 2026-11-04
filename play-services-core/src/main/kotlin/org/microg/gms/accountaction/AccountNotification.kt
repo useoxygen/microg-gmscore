@@ -1,4 +1,5 @@
-// Modified by Cyclon in 2026: notice for work accounts whose management mode is unsupported.
+// Modified by Cyclon in 2026: notice for work accounts whose management mode is unsupported; the action notice is
+// tagged and cleared once Google issues the account a token.
 package org.microg.gms.accountaction
 
 import android.Manifest
@@ -25,6 +26,12 @@ private const val CHANNEL_ID = "AccountNotification"
 
 /** Channel for account notifications that need the user, registered by [registerAccountNotificationChannel]. */
 const val ACCOUNT_NOTIFICATION_CHANNEL_ID = CHANNEL_ID
+
+/**
+ * Tag of "Account action required". The re-auth and unsupported-management notices share its id (the account's hash),
+ * so clearing this one by tag never removes those.
+ */
+internal const val ACCOUNT_ACTION_TAG = "account_action"
 
 @RequiresApi(21)
 fun Context.sendAccountReAuthNotification(account: Account) {
@@ -86,12 +93,32 @@ fun Context.sendAccountActionNotification(account: Account, action: UserSatisfyR
             .setAutoCancel(true)
             .build()
 
+    postAccountActionNotification(account, notification)
+}
+
+/** Posts [account]'s "Account action required" under [ACCOUNT_ACTION_TAG], which [clearAccountActionNotification] clears. */
+internal fun Context.postAccountActionNotification(account: Account, notification: Notification) {
     if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
         PackageManager.PERMISSION_GRANTED
     ) {
-        NotificationManagerCompat.from(this).notify(account.hashCode(), notification)
+        NotificationManagerCompat.from(this).notify(ACCOUNT_ACTION_TAG, account.hashCode(), notification)
     }
+}
 
+/**
+ * Clears [account]'s "Account action required" once Google issued it a token: whatever it asked for (a screen lock,
+ * check-in, push) is done. Without this the notice stays until tapped, telling the owner a working account still needs
+ * setup. Leaves the account's re-auth and unsupported-management notices alone.
+ *
+ * @return whether such a notice was showing and is now cleared
+ */
+fun Context.clearAccountActionNotification(account: Account): Boolean {
+    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return false
+    if (SDK_INT >= 23 && manager.activeNotifications.none { it.id == account.hashCode() && it.tag == ACCOUNT_ACTION_TAG }) {
+        return false
+    }
+    manager.cancel(ACCOUNT_ACTION_TAG, account.hashCode())
+    return SDK_INT >= 23
 }
 
 /** Explains, once, that the account's organization requires management microG cannot provide. */
@@ -139,4 +166,5 @@ fun Context.registerAccountNotificationChannel() {
 
 fun Context.cancelAccountNotificationChannel(account: Account) {
     NotificationManagerCompat.from(this).cancel(account.hashCode())
+    NotificationManagerCompat.from(this).cancel(ACCOUNT_ACTION_TAG, account.hashCode())
 }
