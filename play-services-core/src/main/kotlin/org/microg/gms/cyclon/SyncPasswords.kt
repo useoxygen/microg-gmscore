@@ -8,12 +8,17 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.view.autofill.AutofillManager
+import android.os.Bundle
+import android.view.View
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import com.google.android.gms.R
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.microg.gms.calendar.CalendarSyncPreferences
@@ -77,36 +82,49 @@ private fun Preference.show(summary: SyncPasswords.Summary) {
     this.summary = summary.count?.let { context.resources.getQuantityString(summary.text, it, *args) } ?: context.getString(summary.text, *args)
 }
 
-/** Fills the rows' summaries; call from onResume so a change made on a detail screen shows on return. */
-internal fun PreferenceFragmentCompat.showSyncPasswordsState() {
+/**
+ * Keeps the rows' summaries current while the page is shown: on return from a detail screen, and every few seconds,
+ * so a first sync finishing or failing with the page open shows without leaving it. Call from onViewCreated.
+ */
+internal fun PreferenceFragmentCompat.keepSyncPasswordsStateFresh() {
+    viewLifecycleOwner.lifecycleScope.launch {
+        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                showSyncPasswordsState()
+                delay(REFRESH_MS)
+            }
+        }
+    }
+}
+private const val REFRESH_MS = 5_000L
+
+private suspend fun PreferenceFragmentCompat.showSyncPasswordsState() {
     val context = requireContext().applicationContext
     val autofillOn = SyncPasswords.autofillEnabled(context)
     findPreference<Preference>(SyncPasswords.PREF_AUTOFILL)?.apply {
         setSummary(SyncPasswords.autofillSummary(autofillOn))
         intent = SyncPasswords.autofillIntent(context, autofillOn)
     }
-    lifecycleScope.launch {
-        val snapshot = ServiceHealthReader(context).read()
-        val (contacts, calendar) = withContext(Dispatchers.IO) {
-            runCatching {
-                val accounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google")).toList()
-                SyncPasswords.Accounts(accounts.count { ContactSyncPreferences(context, it).mode != SyncMode.OFF }, accounts.size) to
-                    SyncPasswords.Accounts(accounts.count { CalendarSyncPreferences(context, it).enabled }, accounts.size)
-            }.getOrDefault(SyncPasswords.Accounts(0, 0) to SyncPasswords.Accounts(0, 0))
-        }
-        if (!isAdded) return@launch
-        findPreference<Preference>(SyncPasswords.PREF_CONTACTS)?.show(SyncPasswords.contactsSummary(snapshot.contacts, contacts))
-        findPreference<Preference>(SyncPasswords.PREF_CALENDAR)?.show(SyncPasswords.calendarSummary(snapshot.calendar, calendar))
+    val snapshot = ServiceHealthReader(context).read()
+    val (contacts, calendar) = withContext(Dispatchers.IO) {
+        runCatching {
+            val accounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google")).toList()
+            SyncPasswords.Accounts(accounts.count { ContactSyncPreferences(context, it).mode != SyncMode.OFF }, accounts.size) to
+                SyncPasswords.Accounts(accounts.count { CalendarSyncPreferences(context, it).enabled }, accounts.size)
+        }.getOrDefault(SyncPasswords.Accounts(0, 0) to SyncPasswords.Accounts(0, 0))
     }
+    if (!isAdded) return
+    findPreference<Preference>(SyncPasswords.PREF_CONTACTS)?.show(SyncPasswords.contactsSummary(snapshot.contacts, contacts))
+    findPreference<Preference>(SyncPasswords.PREF_CALENDAR)?.show(SyncPasswords.calendarSummary(snapshot.calendar, calendar))
 }
 
 /** The page itself: the rows on their own, for Settings' tile, Android's Google account page and Core. */
 class SyncPasswordsFragment : ResourceSettingsFragment() {
     init { preferencesResource = R.xml.preferences_sync_passwords }
 
-    override fun onResume() {
-        super.onResume()
-        showSyncPasswordsState()
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        keepSyncPasswordsStateFresh()
     }
 }
 

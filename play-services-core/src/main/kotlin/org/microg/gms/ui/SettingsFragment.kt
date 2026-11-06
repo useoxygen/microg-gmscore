@@ -16,7 +16,7 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import com.google.android.gms.R
 import org.microg.gms.checkin.CheckinPreferences
-import org.microg.gms.cyclon.showSyncPasswordsState
+import org.microg.gms.cyclon.keepSyncPasswordsStateFresh
 import org.microg.gms.gcm.GcmDatabase
 import org.microg.gms.gcm.GcmPrefs
 import org.microg.gms.safetynet.SafetyNetPreferences
@@ -124,10 +124,14 @@ class SettingsFragment : ResourceSettingsFragment() {
         return this
     }
 
+    override fun onViewCreated(view: android.view.View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        keepSyncPasswordsStateFresh()
+    }
+
     override fun onResume() {
         super.onResume()
         val context = requireContext()
-        showSyncPasswordsState()
         if (GcmPrefs.get(requireContext()).isEnabled) {
             val database = GcmDatabase(context)
             val regCount = database.registrationList.size
