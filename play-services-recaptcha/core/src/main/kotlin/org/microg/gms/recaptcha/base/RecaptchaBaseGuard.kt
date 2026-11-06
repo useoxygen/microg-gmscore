@@ -7,17 +7,22 @@ package org.microg.gms.recaptcha.base
 
 import android.content.Context
 import com.google.android.gms.droidguard.DroidGuard
+import com.google.android.gms.droidguard.DroidGuardClient
 import com.google.android.gms.droidguard.DroidGuardHandle
 import com.google.android.gms.droidguard.internal.DroidGuardResultsRequest
+import com.google.android.gms.tasks.OnCompleteListener
 import com.google.android.gms.tasks.Task
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.microg.gms.droidguard.core.DroidGuardPreferences
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** DroidGuard flow Play services uses for reCAPTCHA Base. */
 internal const val RECAPTCHA_BASE_FLOW = "recaptchabase-android"
@@ -55,8 +60,15 @@ internal interface RecaptchaBaseGuard {
  * [RecaptchaBaseGuard] backed by microG's existing DroidGuard runtime, under Play services' own package identity. The
  * caller is passed as the request's third-party caller option, as Play services does.
  */
-internal class DroidGuardRecaptchaBaseGuard(context: Context) : RecaptchaBaseGuard {
-    private val context = context.applicationContext
+internal class DroidGuardRecaptchaBaseGuard(
+    private val client: () -> DroidGuardClient,
+    private val isAvailable: () -> Boolean,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) : RecaptchaBaseGuard {
+    constructor(context: Context) : this(
+        context.applicationContext.let { app -> { DroidGuard.getClient(app) } },
+        context.applicationContext.let { app -> { DroidGuardPreferences.isAvailable(app) } },
+    )
 
     private fun request(callerPackage: String) = DroidGuardResultsRequest().apply {
         bundle.putString(KEY_THIRD_PARTY_CALLER, callerPackage)
@@ -65,70 +77,100 @@ internal class DroidGuardRecaptchaBaseGuard(context: Context) : RecaptchaBaseGua
 
     /** Reads microG's DroidGuard setting (a content provider query) off the main thread. */
     private suspend fun requireAvailable() {
-        val available = withContext(Dispatchers.IO) { DroidGuardPreferences.isAvailable(context) }
+        val available = withContext(io) { isAvailable() }
         if (!available) throw GuardUnavailableException("DroidGuard is disabled")
     }
 
     override suspend fun open(callerPackage: String): RecaptchaBaseGuardHandle {
         requireAvailable()
-        val handle = withContext(Dispatchers.IO) {
-            DroidGuard.getClient(context).init(RECAPTCHA_BASE_FLOW, request(callerPackage))
-        }.awaitClosingLate()
-        // The client reports a handle even when its initialization failed; such a handle only yields ERROR markers.
-        val opened = try {
-            withContext(Dispatchers.IO) { handle.isOpened }
-        } catch (e: Throwable) {
-            handle.close()
-            throw e
+        val pending = PendingHandle()
+        try {
+            // The owner is attached in the same block that starts the Task: withContext drops its result when the
+            // caller is cancelled during the dispatch back, and the Task must not be lost with it.
+            withContext(io) {
+                client().init(RECAPTCHA_BASE_FLOW, request(callerPackage)).addOnCompleteListener(DirectExecutor, pending)
+            }
+            val handle = pending.await()
+            // The client reports a handle even when its initialization failed; such a handle only yields ERROR markers.
+            val opened = try {
+                withContext(io) { handle.isOpened }
+            } catch (e: Throwable) {
+                handle.close()
+                throw e
+            }
+            if (!opened) {
+                handle.close()
+                throw GuardUnavailableException("DroidGuard handle did not open")
+            }
+            return DroidGuardHandleAdapter(handle)
+        } finally {
+            // Closes a handle that arrived but was not taken, and any handle that arrives after this point.
+            pending.abandon()
         }
-        if (!opened) {
-            handle.close()
-            throw GuardUnavailableException("DroidGuard handle did not open")
-        }
-        return DroidGuardHandleAdapter(handle)
     }
 
     override suspend fun results(callerPackage: String, input: Map<String, String>): String {
         requireAvailable()
-        return withContext(Dispatchers.IO) {
-            DroidGuard.getClient(context).getResults(RECAPTCHA_BASE_FLOW, input, request(callerPackage))
+        return withContext(io) {
+            client().getResults(RECAPTCHA_BASE_FLOW, input, request(callerPackage))
         }.awaitResult()
     }
 
     private class DroidGuardHandleAdapter(private val handle: DroidGuardHandle) : RecaptchaBaseGuardHandle {
-        @Volatile
-        private var closed = false
+        private val closed = AtomicBoolean()
 
         override fun snapshot(input: Map<String, String>): String = handle.snapshot(input)
 
         override fun close() {
-            if (closed) return
-            closed = true
-            handle.close()
+            if (closed.compareAndSet(false, true)) handle.close()
         }
     }
 }
 
-/** Awaits a handle; one that arrives after the waiter was cancelled is closed instead of leaking. */
-@OptIn(ExperimentalCoroutinesApi::class)
-private suspend fun Task<DroidGuardHandle>.awaitClosingLate(): DroidGuardHandle =
-    suspendCancellableCoroutine { cont ->
-        addOnCompleteListener { task ->
-            val exception = task.exception
-            when {
-                exception != null -> cont.resumeWithException(exception)
-                task.isCanceled -> cont.cancel()
-                else -> {
-                    val handle = task.result
-                    if (handle == null) {
-                        cont.resumeWithException(GuardUnavailableException("DroidGuard returned no handle"))
-                    } else {
-                        cont.resume(handle) { _ -> handle.close() }
-                    }
-                }
-            }
+private object DirectExecutor : Executor {
+    override fun execute(command: Runnable) = command.run()
+}
+
+/**
+ * Owns the handle an init Task delivers from the moment the Task starts. The opener [await]s and takes it; once the opener
+ * [abandon]s (taken or not), a handle still held or delivered later is closed. Exactly one of the two ends owns it.
+ */
+private class PendingHandle : OnCompleteListener<DroidGuardHandle> {
+    private val lock = Any()
+    private var outcome: Result<DroidGuardHandle>? = null
+    private var abandoned = false
+    private val done = CompletableDeferred<Unit>()
+
+    override fun onComplete(task: Task<DroidGuardHandle>) {
+        val exception = task.exception
+        val result = when {
+            exception != null -> Result.failure(exception)
+            task.isCanceled -> Result.failure(GuardUnavailableException("DroidGuard init was cancelled"))
+            else -> task.result?.let { Result.success(it) }
+                ?: Result.failure(GuardUnavailableException("DroidGuard returned no handle"))
         }
+        val orphan = synchronized(lock) {
+            if (abandoned) result.getOrNull() else null.also { outcome = result }
+        }
+        orphan?.close()
+        done.complete(Unit)
     }
+
+    /** Waits for the Task and takes its handle; the caller owns it from the moment this returns. */
+    suspend fun await(): DroidGuardHandle {
+        done.await()
+        val result = synchronized(lock) { outcome!!.also { outcome = null } }
+        return result.getOrThrow()
+    }
+
+    fun abandon() {
+        val orphan = synchronized(lock) {
+            abandoned = true
+            outcome?.getOrNull().also { outcome = null }
+        }
+        orphan?.close()
+    }
+}
 
 private suspend fun Task<String>.awaitResult(): String =
     suspendCancellableCoroutine { cont ->

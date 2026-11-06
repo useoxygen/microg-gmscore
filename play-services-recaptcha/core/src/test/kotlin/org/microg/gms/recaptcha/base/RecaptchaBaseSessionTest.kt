@@ -7,6 +7,10 @@ package org.microg.gms.recaptcha.base
 
 import com.google.android.gms.common.api.CommonStatusCodes
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
@@ -218,20 +222,127 @@ class RecaptchaBaseSessionTest {
     }
 
     @Test
-    fun handleOpenedAfterCloseIsClosedImmediately() {
-        val release = CountDownLatch(1)
+    fun handleReturnedAsTheInitTimeoutFiresIsKeptNotDropped() {
+        val handle = FakeHandle { syntheticGuardResult("kept") }
         guard.openBehavior = {
-            while (release.count > 0) delay(10)
-            FakeHandle { syntheticGuardResult("x") }.also { guard.handles += it }
+            // Suspends until the timeout has cancelled the operation, then resumes with a live handle: the value a
+            // withTimeout return would discard. (A block that never suspends has its timeout ignored by withTimeout.)
+            val job = currentCoroutineContext()[Job]!!
+            withContext(NonCancellable) { while (!job.isCancelled) delay(5) }
+            handle.also { guard.handles += it }
         }
         val callbacks = RecordingCallbacks()
-        val s = session()
+        val s = session(timeoutMillis = 50)
         s.init(callbacks)
+        val reply = callbacks.nextInit()
+        // The session took the handle, so init reports success and the handle is neither dropped nor closed yet.
+        assertEquals(CommonStatusCodes.SUCCESS, reply.status.statusCode)
+        assertTrue(s.hasInitializedHandle)
+        assertEquals(0, handle.closeCount.get())
         s.close()
+        assertEquals(1, handle.closeCount.get())
+    }
+
+    @Test
+    fun initAndExecuteAfterCloseAreRefusedWithoutDroidGuardWork() {
+        val callbacks = RecordingCallbacks()
+        val s = session()
+        s.close()
+        s.close()
+        s.init(callbacks)
+        s.execute(callbacks, "synthetic-nonce", "synthetic-id")
+        val init = callbacks.nextInit()
+        assertEquals(CommonStatusCodes.INTERNAL_ERROR, init.status.statusCode)
+        assertNull(init.result)
+        val execute = callbacks.nextExecute()
+        assertEquals(CommonStatusCodes.INTERNAL_ERROR, execute.status.statusCode)
+        assertNull(execute.result)
+        assertTrue(guard.opens.isEmpty() && guard.results.isEmpty())
+        Thread.sleep(100)
+        assertEquals(2, callbacks.count.get())
+        assertEquals(0, s.inFlightCount)
+    }
+
+    @Test
+    fun closeAnswersInFlightRequestsOnceWithFailureAndClosesALateHandle() {
+        val openEntered = CountDownLatch(1)
+        val resultsEntered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val resultsCancelled = CountDownLatch(1)
+        guard.openBehavior = {
+            // Does not cooperate with cancellation: the handle arrives after close.
+            openEntered.countDown()
+            release.await()
+            FakeHandle { syntheticGuardResult("late") }.also { guard.handles += it }
+        }
+        guard.resultsBehavior = { _, _ ->
+            resultsEntered.countDown()
+            try {
+                awaitCancellation()
+            } finally {
+                resultsCancelled.countDown()
+            }
+        }
+        val initCallbacks = RecordingCallbacks()
+        val executeCallbacks = RecordingCallbacks()
+        val s = session(timeoutMillis = 60_000)
+        s.init(initCallbacks)
+        s.execute(executeCallbacks, "synthetic-nonce", "synthetic-id")
+        openEntered.awaitOrFail()
+        resultsEntered.awaitOrFail()
+
+        s.close()
+        // Both are answered by close itself, before the guard work ends.
+        val init = initCallbacks.nextInit()
+        assertEquals(CommonStatusCodes.INTERNAL_ERROR, init.status.statusCode)
+        assertNull(init.result)
+        val execute = executeCallbacks.nextExecute()
+        assertEquals(CommonStatusCodes.INTERNAL_ERROR, execute.status.statusCode)
+        assertNull(execute.result)
+        resultsCancelled.awaitOrFail()
+
         release.countDown()
-        callbacks.nextInit()
+        val deadline = System.currentTimeMillis() + 5_000
+        while (guard.handles.isEmpty() || guard.handles.single().closeCount.get() == 0) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("late handle not closed")
+            Thread.sleep(5)
+        }
+        awaitInFlight(s, 0)
         assertEquals(1, guard.handles.single().closeCount.get())
         assertFalse(s.hasInitializedHandle)
+        // The late init does not report success after its handle was closed.
+        assertEquals(1, initCallbacks.count.get())
+        assertEquals(1, executeCallbacks.count.get())
+    }
+
+    @Test
+    fun closingOneSessionLeavesOthersOnTheSameScopeRunning() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        guard.resultsBehavior = { caller, input ->
+            if (caller == "com.example.b") {
+                entered.countDown()
+                while (release.count > 0) delay(5)
+            }
+            syntheticGuardResult("oneshot-$caller-${input[KEY_TOKEN]}")
+        }
+        val a = session("com.example.a")
+        val b = session("com.example.b")
+        val callbacksA = RecordingCallbacks()
+        val callbacksB = RecordingCallbacks()
+        a.init(callbacksA)
+        assertEquals(CommonStatusCodes.SUCCESS, callbacksA.nextInit().status.statusCode)
+        b.execute(callbacksB, "synthetic-nonce-b", "synthetic-id-b")
+        entered.awaitOrFail()
+
+        a.close()
+        assertEquals(1, guard.handles.single().closeCount.get())
+        release.countDown()
+        val replyB = callbacksB.nextExecute()
+        assertEquals(CommonStatusCodes.SUCCESS, replyB.status.statusCode)
+        assertEquals(syntheticGuardResult("oneshot-com.example.b-synthetic-nonce-b"), guardStringIn(replyB))
+        b.execute(callbacksB, "synthetic-nonce-b2", "synthetic-id-b2")
+        assertEquals(CommonStatusCodes.SUCCESS, callbacksB.nextExecute().status.statusCode)
     }
 
     @Test

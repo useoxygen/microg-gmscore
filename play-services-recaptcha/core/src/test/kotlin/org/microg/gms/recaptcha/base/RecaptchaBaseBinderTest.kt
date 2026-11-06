@@ -5,6 +5,7 @@
 
 package org.microg.gms.recaptcha.base
 
+import android.content.Intent
 import android.os.Binder
 import android.os.Bundle
 import android.os.IBinder
@@ -16,6 +17,7 @@ import com.google.android.gms.common.api.Status
 import com.google.android.gms.common.internal.ConnectionInfo
 import com.google.android.gms.common.internal.GetServiceRequest
 import com.google.android.gms.common.internal.IGmsCallbacks
+import com.google.android.gms.common.internal.IGmsServiceBroker
 import com.google.android.gms.recaptchabase.ExecuteResult
 import com.google.android.gms.recaptchabase.InitResult
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +40,7 @@ import org.robolectric.annotation.Config
 import java.util.Base64
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 private const val SERVICE_DESCRIPTOR = "com.google.android.gms.recaptchabase.internal.IRecaptchaBaseService"
 private const val CALLBACKS_DESCRIPTOR = "com.google.android.gms.recaptchabase.internal.IRecaptchaBaseCallbacks"
@@ -263,6 +266,69 @@ class RecaptchaBaseBinderTest {
         assertEquals(CommonStatusCodes.INTERNAL_ERROR, call.status.statusCode)
         assertEquals(null, call.result)
         controller.destroy()
+    }
+
+    /**
+     * A remote client's getService and transactions arrive on a Binder pool thread, not the main thread. The broker must
+     * not call main-thread-only Lifecycle APIs there (LifecycleRegistry.addObserver throws off the main thread).
+     */
+    @Test
+    fun brokerServesAGetServiceCallArrivingOnABinderThread() {
+        val controller = Robolectric.buildService(RecaptchaBaseService::class.java).create()
+        val service = controller.get()
+        shadowOf(service.packageManager).setPackagesForUid(Binder.getCallingUid(), "com.example.app")
+        val broker = IGmsServiceBroker.Stub.asInterface(service.onBind(Intent(GmsService.RECAPTCHABASE.ACTION)))
+        val gms = RecordingGmsCallbacks()
+        val callbacks = RawCallbacks()
+        val failure = AtomicReference<Throwable>()
+
+        val binderThread = Thread({
+            try {
+                assertTrue(Looper.getMainLooper().thread !== Thread.currentThread())
+                broker.getService(gms, GetServiceRequest(380).apply { packageName = "com.example.app" })
+                val connection = gms.calls.poll(5, TimeUnit.SECONDS) ?: throw AssertionError("no connection")
+                assertEquals(CommonStatusCodes.SUCCESS, connection.first)
+                transact(connection.second!!, 2, callbacks, executeRequest("synthetic-nonce", "synthetic-id")).apply {
+                    readException(); recycle()
+                }
+            } catch (e: Throwable) {
+                failure.set(e)
+            }
+        }, "binder-pool-test")
+        binderThread.start()
+        binderThread.join(10_000)
+        failure.get()?.let { throw AssertionError("broker failed on a binder thread", it) }
+
+        // The DroidGuard runtime is not enabled here: execute fails explicitly, with no payload.
+        var call: RawCallbacks.Call? = null
+        val deadline = System.currentTimeMillis() + 10_000
+        while (call == null && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            call = callbacks.calls.poll(20, TimeUnit.MILLISECONDS)
+        }
+        assertNotNull(call)
+        assertEquals(CommonStatusCodes.INTERNAL_ERROR, call!!.status.statusCode)
+        assertEquals(null, call.result)
+        controller.destroy()
+    }
+
+    /** Destroying the service closes every session it handed out; their later requests fail without DroidGuard work. */
+    @Test
+    fun serviceDestroyClosesItsSessions() {
+        val controller = Robolectric.buildService(RecaptchaBaseService::class.java).create()
+        val service = controller.get()
+        shadowOf(service.packageManager).setPackagesForUid(Binder.getCallingUid(), "com.example.app")
+        val gms = RecordingGmsCallbacks()
+        service.handleServiceRequest(gms, GetServiceRequest(380).apply { packageName = "com.example.app" }, GmsService.RECAPTCHABASE)
+        val binder = gms.calls.poll(5, TimeUnit.SECONDS)!!.second!!
+        controller.destroy()
+
+        val callbacks = RawCallbacks()
+        transact(binder, 1, callbacks, initRequest).apply { readException(); recycle() }
+        val call = callbacks.next()
+        assertEquals(1, call.code)
+        assertEquals(CommonStatusCodes.INTERNAL_ERROR, call.status.statusCode)
+        assertEquals(null, call.result)
     }
 
     private class RecordingGmsCallbacks : IGmsCallbacks.Stub() {

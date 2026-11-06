@@ -8,9 +8,6 @@ package org.microg.gms.recaptcha.base
 import android.os.Binder
 import android.os.Parcel
 import android.util.Log
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.common.Feature
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.internal.ConnectionInfo
@@ -20,6 +17,10 @@ import com.google.android.gms.recaptchabase.ExecuteRequest
 import com.google.android.gms.recaptchabase.InitRequest
 import com.google.android.gms.recaptchabase.internal.IRecaptchaBaseCallbacks
 import com.google.android.gms.recaptchabase.internal.IRecaptchaBaseService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.microg.gms.BaseService
 import org.microg.gms.common.GmsService
 import org.microg.gms.common.PackageUtils
@@ -40,6 +41,12 @@ internal val RECAPTCHA_BASE_FEATURES = arrayOf(
 class RecaptchaBaseService : BaseService(TAG, GmsService.RECAPTCHABASE) {
     private val guard by lazy { DroidGuardRecaptchaBaseGuard(this) }
 
+    // Requests arrive on binder threads, where Lifecycle APIs (addObserver, lifecycleScope's first use) must not be called;
+    // the service owns its scope and sessions and closes them in onDestroy instead.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val sessions = HashSet<RecaptchaBaseSession>()
+    private var destroyed = false
+
     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest, service: GmsService) {
         // Both are read on the broker's binder thread, before anything asynchronous happens.
         val callingUid = Binder.getCallingUid()
@@ -49,19 +56,24 @@ class RecaptchaBaseService : BaseService(TAG, GmsService.RECAPTCHABASE) {
             callback.onPostInitComplete(CommonStatusCodes.DEVELOPER_ERROR, null, null)
             return
         }
-        val session = RecaptchaBaseSession(packageName, guard, lifecycleScope)
-        if (lifecycle.currentState == Lifecycle.State.DESTROYED) {
-            session.close()
-        } else {
-            lifecycle.addObserver(LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_DESTROY) session.close()
-            })
-        }
+        val session = RecaptchaBaseSession(packageName, guard, scope)
+        val registered = synchronized(sessions) { !destroyed && sessions.add(session) }
+        if (!registered) session.close()
         callback.onPostInitCompleteWithConnectionInfo(
             CommonStatusCodes.SUCCESS,
             RecaptchaBaseServiceImpl(session, callingUid),
             ConnectionInfo().apply { features = RECAPTCHA_BASE_FEATURES }
         )
+    }
+
+    override fun onDestroy() {
+        val open = synchronized(sessions) {
+            destroyed = true
+            sessions.toList().also { sessions.clear() }
+        }
+        open.forEach { it.close() }
+        scope.cancel()
+        super.onDestroy()
     }
 }
 
