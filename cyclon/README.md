@@ -45,8 +45,8 @@ both codes for each subsequent delivery, and update the tag/allocation when
 rebasing to a new upstream release. The product activation gate also requires
 both codes to exceed the versions in the existing signed APK lock.
 
-The CYC-968 owner-fallback delivery reserves GmsCore `254132107` and Companion/FakeStore
-`84022707`. The immutable published pairs up to `254132106` / `84022706` cannot be reused;
+The CYC-1559 Google sync & passwords delivery reserves GmsCore `254132108` and Companion/FakeStore
+`84022708`. The immutable published pairs up to `254132107` / `84022707` cannot be reused;
 both allocations also exceed the owner-reported installed `254132096` / `84022699` baseline.
 The first FakeStore allocation block is exhausted, so `version.gradle` permits
 the next 100 delivery codes while retaining upstream vending compatibility
