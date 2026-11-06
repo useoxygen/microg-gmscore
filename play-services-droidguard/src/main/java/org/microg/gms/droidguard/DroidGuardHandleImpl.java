@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: isInitialized() asks the service whether the handle initialized, not only whether it is alive.
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -17,6 +18,12 @@ import java.util.concurrent.TimeUnit;
 
 public class DroidGuardHandleImpl implements DroidGuardHandle {
     private static final String TAG = "DroidGuardHandle";
+
+    /** {@code getInitState} of a service that does not have the transaction (its empty reply reads as 0). */
+    public static final int INIT_STATE_UNKNOWN = 0;
+    public static final int INIT_STATE_INITIALIZED = 1;
+    public static final int INIT_STATE_NOT_INITIALIZED = 2;
+
     private final DroidGuardApiClient apiClient;
     private final DroidGuardResultsRequest request;
     private IDroidGuardHandle handle;
@@ -70,6 +77,24 @@ public class DroidGuardHandleImpl implements DroidGuardHandle {
     @Override
     public boolean isOpened() {
         return handle != null && error == null && handle.asBinder().pingBinder();
+    }
+
+    /**
+     * Whether the service's handle initialized its DroidGuard runtime. {@link #isOpened()} only shows that the handle's
+     * Binder is alive: the service keeps an initialization failure to itself and answers later snapshots with error
+     * markers. A service without the {@code getInitState} transaction answers {@link #INIT_STATE_UNKNOWN}; then
+     * {@link #isOpened()} decides, as before. Makes a synchronous Binder call.
+     */
+    public boolean isInitialized() {
+        IDroidGuardHandle handle = this.handle;
+        if (handle == null || error != null || !handle.asBinder().pingBinder()) return false;
+        try {
+            int state = handle.getInitState();
+            return state == INIT_STATE_INITIALIZED || state == INIT_STATE_UNKNOWN;
+        } catch (Exception e) {
+            Log.w(TAG, "Init state unavailable");
+            return false;
+        }
     }
 
     @Override

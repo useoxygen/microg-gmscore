@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: getInitState (a remote handle is usable once it has a flow).
 /*
  * SPDX-FileCopyrightText: 2025 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -12,6 +13,7 @@ import com.google.android.gms.droidguard.internal.DroidGuardInitReply
 import com.google.android.gms.droidguard.internal.DroidGuardResultsRequest
 import com.google.android.gms.droidguard.internal.IDroidGuardHandle
 import android.util.Log
+import org.microg.gms.droidguard.DroidGuardHandleImpl as ClientHandle
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -65,4 +67,8 @@ class RemoteHandleImpl(private val context: Context, private val packageName: St
         this.request = request
         return null
     }
+
+    // Results come from the network at snapshot time; nothing initializes beforehand.
+    override fun getInitState(): Int =
+        if (flow != null) ClientHandle.INIT_STATE_INITIALIZED else ClientHandle.INIT_STATE_NOT_INITIALIZED
 }

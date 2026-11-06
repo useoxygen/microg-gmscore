@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: reports whether initWithRequest initialized the runtime (getInitState).
 /*
  * SPDX-FileCopyrightText: 2021 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -15,6 +16,7 @@ import com.google.android.gms.droidguard.internal.DroidGuardInitReply
 import com.google.android.gms.droidguard.internal.DroidGuardResultsRequest
 import com.google.android.gms.droidguard.internal.IDroidGuardHandle
 import org.microg.gms.droidguard.BytesException
+import org.microg.gms.droidguard.DroidGuardHandleImpl as ClientHandle
 import org.microg.gms.droidguard.GuardCallback
 import org.microg.gms.droidguard.HandleProxy
 import java.io.FileNotFoundException
@@ -25,6 +27,10 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
     private var flow: String? = null
     private var handleProxy: HandleProxy? = null
     private var handleInitError: Throwable? = null
+
+    /** Whether the last initWithRequest left a usable runtime; init errors are otherwise only visible as ERROR snapshots. */
+    @Volatile
+    private var initialized = false
 
     override fun init(flow: String?) {
         Log.d(TAG, "init($flow)")
@@ -69,7 +75,9 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
                     val theApk = factory.getTheApkFile(vmKey)
                     try {
                         theApk.setReadable(true, false)
-                        return DroidGuardInitReply(ParcelFileDescriptor.open(theApk, ParcelFileDescriptor.MODE_READ_ONLY), `object`)
+                        val reply = DroidGuardInitReply(ParcelFileDescriptor.open(theApk, ParcelFileDescriptor.MODE_READ_ONLY), `object`)
+                        initialized = true
+                        return reply
                     } catch (e: FileNotFoundException) {
                         throw Exception("Files for VM $vmKey not found on disk")
                     }
@@ -79,8 +87,12 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
                 handleInitError = e
             }
         }
+        initialized = handleInitError == null && this.handleProxy != null
         return DroidGuardInitReply(null, null)
     }
+
+    override fun getInitState(): Int =
+        if (initialized) ClientHandle.INIT_STATE_INITIALIZED else ClientHandle.INIT_STATE_NOT_INITIALIZED
 
     override fun snapshot(map: MutableMap<Any?, Any?>): ByteArray {
         Log.d(TAG, "snapshot()")
@@ -101,6 +113,7 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
     override fun close() {
         Log.d(TAG, "close()")
         condition.block()
+        initialized = false
         try {
             handleProxy?.close()
         } catch (e: Exception) {

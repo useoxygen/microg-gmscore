@@ -22,13 +22,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.CoroutineContext
 
 /**
- * Handle ownership in [DroidGuardRecaptchaBaseGuard.open] at the points where a coroutine can lose a value: the dispatch
- * back from the IO block that starts the init Task, and the resumption that delivers its handle. Both dispatchers are
- * queues this test drains by hand, so each race is taken at a chosen point rather than by timing.
+ * Handle ownership in [DroidGuardRecaptchaBaseGuard.open] at the points where a coroutine can lose a value: the return
+ * from the worker that starts the init Task, and the resumption that delivers its handle. The caller's dispatcher and
+ * the worker executor are queues this test drains by hand, so each race is taken at a chosen point rather than by timing.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [35])
@@ -37,6 +38,19 @@ class RecaptchaBaseGuardTest {
         private val queue = ArrayDeque<Runnable>()
         override fun dispatch(context: CoroutineContext, block: Runnable) {
             synchronized(queue) { queue.addLast(block) }
+        }
+
+        fun runOne(): Boolean {
+            val next = synchronized(queue) { queue.removeFirstOrNull() } ?: return false
+            next.run()
+            return true
+        }
+    }
+
+    private class QueueExecutor : Executor {
+        private val queue = ArrayDeque<Runnable>()
+        override fun execute(command: Runnable) {
+            synchronized(queue) { queue.addLast(command) }
         }
 
         fun runOne(): Boolean {
@@ -56,7 +70,7 @@ class RecaptchaBaseGuardTest {
     }
 
     private val main = QueueDispatcher()
-    private val io = QueueDispatcher()
+    private val io = QueueExecutor()
     private val source = TaskCompletionSource<DroidGuardHandle>()
     private val inits = mutableListOf<DroidGuardResultsRequest?>()
     private var onInit: () -> Unit = {}
@@ -88,8 +102,8 @@ class RecaptchaBaseGuardTest {
     @Test
     fun initTaskStartedAsTheOpenerIsCancelledStillClosesItsHandle() {
         lateinit var job: Job
-        // Cancelled while the IO block that started the Task is still running: withContext then drops its result when
-        // dispatching back, so the Task must already have an owner.
+        // Cancelled while the worker that started the Task is still running: its result is then dropped, so the Task
+        // must already have an owner.
         onInit = { job.cancel() }
         job = startOpen()
         drain()

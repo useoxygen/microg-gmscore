@@ -31,6 +31,9 @@ dependencies {
 
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.robolectric:robolectric:4.16.1"
+    // DroidGuard's service handle builds a Volley queue, whose class references the platform's optional Apache HTTP
+    // classes; the SDK's stub jar lets them load in host tests (none of its methods are called).
+    testImplementation files("${android.sdkDirectory}/platforms/android-${androidCompileSdk}/optional/org.apache.http.legacy.jar")
 }
 
 wire {
