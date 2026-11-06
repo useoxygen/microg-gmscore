@@ -30,12 +30,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.microg.gms.droidguard.DroidGuardApiClient
+import org.microg.gms.droidguard.DroidGuardResponseFrame
 import org.microg.gms.droidguard.GuardCallback
 import org.microg.gms.droidguard.core.NetworkHandleProxyFactory
 import org.robolectric.RobolectricTestRunner
@@ -94,7 +97,10 @@ class DroidGuardOpenHandleTest {
      * A service handle that starts one runtime per init call, as microG's service handle does (its legacy `init` is
      * `initWithRequest(flow, null)`), and snapshots whichever runtime is current.
      */
-    private class RecordingServiceHandle(private val reply: () -> DroidGuardInitReply?) : IDroidGuardHandle.Stub() {
+    private class RecordingServiceHandle(
+        private val response: (Runtime?) -> ByteArray? = { "synthetic-dg-runtime-${it?.id}-${it?.caller}".toByteArray() },
+        private val reply: () -> DroidGuardInitReply?,
+    ) : IDroidGuardHandle.Stub() {
         data class Runtime(val id: Int, val flow: String?, val caller: String?, val legacy: Boolean)
 
         val runtimes: MutableList<Runtime> = Collections.synchronizedList(ArrayList())
@@ -115,10 +121,10 @@ class DroidGuardOpenHandleTest {
             return reply()
         }
 
-        override fun snapshot(map: MutableMap<Any?, Any?>?): ByteArray {
+        override fun snapshot(map: MutableMap<Any?, Any?>?): ByteArray? {
             val runtime = current
             snapshots += runtime to HashMap(map.orEmpty())
-            return "synthetic-dg-runtime-${runtime?.id}-${runtime?.caller}".toByteArray()
+            return response(runtime)
         }
 
         override fun close() {
@@ -154,13 +160,16 @@ class DroidGuardOpenHandleTest {
 
     private fun apiClient(remote: RemoteHandle) = ConnectedApiClient(HandleService(remote.proxy))
 
-    /** What DroidGuardClientImpl schedules once connected: openHandle for init; openHandle, snapshot, close for results. */
+    /**
+     * What DroidGuardClientImpl does once connected: it starts a framed flow's trace when called, then schedules
+     * openHandle for init, and openHandle, snapshot, close for results.
+     */
     private fun clientFor(api: DroidGuardApiClient) = object : DroidGuardClient {
         override fun init(flow: String, request: DroidGuardResultsRequest?): Task<DroidGuardHandle> =
-            Tasks.forResult(api.openHandle(flow, request ?: DroidGuardResultsRequest()))
+            Tasks.forResult(api.openHandle(flow, request ?: DroidGuardResultsRequest(), DroidGuardResponseFrame.startTrace(flow)))
 
         override fun getResults(flow: String, data: Map<String, String>?, request: DroidGuardResultsRequest?): Task<String> {
-            val handle = api.openHandle(flow, request ?: DroidGuardResultsRequest())
+            val handle = api.openHandle(flow, request ?: DroidGuardResultsRequest(), DroidGuardResponseFrame.startTrace(flow))
             return try {
                 Tasks.forResult(handle.snapshot(data))
             } finally {
@@ -213,7 +222,13 @@ class DroidGuardOpenHandleTest {
         // The kept handle's snapshot reaches that runtime, then the handle is closed once.
         val execute = RecordingCallbacks()
         session.execute(execute, "synthetic-nonce", "synthetic-id")
-        assertEquals(CommonStatusCodes.SUCCESS, execute.nextExecute().status.statusCode)
+        val kept = execute.nextExecute()
+        assertEquals(CommonStatusCodes.SUCCESS, kept.status.statusCode)
+        // The caller receives the service's bytes framed once by the client, with the init and snapshot trace.
+        val keptFrame = decodeFrame(guardResponseOf(kept))
+        assertArrayEquals("synthetic-dg-runtime-1-$CALLER".toByteArray(), keptFrame.response)
+        assertEquals(COARSE_EVENTS, keptFrame.trace.map { it.type })
+        assertEquals(16, keptFrame.clientUuid!!.size)
         awaitTrue("close") { service.closes.get() == 1 }
         val (snapshotRuntime, input) = service.snapshots.single()
         assertEquals(service.runtimes[0], snapshotRuntime)
@@ -222,7 +237,13 @@ class DroidGuardOpenHandleTest {
         // A one-shot result opens its own handle the same way.
         val oneShot = RecordingCallbacks()
         session.execute(oneShot, "synthetic-nonce-2", "synthetic-id-2")
-        assertEquals(CommonStatusCodes.SUCCESS, nextIdlingMainLooper(oneShot).status.statusCode)
+        val oneShotReply = nextIdlingMainLooper(oneShot)
+        assertEquals(CommonStatusCodes.SUCCESS, oneShotReply.status.statusCode)
+        val oneShotFrame = decodeFrame(guardResponseOf(oneShotReply))
+        assertArrayEquals("synthetic-dg-runtime-2-$CALLER".toByteArray(), oneShotFrame.response)
+        assertEquals(COARSE_EVENTS, oneShotFrame.trace.map { it.type })
+        // Both frames carry this client's one UUID.
+        assertArrayEquals(keptFrame.clientUuid, oneShotFrame.clientUuid)
         awaitTrue("one-shot close") { service.closes.get() == 2 }
         assertEquals(2, remote.count(INIT_WITH_REQUEST))
         assertEquals(0, remote.count(INIT))
@@ -253,7 +274,7 @@ class DroidGuardOpenHandleTest {
             { DroidGuardInitReply(syntheticFile(), null) },
         )
         for (reply in replies) {
-            val service = RecordingServiceHandle(reply)
+            val service = RecordingServiceHandle(reply = reply)
             val remote = RemoteHandle(service)
             val handle = apiClient(remote).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest().apply {
                 bundle.putString(KEY_THIRD_PARTY_CALLER, CALLER)
@@ -281,6 +302,105 @@ class DroidGuardOpenHandleTest {
         // The runtime the service started is not left running.
         assertEquals(1, service.closes.get())
         assertEquals(0, remote.count(SNAPSHOT))
+    }
+
+    // --- the client response frame (CYC-1544) ---
+
+    private fun openFramed(service: RecordingServiceHandle): ClientHandle =
+        apiClient(RemoteHandle(service)).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest(), DroidGuardResponseFrame.startTrace(RECAPTCHA_BASE_FLOW)) as ClientHandle
+
+    @Test
+    fun retainedHandleFramesEachSnapshotOnceWithTheHeldDelay() {
+        val service = RecordingServiceHandle { DroidGuardInitReply(null, null) }
+        val handle = openFramed(service)
+        Thread.sleep(HELD_MILLIS)
+        val first = decodeFrame(decodeResult(handle.snapshot(mapOf(KEY_TOKEN to "synthetic-nonce"))))
+        Thread.sleep(HELD_MILLIS)
+        val second = decodeFrame(decodeResult(handle.snapshot(mapOf(KEY_TOKEN to "synthetic-nonce-2"))))
+        handle.close()
+
+        for (frame in listOf(first, second)) {
+            // The service's bytes are kept unchanged and are not themselves framed again.
+            assertArrayEquals("synthetic-dg-runtime-1-null".toByteArray(), frame.response)
+            assertFalse(DroidGuardResponseFrame.isFramed(frame.response))
+            // Each snapshot copies the init trace: four events, not an accumulating list.
+            assertEquals(COARSE_EVENTS, frame.trace.map { it.type })
+            assertEquals(null, frame.trace[0].elapsedMillis)
+        }
+        // The time the handle was held between init end and snapshot start is measured, and grows for a later snapshot.
+        assertTrue("held ${first.trace[2].elapsedMillis}", first.trace[2].elapsedMillis!! >= HELD_MILLIS)
+        assertTrue("held ${second.trace[2].elapsedMillis}", second.trace[2].elapsedMillis!! >= 2 * HELD_MILLIS)
+        assertEquals(first.trace[1], second.trace[1])
+        assertArrayEquals(first.clientUuid, second.clientUuid)
+    }
+
+    @Test
+    fun oneShotResultIsFramedOnce() {
+        val service = RecordingServiceHandle { DroidGuardInitReply(null, null) }
+        val result = clientFor(apiClient(RemoteHandle(service))).getResults(RECAPTCHA_BASE_FLOW, mapOf(KEY_TOKEN to "synthetic-nonce"), null).result!!
+        val frame = decodeFrame(decodeResult(result))
+        assertArrayEquals("synthetic-dg-runtime-1-null".toByteArray(), frame.response)
+        assertEquals(COARSE_EVENTS, frame.trace.map { it.type })
+        RecaptchaBasePayloads.requireUsableGuardResult(result)
+        awaitTrue("close") { service.closes.get() == 1 }
+    }
+
+    @Test
+    fun otherFlowsKeepTheServiceBytes() {
+        val service = RecordingServiceHandle { DroidGuardInitReply(null, null) }
+        val client = clientFor(apiClient(RemoteHandle(service)))
+        assertArrayEquals("synthetic-dg-runtime-1-null".toByteArray(), decodeResult(client.getResults("synthetic-other-flow", emptyMap(), null).result!!))
+        val handle = client.init("synthetic-other-flow", null).result!!
+        assertArrayEquals("synthetic-dg-runtime-2-null".toByteArray(), decodeResult(handle.snapshot(emptyMap())))
+        handle.close()
+    }
+
+    @Test
+    fun alreadyFramedServiceBytesPassThroughUnchanged() {
+        val framed = DroidGuardResponseFrame.frame("synthetic-native".toByteArray(), org.microg.gms.droidguard.DroidGuardClientTrace.start(), null)
+        val handle = openFramed(RecordingServiceHandle(response = { framed }) { DroidGuardInitReply(null, null) })
+        assertArrayEquals(framed, decodeResult(handle.snapshot(emptyMap())))
+        handle.close()
+    }
+
+    @Test
+    fun failedSnapshotsStayUnframedAndAreRejected() {
+        val failures = listOf<(Any?) -> ByteArray?>(
+            { "ERROR : synthetic runtime failure".toByteArray() },
+            { ByteArray(0) },
+            { null },
+            { throw IllegalStateException("synthetic") },
+        )
+        for (failure in failures) {
+            val handle = openFramed(RecordingServiceHandle(response = failure) { DroidGuardInitReply(null, null) })
+            val result = handle.snapshot(emptyMap())
+            assertFalse(DroidGuardResponseFrame.isFramed(decodeResult(result)))
+            try {
+                RecaptchaBasePayloads.requireUsableGuardResult(result)
+                fail("accepted a failed snapshot")
+            } catch (expected: InvalidGuardResultException) {
+            }
+            handle.close()
+        }
+        // A handle whose initialization failed answers with its error marker, unframed.
+        val failed = apiClient(RemoteHandle(RecordingServiceHandle { DroidGuardInitReply(syntheticFile(), Bundle()) }))
+            .openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest(), DroidGuardResponseFrame.startTrace(RECAPTCHA_BASE_FLOW))
+        val result = failed.snapshot(emptyMap())
+        assertTrue(String(decodeResult(result)).startsWith("ERROR : "))
+    }
+
+    private fun decodeResult(result: String): ByteArray {
+        // URL-safe, unpadded, unwrapped, as before.
+        assertTrue(result, result.matches(Regex("^[A-Za-z0-9_-]*$")))
+        return java.util.Base64.getUrlDecoder().decode(result)
+    }
+
+    /** The DroidGuard response inside an execute result's byte form: variable 1, signal responses 6, response 1, field 11. */
+    private fun guardResponseOf(reply: Reply.Execute): ByteArray {
+        val variable = parseProto(reply.result!!.payloadBytes!!).single(1).bytes!!
+        val signals = parseProto(variable).single(6).bytes!!
+        val response = parseProto(signals).single(1).bytes!!
+        return decodeResult(parseProto(response).single(11).string)
     }
 
     // --- no reply: services without initWithRequest, or answering null ---
@@ -317,6 +437,8 @@ class DroidGuardOpenHandleTest {
 
     private companion object {
         const val CALLER = "com.example.app"
+        const val HELD_MILLIS = 60L
+        val COARSE_EVENTS = listOf(1L, 12L, 13L, 14L)
 
         // IDroidGuardHandle transaction codes: FIRST_CALL_TRANSACTION + the AIDL id.
         const val INIT = IBinder.FIRST_CALL_TRANSACTION + 0

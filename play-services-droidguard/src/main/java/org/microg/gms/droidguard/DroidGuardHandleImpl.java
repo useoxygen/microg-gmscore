@@ -1,4 +1,5 @@
 // Modified by Cyclon in 2026: isInitialized() asks the service whether the handle initialized, not only whether it is alive.
+// A framed flow's usable snapshot response is framed with the handle's client trace (CYC-1544).
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -26,27 +27,40 @@ public class DroidGuardHandleImpl implements DroidGuardHandle {
 
     private final DroidGuardApiClient apiClient;
     private final DroidGuardResultsRequest request;
+    /** The init trace of a framed flow's handle; null for every other handle. */
+    private final DroidGuardClientTrace trace;
     private IDroidGuardHandle handle;
     private byte[] error;
 
     public DroidGuardHandleImpl(DroidGuardApiClient apiClient, DroidGuardResultsRequest request, IDroidGuardHandle handle) {
+        this(apiClient, request, handle, null);
+    }
+
+    public DroidGuardHandleImpl(DroidGuardApiClient apiClient, DroidGuardResultsRequest request, IDroidGuardHandle handle, DroidGuardClientTrace trace) {
         this.apiClient = apiClient;
         this.request = request;
         this.handle = handle;
+        this.trace = trace;
     }
 
     public DroidGuardHandleImpl(DroidGuardApiClient apiClient, DroidGuardResultsRequest request, String error) {
         this.apiClient = apiClient;
         this.request = request;
+        this.trace = null;
         this.error = Utils.getErrorBytes(error);
     }
 
     @Override
     public String snapshot(Map<String, String> data) {
         byte[] result;
+        DroidGuardClientTrace snapshotTrace = null;
         if (error != null) {
             result = error;
         } else {
+            if (trace != null) {
+                snapshotTrace = trace.copy();
+                snapshotTrace.record(DroidGuardClientTrace.SNAPSHOT_START);
+            }
             ArrayBlockingQueue<byte[]> resultQueue = new ArrayBlockingQueue<>(1);
             apiClient.runOnHandler(() -> {
                 byte[] innerResult;
@@ -70,6 +84,10 @@ public class DroidGuardHandleImpl implements DroidGuardHandle {
             } catch (InterruptedException e) {
                 result = Utils.getErrorBytes("Results transfer failed: " + e);
             }
+        }
+        if (snapshotTrace != null && DroidGuardResponseFrame.shouldFrame(result)) {
+            snapshotTrace.record(DroidGuardClientTrace.SNAPSHOT_END);
+            result = DroidGuardResponseFrame.frame(result, snapshotTrace, DroidGuardResponseFrame.clientUuid(apiClient.getContext()));
         }
         return Utils.toBase64(result);
     }
