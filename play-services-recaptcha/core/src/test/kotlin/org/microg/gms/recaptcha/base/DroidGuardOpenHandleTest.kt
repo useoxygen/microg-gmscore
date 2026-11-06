@@ -1,0 +1,327 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Cyclon
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+package org.microg.gms.recaptcha.base
+
+import android.content.Context
+import android.os.Binder
+import android.os.Bundle
+import android.os.IBinder
+import android.os.IInterface
+import android.os.Parcel
+import android.os.ParcelFileDescriptor
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.api.CommonStatusCodes
+import com.google.android.gms.common.api.internal.ConnectionCallbacks
+import com.google.android.gms.common.api.internal.OnConnectionFailedListener
+import com.google.android.gms.droidguard.DroidGuardClient
+import com.google.android.gms.droidguard.DroidGuardHandle
+import com.google.android.gms.droidguard.internal.DroidGuardInitReply
+import com.google.android.gms.droidguard.internal.DroidGuardResultsRequest
+import com.google.android.gms.droidguard.internal.IDroidGuardCallbacks
+import com.google.android.gms.droidguard.internal.IDroidGuardHandle
+import com.google.android.gms.droidguard.internal.IDroidGuardService
+import com.google.android.gms.tasks.Task
+import com.google.android.gms.tasks.Tasks
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.microg.gms.droidguard.DroidGuardApiClient
+import org.microg.gms.droidguard.GuardCallback
+import org.microg.gms.droidguard.core.NetworkHandleProxyFactory
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowLooper
+import java.io.File
+import java.util.Collections
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import org.microg.gms.droidguard.DroidGuardHandleImpl as ClientHandle
+import org.microg.gms.droidguard.core.DroidGuardHandleImpl as ServiceHandle
+
+/**
+ * microG's real [DroidGuardApiClient.openHandle] against a service handle reached through a Binder proxy, so each reply
+ * crosses a Parcel as it does between processes (CYC-1506). A service answers a present `DroidGuardInitReply(null, null)`
+ * when nothing more is needed; the client must keep that one runtime, and run the legacy one-way `init` only when the
+ * service sent no reply at all.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [35])
+class DroidGuardOpenHandleTest {
+    private val context: Context = RuntimeEnvironment.getApplication()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val executors = mutableListOf<ThreadPoolExecutor>()
+
+    @After
+    fun tearDown() {
+        scope.cancel()
+        executors.forEach { it.shutdownNow() }
+    }
+
+    private fun workers() =
+        ThreadPoolExecutor(WORKER_THREADS, WORKER_THREADS, 1, TimeUnit.SECONDS, ArrayBlockingQueue(WORKER_QUEUE), ThreadPoolExecutor.AbortPolicy())
+            .also { executors += it }
+
+    /** Forwards Parcels to [target]; [unknownCodes] are refused as by a service built without those transactions. */
+    private class RemoteHandle(private val target: IDroidGuardHandle.Stub, private val unknownCodes: Set<Int> = emptySet()) : Binder() {
+        private val codes: MutableList<Int> = Collections.synchronizedList(ArrayList())
+        val proxy: IDroidGuardHandle = IDroidGuardHandle.Stub.asInterface(this)
+
+        override fun queryLocalInterface(descriptor: String): IInterface? = null
+
+        override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+            codes += code
+            if (code in unknownCodes) return false
+            return target.transact(code, data, reply, flags)
+        }
+
+        fun count(code: Int) = synchronized(codes) { codes.count { it == code } }
+    }
+
+    /**
+     * A service handle that starts one runtime per init call, as microG's service handle does (its legacy `init` is
+     * `initWithRequest(flow, null)`), and snapshots whichever runtime is current.
+     */
+    private class RecordingServiceHandle(private val reply: () -> DroidGuardInitReply?) : IDroidGuardHandle.Stub() {
+        data class Runtime(val id: Int, val flow: String?, val caller: String?, val legacy: Boolean)
+
+        val runtimes: MutableList<Runtime> = Collections.synchronizedList(ArrayList())
+        val snapshots: MutableList<Pair<Runtime?, Map<Any?, Any?>>> = Collections.synchronizedList(ArrayList())
+        val closes = AtomicInteger()
+        @Volatile private var current: Runtime? = null
+
+        private fun start(flow: String?, request: DroidGuardResultsRequest?, legacy: Boolean) {
+            val runtime = Runtime(runtimes.size + 1, flow, request?.bundle?.getString(KEY_THIRD_PARTY_CALLER), legacy)
+            runtimes += runtime
+            current = runtime
+        }
+
+        override fun init(flow: String?) = start(flow, null, legacy = true)
+
+        override fun initWithRequest(flow: String?, request: DroidGuardResultsRequest?): DroidGuardInitReply? {
+            start(flow, request, legacy = false)
+            return reply()
+        }
+
+        override fun snapshot(map: MutableMap<Any?, Any?>?): ByteArray {
+            val runtime = current
+            snapshots += runtime to HashMap(map.orEmpty())
+            return "synthetic-dg-runtime-${runtime?.id}-${runtime?.caller}".toByteArray()
+        }
+
+        override fun close() {
+            closes.incrementAndGet()
+            current = null
+        }
+
+        override fun getInitState(): Int =
+            if (current != null) ClientHandle.INIT_STATE_INITIALIZED else ClientHandle.INIT_STATE_NOT_INITIALIZED
+    }
+
+    private class HandleService(private val handle: IDroidGuardHandle) : IDroidGuardService.Stub() {
+        override fun guard(callbacks: IDroidGuardCallbacks?, flow: String?, map: MutableMap<Any?, Any?>?) = throw AssertionError("not used")
+        override fun guardWithRequest(callbacks: IDroidGuardCallbacks?, flow: String?, map: MutableMap<Any?, Any?>?, request: DroidGuardResultsRequest?) =
+            throw AssertionError("not used")
+        override fun getHandle(): IDroidGuardHandle = handle
+        override fun getClientTimeoutMillis(): Int = 60_000
+    }
+
+    /** microG's DroidGuard client, already connected to [service]. */
+    private inner class ConnectedApiClient(private val service: IDroidGuardService) : DroidGuardApiClient(
+        context,
+        object : ConnectionCallbacks {
+            override fun onConnected(connectionHint: Bundle?) = Unit
+            override fun onConnectionSuspended(cause: Int) = Unit
+        },
+        object : OnConnectionFailedListener {
+            override fun onConnectionFailed(result: ConnectionResult) = Unit
+        },
+    ) {
+        override fun getServiceInterface(): IDroidGuardService = service
+    }
+
+    private fun apiClient(remote: RemoteHandle) = ConnectedApiClient(HandleService(remote.proxy))
+
+    /** What DroidGuardClientImpl schedules once connected: openHandle for init; openHandle, snapshot, close for results. */
+    private fun clientFor(api: DroidGuardApiClient) = object : DroidGuardClient {
+        override fun init(flow: String, request: DroidGuardResultsRequest?): Task<DroidGuardHandle> =
+            Tasks.forResult(api.openHandle(flow, request ?: DroidGuardResultsRequest()))
+
+        override fun getResults(flow: String, data: Map<String, String>?, request: DroidGuardResultsRequest?): Task<String> {
+            val handle = api.openHandle(flow, request ?: DroidGuardResultsRequest())
+            return try {
+                Tasks.forResult(handle.snapshot(data))
+            } finally {
+                handle.close()
+            }
+        }
+    }
+
+    private fun awaitTrue(what: String, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!condition()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("timed out waiting for $what")
+            Thread.sleep(5)
+        }
+    }
+
+    /** One-shot results arrive through a Task listener on the main looper, which this test thread holds. */
+    private fun nextIdlingMainLooper(callbacks: RecordingCallbacks): Reply.Execute {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline) {
+            ShadowLooper.idleMainLooper()
+            callbacks.replies.poll(5, TimeUnit.MILLISECONDS)?.let { return it as Reply.Execute }
+        }
+        throw AssertionError("no callback")
+    }
+
+    private fun syntheticFile(): ParcelFileDescriptor {
+        val file = File.createTempFile("synthetic-dg", ".apk", context.cacheDir)
+        file.writeText("synthetic")
+        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+    }
+
+    // --- a present reply without supplemental action ---
+
+    @Test
+    fun emptyReplyKeepsOneRuntimeWithTheVerifiedCallerThroughSnapshotAndClose() {
+        val service = RecordingServiceHandle { DroidGuardInitReply(null, null) }
+        val remote = RemoteHandle(service)
+        val session = RecaptchaBaseSession(CALLER, DroidGuardRecaptchaBaseGuard({ clientFor(apiClient(remote)) }, { true }, workers()), scope)
+
+        val init = RecordingCallbacks()
+        session.init(init)
+        assertEquals(CommonStatusCodes.SUCCESS, init.nextInit().status.statusCode)
+        assertTrue(session.hasInitializedHandle)
+        // One modern init, no legacy init: the only runtime carries the caller option.
+        assertEquals(1, remote.count(INIT_WITH_REQUEST))
+        assertEquals(0, remote.count(INIT))
+        assertEquals(listOf(RecordingServiceHandle.Runtime(1, RECAPTCHA_BASE_FLOW, CALLER, legacy = false)), service.runtimes.toList())
+
+        // The kept handle's snapshot reaches that runtime, then the handle is closed once.
+        val execute = RecordingCallbacks()
+        session.execute(execute, "synthetic-nonce", "synthetic-id")
+        assertEquals(CommonStatusCodes.SUCCESS, execute.nextExecute().status.statusCode)
+        awaitTrue("close") { service.closes.get() == 1 }
+        val (snapshotRuntime, input) = service.snapshots.single()
+        assertEquals(service.runtimes[0], snapshotRuntime)
+        assertEquals("synthetic-nonce", input[KEY_TOKEN])
+
+        // A one-shot result opens its own handle the same way.
+        val oneShot = RecordingCallbacks()
+        session.execute(oneShot, "synthetic-nonce-2", "synthetic-id-2")
+        assertEquals(CommonStatusCodes.SUCCESS, nextIdlingMainLooper(oneShot).status.statusCode)
+        awaitTrue("one-shot close") { service.closes.get() == 2 }
+        assertEquals(2, remote.count(INIT_WITH_REQUEST))
+        assertEquals(0, remote.count(INIT))
+        assertEquals(RecordingServiceHandle.Runtime(2, RECAPTCHA_BASE_FLOW, CALLER, legacy = false), service.runtimes.last())
+        assertEquals(service.runtimes[1], service.snapshots.last().first)
+        assertEquals(2, service.runtimes.size)
+        session.close()
+    }
+
+    @Test
+    fun microgServiceHandleReplyIsNotFollowedByALegacyInit() {
+        // microG's own service handle answers DroidGuardInitReply(null, null); here its runtime fails to start because
+        // DroidGuard's settings provider is absent, which does not change the reply.
+        val service = ServiceHandle(context, context.packageName, NetworkHandleProxyFactory(context), GuardCallback(context, context.packageName))
+        val remote = RemoteHandle(service)
+        val handle = apiClient(remote).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest()) as ClientHandle
+        assertEquals(1, remote.count(INIT_WITH_REQUEST))
+        assertEquals(0, remote.count(INIT))
+        assertTrue(handle.isOpened)
+        handle.close()
+        awaitTrue("close") { remote.count(CLOSE) == 1 }
+    }
+
+    @Test
+    fun incompleteRepliesAreIgnoredWithoutALegacyInit() {
+        val replies = listOf<() -> DroidGuardInitReply>(
+            { DroidGuardInitReply(null, Bundle().apply { putString("h", "synthetic-vm") }) },
+            { DroidGuardInitReply(syntheticFile(), null) },
+        )
+        for (reply in replies) {
+            val service = RecordingServiceHandle(reply)
+            val remote = RemoteHandle(service)
+            val handle = apiClient(remote).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest().apply {
+                bundle.putString(KEY_THIRD_PARTY_CALLER, CALLER)
+            }) as ClientHandle
+            assertEquals(1, remote.count(INIT_WITH_REQUEST))
+            assertEquals(0, remote.count(INIT))
+            assertEquals(listOf(RecordingServiceHandle.Runtime(1, RECAPTCHA_BASE_FLOW, CALLER, legacy = false)), service.runtimes.toList())
+            assertTrue(handle.isInitialized)
+            assertEquals(0, service.closes.get())
+            handle.close()
+            awaitTrue("close") { service.closes.get() == 1 }
+        }
+    }
+
+    @Test
+    fun supplementalReplyThatCannotBeHandledClosesTheServiceHandle() {
+        // A file and a Bundle ask the client to run a VM itself; without its key the client cannot, and the handle fails.
+        val service = RecordingServiceHandle { DroidGuardInitReply(syntheticFile(), Bundle()) }
+        val remote = RemoteHandle(service)
+        val handle = apiClient(remote).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest()) as ClientHandle
+        assertFalse(handle.isOpened)
+        assertFalse(handle.isInitialized)
+        assertEquals(1, remote.count(INIT_WITH_REQUEST))
+        assertEquals(0, remote.count(INIT))
+        // The runtime the service started is not left running.
+        assertEquals(1, service.closes.get())
+        assertEquals(0, remote.count(SNAPSHOT))
+    }
+
+    // --- no reply: services without initWithRequest, or answering null ---
+
+    @Test
+    fun serviceWithoutInitWithRequestFallsBackToTheLegacyInit() {
+        val service = RecordingServiceHandle { throw AssertionError("not reached") }
+        val remote = RemoteHandle(service, unknownCodes = setOf(INIT_WITH_REQUEST))
+        val handle = apiClient(remote).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest()) as ClientHandle
+        assertEquals(1, remote.count(INIT_WITH_REQUEST))
+        assertEquals(1, remote.count(INIT))
+        assertEquals(listOf(RecordingServiceHandle.Runtime(1, RECAPTCHA_BASE_FLOW, null, legacy = true)), service.runtimes.toList())
+        assertTrue(handle.isOpened)
+
+        handle.snapshot(mapOf(KEY_TOKEN to "synthetic-nonce"))
+        assertEquals(service.runtimes[0], service.snapshots.single().first)
+        handle.close()
+        awaitTrue("close") { service.closes.get() == 1 }
+    }
+
+    @Test
+    fun nullReplyFallsBackToTheLegacyInit() {
+        // microG's network-mode handle answers null; its legacy init only records the flow again.
+        val service = RecordingServiceHandle { null }
+        val remote = RemoteHandle(service)
+        val handle = apiClient(remote).openHandle(RECAPTCHA_BASE_FLOW, DroidGuardResultsRequest()) as ClientHandle
+        assertEquals(1, remote.count(INIT_WITH_REQUEST))
+        assertEquals(1, remote.count(INIT))
+        assertTrue(service.runtimes.last().legacy)
+        assertTrue(handle.isOpened)
+        handle.close()
+        awaitTrue("close") { service.closes.get() == 1 }
+    }
+
+    private companion object {
+        const val CALLER = "com.example.app"
+
+        // IDroidGuardHandle transaction codes: FIRST_CALL_TRANSACTION + the AIDL id.
+        const val INIT = IBinder.FIRST_CALL_TRANSACTION + 0
+        const val SNAPSHOT = IBinder.FIRST_CALL_TRANSACTION + 1
+        const val CLOSE = IBinder.FIRST_CALL_TRANSACTION + 2
+        const val INIT_WITH_REQUEST = IBinder.FIRST_CALL_TRANSACTION + 4
+    }
+}
