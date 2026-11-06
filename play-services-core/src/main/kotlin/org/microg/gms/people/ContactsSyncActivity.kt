@@ -503,6 +503,16 @@ class ContactsSyncActivity : ComponentActivity() {
             }
             if (busy && (pending == null || pending?.first == account)) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!on) return@OutlinedCard
+            // Android's own Account sync switch for this account is off (the global Auto-sync notice covers its own case).
+            if (ContentResolver.getMasterSyncAutomatically() && prefs.androidSyncOff) {
+                Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                    Notice(stringResource(R.string.cyclon_sync_account_off)) {
+                        CyclonOutlinedButton(onClick = { prefs.resumeAndroidSync(); revision++ }, enabled = !busy) {
+                            Text(stringResource(R.string.cyclon_sync_turn_back_on))
+                        }
+                    }
+                }
+            }
             problemOf(status)?.let { problem ->
                 Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) { ProblemNotice(account, prefs, status, problem) }
             }

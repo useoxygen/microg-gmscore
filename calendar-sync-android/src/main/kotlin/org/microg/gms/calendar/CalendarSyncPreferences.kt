@@ -9,7 +9,7 @@ import android.content.Context
 import android.os.Bundle
 
 class CalendarSyncPreferences(context: Context, val account: Account) {
-    private val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val prefix = "${account.type}:${account.name}:"
     val enabled get() = prefs.getBoolean(prefix + "enabled", false)
     /** Absence is different from an owner's saved off choice. Transfers must never overwrite either choice. */
@@ -45,6 +45,17 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
             ContentResolver.removePeriodicSync(account, AUTHORITY, Bundle.EMPTY)
         }
     }
+    /** On here, but Android's own switch for this account (Settings › Accounts › Account sync) stops it running. */
+    val androidSyncOff: Boolean get() = enabled &&
+        (!ContentResolver.getSyncAutomatically(account, AUTHORITY) || ContentResolver.getIsSyncable(account, AUTHORITY) <= 0)
+    /** The owner's "Turn sync back on": schedules this account again as turning sync on does, keeping two-way. */
+    fun resumeAndroidSync() {
+        if (!enabled) return
+        ContentResolver.setIsSyncable(account, AUTHORITY, 1)
+        ContentResolver.setSyncAutomatically(account, AUTHORITY, true)
+        ContentResolver.addPeriodicSync(account, AUTHORITY, Bundle.EMPTY, 3600)
+        refresh()
+    }
     fun refresh() {
         if (enabled) ContentResolver.requestSync(account, AUTHORITY, Bundle().apply {
             putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
@@ -58,10 +69,11 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
     }
     companion object {
         const val AUTHORITY = "com.android.calendar"
+        const val PREFERENCES = "calendar-sync"
         /** Removal must withdraw the old opt-in, even if the same account is added again later. */
         fun forgetRemovedAccounts(context: Context) {
             val accounts = AccountManager.get(context).accounts.toSet()
-            val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
+            val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             val keys = prefs.all.keys
             val removedPrefixes = keys.filter { it.endsWith(":enabled") || it.endsWith(":uploadsHeld") }.mapNotNull { key ->
                 val identity = key.substringBeforeLast(':')
