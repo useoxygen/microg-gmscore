@@ -2,30 +2,26 @@
  * SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.cyclon
 
-import android.app.Activity
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.view.autofill.AutofillManager
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import com.google.android.gms.R
 import kotlinx.coroutines.launch
-import org.microg.gms.ui.MainSettingsActivity
+import org.microg.tools.ui.AbstractSettingsActivity
 import org.microg.tools.ui.ResourceSettingsFragment
 
 /**
  * Contacts sync, Calendar sync and Passwords in one place, each with its state in plain words, so owners need not
- * find them under Google accounts › Account settings. The rows open the existing screens; the state comes from the
+ * find them under Google accounts › Account settings (CYC-1467). The rows open the existing screens; the state comes from the
  * same reader as Cyclon Services health, so the two never disagree.
  */
 internal object SyncPasswords {
     const val PREF_CONTACTS = "pref_sync_contacts"
     const val PREF_CALENDAR = "pref_sync_calendar"
     const val PREF_PASSWORDS = "pref_sync_passwords"
-    const val DEEP_LINK = "x-gms-settings://sync"
 
     fun contactsSummary(reading: HealthReading): Int = summary(reading, R.string.cyclon_sync_contacts_off)
     fun calendarSummary(reading: HealthReading): Int = summary(reading, R.string.cyclon_sync_calendar_off)
@@ -56,7 +52,7 @@ internal fun PreferenceFragmentCompat.showSyncPasswordsState() {
     }
 }
 
-/** The page Settings' "Sync & passwords" tile and x-gms-settings://sync open. */
+/** The page itself: the rows on their own, for Settings' tile, Android's Google account page and Core. */
 class SyncPasswordsFragment : ResourceSettingsFragment() {
     init { preferencesResource = R.xml.preferences_sync_passwords }
 
@@ -67,14 +63,10 @@ class SyncPasswordsFragment : ResourceSettingsFragment() {
 }
 
 /**
- * The Settings tile's target. A tile intent carries no data, and an alias of MainSettingsActivity would only bring an
- * existing Cyclon Services task forward; so start the page's deep link in a fresh settings task and finish.
+ * Hosts the page in its own task (taskAffinity ""), so Back and Up return to whatever opened it (Settings, the
+ * Google account page, Home) rather than to the Cyclon Services home or an earlier Cyclon Services screen.
  */
-class SyncPasswordsLinkActivity : Activity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SyncPasswords.DEEP_LINK), this, MainSettingsActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-        finish()
-    }
+class SyncPasswordsActivity : AbstractSettingsActivity() {
+    init { showHomeAsUp = true }
+    override fun getFragment(): Fragment = SyncPasswordsFragment()
 }

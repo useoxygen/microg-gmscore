@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modified by Cyclon in 2026: Cyclon Services identity, health, Sync & passwords and About screens. -->
+<!-- Modified by Cyclon in 2026: Cyclon Services identity, health and About screens. -->
 <navigation xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -39,13 +39,6 @@
         <action
             android:id="@+id/openAbout"
             app:destination="@id/aboutFragment" />
-    </fragment>
-
-    <fragment
-        android:id="@+id/cyclonSyncPasswordsFragment"
-        android:name="org.microg.gms.cyclon.SyncPasswordsFragment"
-        android:label="@string/cyclon_sync_passwords_title">
-        <deepLink app:uri="x-gms-settings://sync" />
     </fragment>
 
     <fragment

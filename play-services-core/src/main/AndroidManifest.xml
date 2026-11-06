@@ -1158,16 +1158,14 @@
                 android:resource="@string/cyclon_services_summary" />
         </activity-alias>
 
-        <!-- Settings' "Sync & passwords" tile: opens Cyclon Services' Sync & passwords page (CYC-1467). -->
+        <!-- Google sync & passwords (CYC-1467): Settings' tile, Android's Google account page and Core open it. Its own
+             task, so Back returns to whatever opened it. -->
         <activity
-            android:name="org.microg.gms.cyclon.SyncPasswordsLinkActivity"
+            android:name="org.microg.gms.cyclon.SyncPasswordsActivity"
             android:exported="true"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
             android:label="@string/cyclon_sync_passwords_title"
             android:process=":ui"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.NoDisplay">
+            android:taskAffinity="">
             <intent-filter>
                 <action android:name="com.android.settings.action.EXTRA_SETTINGS" />
             </intent-filter>
@@ -1176,7 +1174,7 @@
                 android:value="com.android.settings.category.device" />
             <meta-data
                 android:name="com.android.settings.icon"
-                android:resource="@drawable/ic_cyclon_passwords" />
+                android:resource="@drawable/ic_cyclon_sync" />
             <meta-data
                 android:name="com.android.settings.icon_tintable"
                 android:value="true" />
