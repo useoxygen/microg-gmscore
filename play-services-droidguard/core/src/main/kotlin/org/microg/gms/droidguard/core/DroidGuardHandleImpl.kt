@@ -1,4 +1,4 @@
-// Modified by Cyclon in 2026: reports whether initWithRequest initialized the runtime (getInitState).
+// Modified by Cyclon in 2026: reports initialization state and closes replaced or failed runtimes.
 /*
  * SPDX-FileCopyrightText: 2021 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -23,12 +23,14 @@ import java.io.FileNotFoundException
 
 class DroidGuardHandleImpl(private val context: Context, private val packageName: String, private val factory: NetworkHandleProxyFactory, private val callback: GuardCallback) : IDroidGuardHandle.Stub() {
     private val condition = ConditionVariable()
+    // A runtime must not be closed by init/close while a snapshot is using it.
+    private val runtimeLock = Any()
 
     private var flow: String? = null
     private var handleProxy: HandleProxy? = null
     private var handleInitError: Throwable? = null
 
-    /** Whether the last initWithRequest left a usable runtime; init errors are otherwise only visible as ERROR snapshots. */
+    /** Whether the latest init left a usable runtime; init errors are otherwise only visible as ERROR snapshots. */
     @Volatile
     private var initialized = false
 
@@ -38,9 +40,14 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
     }
 
     @SuppressLint("SetWorldReadable")
-    override fun initWithRequest(flow: String?, request: DroidGuardResultsRequest?): DroidGuardInitReply {
+    override fun initWithRequest(flow: String?, request: DroidGuardResultsRequest?): DroidGuardInitReply = synchronized(runtimeLock) {
         Log.d(TAG, "initWithRequest($flow)")
+        initialized = false
+        handleInitError = null
         this.flow = flow
+        val previous = this.handleProxy
+        this.handleProxy = null
+        closeProxy(previous)
         var handleProxy: HandleProxy? = null
         try {
             if (!LOW_LATENCY_ENABLED || flow in NOT_LOW_LATENCY_FLOWS) {
@@ -57,38 +64,34 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
             if (handleProxy == null) {
                 handleProxy = factory.createHandle(packageName, flow, callback, request)
             }
-            if (handleProxy.init()) {
-                this.handleProxy = handleProxy
-            } else {
+            if (!handleProxy.init()) {
                 throw Exception("init failed")
             }
+            val `object` = handleProxy.handle.javaClass.getDeclaredMethod("rb").invoke(handleProxy.handle) as? Parcelable?
+            val reply = if (`object` != null) {
+                val vmKey = handleProxy.vmKey
+                val theApk = factory.getTheApkFile(vmKey)
+                try {
+                    theApk.setReadable(true, false)
+                    DroidGuardInitReply(ParcelFileDescriptor.open(theApk, ParcelFileDescriptor.MODE_READ_ONLY), `object`)
+                } catch (e: FileNotFoundException) {
+                    throw Exception("Files for VM $vmKey not found on disk")
+                }
+            } else {
+                DroidGuardInitReply(null, null)
+            }
+            this.handleProxy = handleProxy
+            handleProxy = null // Ownership transfers only after the entire initialization succeeds.
+            initialized = true
+            reply
         } catch (e: Exception) {
             Log.w(TAG, "Error during handle init", e)
-            this.handleInitError = e
+            handleInitError = e
+            DroidGuardInitReply(null, null)
+        } finally {
+            closeProxy(handleProxy)
+            condition.open()
         }
-        this.condition.open()
-        if (handleInitError == null) {
-            try {
-                val `object` = handleProxy!!.handle.javaClass.getDeclaredMethod("rb").invoke(handleProxy.handle) as? Parcelable?
-                if (`object` != null) {
-                    val vmKey = handleProxy.vmKey
-                    val theApk = factory.getTheApkFile(vmKey)
-                    try {
-                        theApk.setReadable(true, false)
-                        val reply = DroidGuardInitReply(ParcelFileDescriptor.open(theApk, ParcelFileDescriptor.MODE_READ_ONLY), `object`)
-                        initialized = true
-                        return reply
-                    } catch (e: FileNotFoundException) {
-                        throw Exception("Files for VM $vmKey not found on disk")
-                    }
-                }
-            } catch (e: Exception) {
-                this.handleProxy = null
-                handleInitError = e
-            }
-        }
-        initialized = handleInitError == null && this.handleProxy != null
-        return DroidGuardInitReply(null, null)
     }
 
     override fun getInitState(): Int =
@@ -97,15 +100,17 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
     override fun snapshot(map: MutableMap<Any?, Any?>): ByteArray {
         Log.d(TAG, "snapshot()")
         condition.block()
-        handleInitError?.let { return FallbackCreator.create(flow, context, map, it) }
-        val handleProxy = this.handleProxy ?: return FallbackCreator.create(flow, context, map, IllegalStateException())
-        return try {
-            handleProxy.handle::class.java.getDeclaredMethod("ss", Map::class.java).invoke(handleProxy.handle, map) as ByteArray
-        } catch (e: Exception) {
+        return synchronized(runtimeLock) {
+            handleInitError?.let { return FallbackCreator.create(flow, context, map, it) }
+            val handleProxy = this.handleProxy ?: return FallbackCreator.create(flow, context, map, IllegalStateException())
             try {
-                throw BytesException(handleProxy.extra, e)
-            } catch (e2: Exception) {
-                FallbackCreator.create(flow, context, map, e2)
+                handleProxy.handle::class.java.getDeclaredMethod("ss", Map::class.java).invoke(handleProxy.handle, map) as ByteArray
+            } catch (e: Exception) {
+                try {
+                    throw BytesException(handleProxy.extra, e)
+                } catch (e2: Exception) {
+                    FallbackCreator.create(flow, context, map, e2)
+                }
             }
         }
     }
@@ -113,14 +118,21 @@ class DroidGuardHandleImpl(private val context: Context, private val packageName
     override fun close() {
         Log.d(TAG, "close()")
         condition.block()
-        initialized = false
+        synchronized(runtimeLock) {
+            initialized = false
+            val handleProxy = this.handleProxy
+            this.handleProxy = null
+            handleInitError = null
+            closeProxy(handleProxy)
+        }
+    }
+
+    private fun closeProxy(handleProxy: HandleProxy?) {
         try {
             handleProxy?.close()
         } catch (e: Exception) {
             Log.w(TAG, "Error during handle close", e)
         }
-        handleProxy = null
-        handleInitError = null
     }
 
     companion object {
