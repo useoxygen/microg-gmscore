@@ -6,6 +6,8 @@ import org.microg.gms.cyclon.DeviceAccount
 import android.Manifest
 import android.accounts.*
 import android.content.ContentResolver
+import android.content.Intent
+import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -115,6 +117,17 @@ class CalendarSyncActivity : ComponentActivity() {
                             prefs.status == "local" -> R.string.cyclon_calendar_local
                             else -> R.string.contacts_sync_ready
                         }))
+                        // A paused sync says how to resume it: Android's Auto-sync (all apps, so in Android's settings)
+                        // or this account's own switch, which is turned back on here.
+                        if (!ContentResolver.getMasterSyncAutomatically()) {
+                            CyclonOutlinedButton(onClick = {
+                                runCatching { startActivity(Intent(Settings.ACTION_SYNC_SETTINGS)) }
+                            }, enabled = !busy) { Text(stringResource(R.string.cyclon_sync_open_android_sync)) }
+                        } else if (prefs.androidSyncOff) {
+                            CyclonOutlinedButton(onClick = { prefs.resumeAndroidSync(); revision++ }, enabled = !busy) {
+                                Text(stringResource(R.string.cyclon_sync_turn_back_on))
+                            }
+                        }
                         if (prefs.lastSuccess > 0) Text(stringResource(R.string.cyclon_health_last_success, DateFormat.getDateTimeInstance().format(Date(prefs.lastSuccess))))
                         if (prefs.twoWay && prefs.status == "conflict") {
                             CyclonOutlinedButton(onClick = { resolving = account }, enabled = !busy) {

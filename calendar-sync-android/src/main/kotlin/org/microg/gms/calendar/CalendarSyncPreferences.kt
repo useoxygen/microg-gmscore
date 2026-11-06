@@ -45,6 +45,17 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
             ContentResolver.removePeriodicSync(account, AUTHORITY, Bundle.EMPTY)
         }
     }
+    /** On here, but Android's own switch for this account (Settings › Accounts › Account sync) stops it running. */
+    val androidSyncOff: Boolean get() = enabled &&
+        (!ContentResolver.getSyncAutomatically(account, AUTHORITY) || ContentResolver.getIsSyncable(account, AUTHORITY) <= 0)
+    /** The owner's "Turn sync back on": schedules this account again as turning sync on does, keeping two-way. */
+    fun resumeAndroidSync() {
+        if (!enabled) return
+        ContentResolver.setIsSyncable(account, AUTHORITY, 1)
+        ContentResolver.setSyncAutomatically(account, AUTHORITY, true)
+        ContentResolver.addPeriodicSync(account, AUTHORITY, Bundle.EMPTY, 3600)
+        refresh()
+    }
     fun refresh() {
         if (enabled) ContentResolver.requestSync(account, AUTHORITY, Bundle().apply {
             putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)

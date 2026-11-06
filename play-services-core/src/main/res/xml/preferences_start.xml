@@ -45,6 +45,12 @@
             <intent android:targetClass="com.google.android.gms.credential.manager.PasswordManagerActivity"
                 android:targetPackage="@string/package_id" />
         </Preference>
+        <Preference
+            android:icon="@drawable/ic_cyclon_autofill"
+            android:key="pref_sync_autofill"
+            android:persistent="false"
+            android:title="@string/cyclon_autofill_title"
+            android:summary="@string/cyclon_sync_checking" />
     </PreferenceCategory>
     <PreferenceCategory android:layout="@layout/preference_category_no_label" android:key="prefcat_header">
         <Preference

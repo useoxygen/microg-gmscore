@@ -106,6 +106,17 @@ class ContactSyncPreferences(internal val context: Context, val account: Account
             if (requestImmediate) refresh()
         }
     }
+    /** On here, but Android's own switch for this account (Settings › Accounts › Account sync) stops it running. */
+    val androidSyncOff: Boolean get() = mode != SyncMode.OFF &&
+        (!ContentResolver.getSyncAutomatically(account, AUTHORITY) || ContentResolver.getIsSyncable(account, AUTHORITY) <= 0)
+    /** The owner's "Turn sync back on": schedules this account again as turning sync on does, keeping its mode. */
+    fun resumeAndroidSync() {
+        if (mode == SyncMode.OFF) return
+        ContentResolver.setIsSyncable(account, AUTHORITY, 1)
+        ContentResolver.setSyncAutomatically(account, AUTHORITY, true)
+        ContentResolver.addPeriodicSync(account, AUTHORITY, Bundle.EMPTY, 3600)
+        refresh()
+    }
     fun refresh() {
         if (mode == SyncMode.OFF) return
         blockedClientContext = null // Explicit user refresh/enable permits one fresh attempt.
