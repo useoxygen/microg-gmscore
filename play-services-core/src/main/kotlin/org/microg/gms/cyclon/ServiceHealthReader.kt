@@ -24,6 +24,11 @@ import org.microg.gms.settings.SettingsContract
 /** Local, read-only observations. No sign-in, probe, sync request, reconnect, or location request. */
 internal class ServiceHealthReader(private val context: Context) {
     suspend fun read(): ServiceHealthSnapshot = withContext(Dispatchers.IO) {
+        // These screens run in :ui; Contacts and Calendar sync and their sync adapters write their preferences in other
+        // processes. A process caches a preferences file once loaded, so ask Android to reload a file changed on disk.
+        for (name in listOf(ContactSyncPreferences.PREFERENCES, CalendarSyncPreferences.PREFERENCES)) observe {
+            @Suppress("DEPRECATION") context.getSharedPreferences(name, Context.MODE_MULTI_PROCESS)
+        }
         val enabled = observe {
             SettingsContract.getSettings(context, SettingsContract.Gcm.getContentUri(context),
                 arrayOf(SettingsContract.Gcm.ENABLE_GCM)) { it.getInt(0) != 0 }

@@ -8,7 +8,7 @@ import android.os.Bundle
 import org.microg.gms.people.sync.SyncMode
 
 class ContactSyncPreferences(internal val context: Context, val account: Account) {
-    private val prefs = context.getSharedPreferences("contacts-sync", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val prefix = "${account.type}:${account.name}:"
     var mode: SyncMode
         get() = runCatching { SyncMode.valueOf(prefs.getString(prefix + "mode", "TWO_WAY")!!) }.getOrDefault(SyncMode.OFF)
@@ -125,5 +125,5 @@ class ContactSyncPreferences(internal val context: Context, val account: Account
             putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
         })
     }
-    companion object { const val AUTHORITY = "com.android.contacts" }
+    companion object { const val AUTHORITY = "com.android.contacts"; const val PREFERENCES = "contacts-sync" }
 }

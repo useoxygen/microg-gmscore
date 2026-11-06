@@ -9,7 +9,7 @@ import android.content.Context
 import android.os.Bundle
 
 class CalendarSyncPreferences(context: Context, val account: Account) {
-    private val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val prefix = "${account.type}:${account.name}:"
     val enabled get() = prefs.getBoolean(prefix + "enabled", false)
     /** Absence is different from an owner's saved off choice. Transfers must never overwrite either choice. */
@@ -69,10 +69,11 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
     }
     companion object {
         const val AUTHORITY = "com.android.calendar"
+        const val PREFERENCES = "calendar-sync"
         /** Removal must withdraw the old opt-in, even if the same account is added again later. */
         fun forgetRemovedAccounts(context: Context) {
             val accounts = AccountManager.get(context).accounts.toSet()
-            val prefs = context.getSharedPreferences("calendar-sync", Context.MODE_PRIVATE)
+            val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             val keys = prefs.all.keys
             val removedPrefixes = keys.filter { it.endsWith(":enabled") || it.endsWith(":uploadsHeld") }.mapNotNull { key ->
                 val identity = key.substringBeforeLast(':')

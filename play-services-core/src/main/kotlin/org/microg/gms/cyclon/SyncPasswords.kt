@@ -71,9 +71,10 @@ internal object SyncPasswords {
      */
     fun autofillIntent(context: Context, on: Boolean): Intent? = when {
         !on -> Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE, Uri.parse("package:${context.packageName}"))
-        else -> listOf(Intent(CREDENTIAL_PROVIDER_SETTINGS), Intent(Settings.ACTION_SETTINGS))
+        else -> listOf(Intent(CREDENTIAL_PROVIDER_SETTINGS, Uri.parse("package:${context.packageName}")), Intent(Settings.ACTION_SETTINGS))
             .firstOrNull { it.resolveActivity(context.packageManager) != null }
     }
+    // Settings.ACTION_CREDENTIAL_PROVIDER (API 34); Settings resolves it only with the provider's package: URI.
     private const val CREDENTIAL_PROVIDER_SETTINGS = "android.settings.CREDENTIAL_PROVIDER"
 }
 
