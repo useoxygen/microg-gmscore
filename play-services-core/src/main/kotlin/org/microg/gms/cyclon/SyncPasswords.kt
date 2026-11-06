@@ -101,10 +101,14 @@ private const val REFRESH_MS = 5_000L
 
 private suspend fun PreferenceFragmentCompat.showSyncPasswordsState() {
     val context = requireContext().applicationContext
-    val autofillOn = SyncPasswords.autofillEnabled(context)
+    // Binder calls (autofill state, intent resolution) and the account reads stay off the main thread.
+    val (autofillOn, autofillIntent) = withContext(Dispatchers.IO) {
+        SyncPasswords.autofillEnabled(context).let { it to SyncPasswords.autofillIntent(context, it) }
+    }
+    if (!isAdded) return
     findPreference<Preference>(SyncPasswords.PREF_AUTOFILL)?.apply {
         setSummary(SyncPasswords.autofillSummary(autofillOn))
-        intent = SyncPasswords.autofillIntent(context, autofillOn)
+        intent = autofillIntent
     }
     val snapshot = ServiceHealthReader(context).read()
     val (contacts, calendar) = withContext(Dispatchers.IO) {

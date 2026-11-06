@@ -107,7 +107,7 @@ class CalendarSyncActivity : ComponentActivity() {
                             }
                         }
                         Text(stringResource(when {
-                            !ContentResolver.getMasterSyncAutomatically() || !ContentResolver.getSyncAutomatically(account, CalendarSyncPreferences.AUTHORITY) -> R.string.cyclon_health_sync_paused
+                            !ContentResolver.getMasterSyncAutomatically() || prefs.androidSyncOff -> R.string.cyclon_health_sync_paused
                             permissions.any { ContextCompat.checkSelfPermission(this@CalendarSyncActivity, it) != PackageManager.PERMISSION_GRANTED } -> R.string.cyclon_calendar_permissions
                             prefs.status == "success" -> R.string.cyclon_calendar_success
                             prefs.status == "conflict" -> R.string.cyclon_calendar_conflict
