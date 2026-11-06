@@ -6,7 +6,9 @@
 package org.microg.gms.recaptcha.base
 
 import android.os.Binder
+import android.os.IBinder
 import android.os.Parcel
+import android.os.RemoteException
 import android.util.Log
 import com.google.android.gms.common.Feature
 import com.google.android.gms.common.api.CommonStatusCodes
@@ -39,13 +41,37 @@ internal val RECAPTCHA_BASE_FEATURES = arrayOf(
  * produces DroidGuard results for that package only.
  */
 class RecaptchaBaseService : BaseService(TAG, GmsService.RECAPTCHABASE) {
-    private val guard by lazy { DroidGuardRecaptchaBaseGuard(this) }
+    /** Host tests replace this before the first request; production always uses microG's DroidGuard runtime. */
+    internal var guardFactory: () -> RecaptchaBaseGuard = { DroidGuardRecaptchaBaseGuard(this) }
+    private val guard by lazy { guardFactory() }
 
     // Requests arrive on binder threads, where Lifecycle APIs (addObserver, lifecycleScope's first use) must not be called;
-    // the service owns its scope and sessions and closes them in onDestroy instead.
+    // the service owns its scope and connections and closes them in onDestroy instead.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val sessions = HashSet<RecaptchaBaseSession>()
+    private val connections = HashSet<Connection>()
     private var destroyed = false
+
+    /**
+     * One session handed out by the broker, owned by the client that asked for it. [client] is the broker callback binder
+     * that client sent with getService. Holding it keeps the client's callback object alive, so the client dropping its
+     * own reference cannot end the link: its death notification means the process hosting it died. The session is then
+     * closed. A client in this process never dies before the service, so its sessions close in onDestroy.
+     */
+    private inner class Connection(val session: RecaptchaBaseSession, val client: IBinder) : IBinder.DeathRecipient {
+        override fun binderDied() {
+            retire(this)
+        }
+
+        fun unlink() {
+            try {
+                client.unlinkToDeath(this, 0)
+            } catch (e: NoSuchElementException) {
+                // Never linked, or already unlinked.
+            }
+        }
+    }
+
+    internal val openSessionCount: Int get() = synchronized(connections) { connections.size }
 
     override fun handleServiceRequest(callback: IGmsCallbacks, request: GetServiceRequest, service: GmsService) {
         // Both are read on the broker's binder thread, before anything asynchronous happens.
@@ -57,21 +83,57 @@ class RecaptchaBaseService : BaseService(TAG, GmsService.RECAPTCHABASE) {
             return
         }
         val session = RecaptchaBaseSession(packageName, guard, scope)
-        val registered = synchronized(sessions) { !destroyed && sessions.add(session) }
-        if (!registered) session.close()
-        callback.onPostInitCompleteWithConnectionInfo(
-            CommonStatusCodes.SUCCESS,
-            RecaptchaBaseServiceImpl(session, callingUid),
-            ConnectionInfo().apply { features = RECAPTCHA_BASE_FEATURES }
-        )
+        val connection = Connection(session, callback.asBinder())
+        // A connection that cannot be registered (service destroyed, client already dead) is closed: its requests fail.
+        register(connection)
+        try {
+            callback.onPostInitCompleteWithConnectionInfo(
+                CommonStatusCodes.SUCCESS,
+                RecaptchaBaseServiceImpl(session, callingUid),
+                ConnectionInfo().apply { features = RECAPTCHA_BASE_FEATURES }
+            )
+        } catch (e: Exception) {
+            // The client never received this session, so nothing else can use or close it.
+            retire(connection)
+            throw e
+        }
+    }
+
+    private fun register(connection: Connection) {
+        val registered = synchronized(connections) { !destroyed && connections.add(connection) }
+        if (!registered) {
+            connection.session.close()
+            return
+        }
+        try {
+            connection.client.linkToDeath(connection, 0)
+        } catch (e: RemoteException) {
+            retire(connection)
+            return
+        }
+        // onDestroy may have taken the connection between registering and linking; it closed the session but could not
+        // unlink a recipient that was not linked yet.
+        val stillOpen = synchronized(connections) { connection in connections }
+        if (!stillOpen) connection.unlink()
+    }
+
+    /** Removes [connection] and closes its session, once: client death, delivery failure and onDestroy each try. */
+    private fun retire(connection: Connection) {
+        val removed = synchronized(connections) { connections.remove(connection) }
+        if (!removed) return
+        connection.unlink()
+        connection.session.close()
     }
 
     override fun onDestroy() {
-        val open = synchronized(sessions) {
+        val open = synchronized(connections) {
             destroyed = true
-            sessions.toList().also { sessions.clear() }
+            connections.toList().also { connections.clear() }
         }
-        open.forEach { it.close() }
+        open.forEach {
+            it.unlink()
+            it.session.close()
+        }
         scope.cancel()
         super.onDestroy()
     }
