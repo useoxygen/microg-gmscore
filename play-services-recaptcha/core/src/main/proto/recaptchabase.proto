@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: 2026 Cyclon
+// SPDX-License-Identifier: Apache-2.0
+//
+// Payload envelope returned by the reCAPTCHA Base service (Play services service 380).
+// Names are descriptive; the field numbers and wire types are the contract the reCAPTCHA SDK parses.
+
+syntax = "proto3";
+
+package org.microg.gms.recaptcha.base;
+
+option java_package = "org.microg.gms.recaptcha.base";
+
+// ExecuteResult.payload is base64 of this message; ExecuteResult field 2 is the raw message.
+message RecaptchaBasePayload {
+  repeated RecaptchaBaseVariable variables = 1;
+  optional string execute_id = 2;
+}
+
+enum RecaptchaBaseEncoding {
+  ENCODING_UNKNOWN = 0;
+  ENCODING_NONE = 1;
+  ENCODING_CHACHA = 2;
+  ENCODING_XTEA = 3;
+}
+
+message RecaptchaBaseVariable {
+  // Base64 of a serialized RecaptchaBaseSignalResponses (string-form payload).
+  optional string response_base64 = 1;
+  optional RecaptchaBaseEncoding encoding = 4;
+  // Serialized RecaptchaBaseSignalResponses (byte-form payload).
+  optional bytes response_bytes = 6;
+}
+
+message RecaptchaBaseSignalResponses {
+  repeated RecaptchaBaseSignalResponse responses = 1;
+  uint32 signal_type = 2;
+}
+
+message RecaptchaBaseSignalResponse {
+  oneof value {
+    // The DroidGuard result, unchanged.
+    string droidguard_response = 11;
+  }
+}
