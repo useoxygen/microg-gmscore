@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: reCAPTCHA Base (380) has a start action so the broker routes it to its implementation.
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -399,7 +400,7 @@ public enum GmsService {
     NUDGES(377),
     CAMERA_LOW_LIGHT(378),
     IDENTITY_FIDO_INTERNAL(379),
-    RECAPTCHABASE(380),
+    RECAPTCHABASE(380, "com.google.android.gms.recaptchabase.service.START"),
     AUTH_RESTORE_CREDENTIAL(381),
     CONTACTKEYS(382),
     HEALTH_CONNECT_BACKUPS(383),

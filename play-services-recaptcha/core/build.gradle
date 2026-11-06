@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: host tests for the reCAPTCHA Base service (service 380).
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -27,6 +28,12 @@ dependencies {
 
     implementation "com.android.volley:volley:$volleyVersion"
     implementation "com.squareup.wire:wire-runtime:$wireVersion"
+
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.robolectric:robolectric:4.16.1"
+    // DroidGuard's service handle builds a Volley queue, whose class references the platform's optional Apache HTTP
+    // classes; the SDK's stub jar lets them load in host tests (none of its methods are called).
+    testImplementation files("${android.sdkDirectory}/platforms/android-${androidCompileSdk}/optional/org.apache.http.legacy.jar")
 }
 
 wire {
@@ -47,6 +54,7 @@ android {
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
+        test.java.srcDirs += 'src/test/kotlin'
     }
 
     lintOptions {

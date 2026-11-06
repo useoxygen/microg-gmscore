@@ -1,3 +1,6 @@
+// Modified by Cyclon in 2026: the legacy init runs only when initWithRequest returned no reply; incomplete replies are
+// ignored, and a handle whose initialization failed is closed on the service. A handle of a framed flow carries its
+// client trace (CYC-1544).
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -49,26 +52,59 @@ public class DroidGuardApiClient extends GmsClient<IDroidGuardService> {
     }
 
     public DroidGuardHandle openHandle(String flow, DroidGuardResultsRequest request) {
+        return openHandle(flow, request, DroidGuardResponseFrame.startTrace(flow));
+    }
+
+    /**
+     * Opens a handle for {@code flow}. {@code trace}, started when the caller requested the handle, is null unless the
+     * flow's responses are framed ({@link DroidGuardResponseFrame#startTrace}); it records when initialization ended.
+     */
+    public DroidGuardHandle openHandle(String flow, DroidGuardResultsRequest request, DroidGuardClientTrace trace) {
+        IDroidGuardHandle handle = null;
         try {
-            IDroidGuardHandle handle = getServiceInterface().getHandle();
+            handle = getServiceInterface().getHandle();
             request.setOpenHandles(openHandles);
             DroidGuardInitReply reply = handle.initWithRequest(flow, request);
             if (reply == null) {
+                // No reply at all: a service without initWithRequest (its empty reply reads as null), or one that
+                // answers null. Only then does the one-way legacy init start the runtime; after a reply it would start
+                // a second runtime without the request's options.
                 handle.init(flow);
-            }
-            if (reply != null) {
-                if (reply.pfd != null && reply.object != null) {
-                    Log.w(TAG, "DroidGuardInitReply suggests additional actions in main thread");
-                    Bundle bundle = (Bundle) reply.object;
-                    if (bundle != null) {
-                        handleDroidGuardData(reply.pfd, (Bundle) reply.object);
-                    }
-                }
+            } else {
+                handleInitReply(reply);
             }
             openHandles++;
-            return new DroidGuardHandleImpl(this, request, handle);
+            if (trace != null) trace.record(DroidGuardClientTrace.INIT_END);
+            return new DroidGuardHandleImpl(this, request, handle, trace);
         } catch (Exception e) {
+            if (handle != null) {
+                try {
+                    handle.close();
+                } catch (Exception closeError) {
+                    Log.w(TAG, "Error while closing handle after failed initialization.");
+                }
+            }
             return new DroidGuardHandleImpl(this, request, "Initialization failed: " + e);
+        }
+    }
+
+    private void handleInitReply(DroidGuardInitReply reply) {
+        ParcelFileDescriptor pfd = reply.pfd;
+        try {
+            if (pfd != null && reply.object instanceof Bundle) {
+                Log.w(TAG, "DroidGuardInitReply suggests additional actions in main thread");
+                handleDroidGuardData(pfd, (Bundle) reply.object);
+            } else if (pfd != null || reply.object != null) {
+                Log.w(TAG, "Ignoring incomplete DroidGuardInitReply");
+            }
+        } finally {
+            if (pfd != null) {
+                try {
+                    pfd.close();
+                } catch (Exception e) {
+                    Log.w(TAG, "Error while closing DroidGuardInitReply file descriptor.");
+                }
+            }
         }
     }
 
