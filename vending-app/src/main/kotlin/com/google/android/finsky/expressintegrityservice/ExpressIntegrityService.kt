@@ -99,7 +99,7 @@ class ExpressIntegrityService : LifecycleService() {
     }
 }
 
-private class ExpressIntegrityServiceImpl(private val context: Context, override val lifecycle: Lifecycle) : IExpressIntegrityService.Stub(), LifecycleOwner {
+internal class ExpressIntegrityServiceImpl(private val context: Context, override val lifecycle: Lifecycle) : IExpressIntegrityService.Stub(), LifecycleOwner {
 
 
     override fun warmUpIntegrityToken(bundle: Bundle, callback: IExpressIntegrityServiceCallback?) {
@@ -205,15 +205,7 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
 
                 Log.d(TAG, "Received intermediate integrity response")
 
-                val errorCode = intermediateIntegrityResponse.errorInfo?.let { error ->
-                    if (error.errorCode == null) {
-                        null
-                    } else if (error.testErrorType == TestErrorType.REQUEST_EXPRESS) {
-                        error.errorCode
-                    } else if (error.testErrorType == TestErrorType.WARMUP) {
-                        throw StandardIntegrityException(error.errorCode, "Server-specified exception")
-                    } else null
-                }
+                val errorCode = intermediateIntegrityResponse.requestExpressErrorCode()
 
                 val defaultAccountName: String = runCatching {
                     if (expressIntegritySession.webViewRequestMode != 0) {
@@ -377,6 +369,16 @@ private class ExpressIntegrityServiceImpl(private val context: Context, override
         callback?.onRequestDialog(bundleOf(KEY_ERROR to IntegrityErrorCode.API_NOT_AVAILABLE))
     }
 
+}
+
+internal fun IntermediateIntegrityResponse.requestExpressErrorCode(): Int? = errorInfo?.let { error ->
+    if (error.errorCode == null) {
+        null
+    } else if (error.testErrorType == TestErrorType.REQUEST_EXPRESS) {
+        error.errorCode
+    } else if (error.testErrorType == TestErrorType.WARMUP) {
+        throw StandardIntegrityException(error.errorCode, "Server-specified exception")
+    } else null
 }
 
 private fun IExpressIntegrityServiceCallback.onWarmResult(result: Bundle) {
