@@ -741,7 +741,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         message = R.string.passwords_access_failed
     }
     override fun onOwnerLocked() {
-        signIns = openedForSignIns
+        // The page stays: the screen lock's own prompt stops this activity too, and unlocking from All saved passwords
+        // must land there, not back on Sign-ins.
         unlocked = false; entries = emptyList(); assistantAccess = emptyMap(); accessEditing = null; editing = null; deleting = null; editorOpen = false; passphrase = ""
         query = ""; showSettings = false; detailId = null; blockedSiteOpen = false; storageOpen = false
         pendingChanges = emptyList(); transfers = emptyList(); resolving = null; moving = null
