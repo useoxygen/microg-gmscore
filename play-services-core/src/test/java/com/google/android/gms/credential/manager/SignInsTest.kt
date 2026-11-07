@@ -16,6 +16,7 @@ class SignInsTest {
         assertTrue(none.copy(account = true).any)
         assertTrue(none.copy(autofill = true).any)
         assertTrue(none.copy(passwords = true).any)
+        assertTrue(none.copy(sync = true).any)
     }
 
     @Test fun aLoginSaysItsUsernameChoiceAndLastUse() {
@@ -29,6 +30,8 @@ class SignInsTest {
         val empty = SignIns.Logins.Shown(emptyList())
         assertTrue(SignIns.saysNone(none, empty, busy = false))
         assertFalse("the setup step already says so", SignIns.saysNone(none.copy(passwords = true), empty, busy = false))
+        // Sync off: the account's passwords are not here yet, so "none" would be wrong.
+        assertFalse(SignIns.saysNone(none.copy(sync = true), empty, busy = false))
         assertFalse(SignIns.saysNone(none, empty, busy = true))
         assertFalse(SignIns.saysNone(none, SignIns.Logins.Shown(listOf(login)), busy = false))
         assertFalse(SignIns.saysNone(none, SignIns.Logins.Locked, busy = false))

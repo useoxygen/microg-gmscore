@@ -8,6 +8,8 @@
     <string name="cyclon_sign_ins_setup">Set up passwords</string>
     <string name="cyclon_sign_ins_setup_account">Sign in to Google</string>
     <string name="cyclon_sign_ins_setup_account_summary">Brings the passwords saved in your Google account to this phone</string>
+    <string name="cyclon_sign_ins_setup_sync">Turn on password sync</string>
+    <string name="cyclon_sign_ins_setup_sync_summary">Brings the passwords saved in your Google account to this phone, and keeps them in step</string>
     <string name="cyclon_sign_ins_setup_autofill">Turn on filling passwords in apps</string>
     <string name="cyclon_sign_ins_setup_autofill_summary">Fills your saved passwords in apps and sites, and offers to save new ones when you sign in</string>
     <string name="cyclon_sign_ins_setup_passwords">Add or import passwords</string>

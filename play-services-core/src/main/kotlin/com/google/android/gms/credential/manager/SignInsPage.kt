@@ -28,8 +28,8 @@ internal object SignIns {
     const val PAGE = "sign_ins"
 
     /** The setup steps still to do; each is false once done or while it cannot be known. */
-    data class Setup(val account: Boolean, val autofill: Boolean, val passwords: Boolean) {
-        val any get() = account || autofill || passwords
+    data class Setup(val account: Boolean, val autofill: Boolean, val passwords: Boolean, val sync: Boolean = false) {
+        val any get() = account || autofill || passwords || sync
     }
 
     class Login(val id: String, val title: String, val username: String, val packageName: String?,
@@ -47,7 +47,8 @@ internal object SignIns {
     fun details(username: String, level: String, lastUsed: String?) = listOfNotNull(username.ifEmpty { null }, level, lastUsed).joinToString(" · ")
 
     /** "No saved logins yet" only where the setup step does not already say so, and not while reading. */
-    fun saysNone(setup: Setup, logins: Logins, busy: Boolean) = logins is Logins.Shown && logins.logins.isEmpty() && !busy && !setup.passwords
+    fun saysNone(setup: Setup, logins: Logins, busy: Boolean) =
+        logins is Logins.Shown && logins.logins.isEmpty() && !busy && !setup.passwords && !setup.sync
 
     /** The logins' section, unless it would be empty: no logins, and the setup step says so. */
     fun showsLogins(setup: Setup, logins: Logins, busy: Boolean) =
@@ -64,7 +65,7 @@ internal object SignIns {
 }
 
 internal class SignInsActions(
-    val back: () -> Unit, val addAccount: () -> Unit, val autofill: () -> Unit, val addPassword: () -> Unit,
+    val back: () -> Unit, val addAccount: () -> Unit, val sync: () -> Unit, val autofill: () -> Unit, val addPassword: () -> Unit,
     val import: () -> Unit, val unlock: () -> Unit, val login: (String) -> Unit, val allPasswords: () -> Unit,
     val passwordSettings: () -> Unit,
 )
@@ -84,6 +85,9 @@ internal fun SignInsPage(
         CyclonGroup {
             if (setup.account) CyclonRow(stringResource(R.string.cyclon_sign_ins_setup_account),
                 stringResource(R.string.cyclon_sign_ins_setup_account_summary), onClick = actions.addAccount, trailing = { CyclonChevron() })
+            // A Google account starts with password sync off: until it is on, its passwords can't show here.
+            if (setup.sync) CyclonRow(stringResource(R.string.cyclon_sign_ins_setup_sync),
+                stringResource(R.string.cyclon_sign_ins_setup_sync_summary), onClick = actions.sync, enabled = !busy, trailing = { CyclonChevron() })
             if (setup.autofill) CyclonRow(stringResource(R.string.cyclon_sign_ins_setup_autofill),
                 stringResource(R.string.cyclon_sign_ins_setup_autofill_summary), onClick = actions.autofill, trailing = { CyclonChevron() })
             if (setup.passwords) Column {

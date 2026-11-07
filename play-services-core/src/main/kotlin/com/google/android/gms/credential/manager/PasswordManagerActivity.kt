@@ -65,6 +65,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     private var signIns by mutableStateOf(false)
     private var hasGoogleAccount by mutableStateOf(true)
     private var autofillOn by mutableStateOf<Boolean?>(null)
+    /** This device's storage was picked only because there was no Google account; one added later takes over. */
+    private var deviceForLackOfAccount = false
     private var accessEditing by mutableStateOf<PasswordView?>(null)
     private var editing by mutableStateOf<PasswordView?>(null)
     private var editorOpen by mutableStateOf(false)
@@ -331,10 +333,12 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         }
         // No saved passwords is known only once unlocked, with the vault read and syncing.
         val setup = SignIns.Setup(account = !hasGoogleAccount, autofill = autofillOn == false,
-            passwords = unlocked && storageChosen && enabled && !busy && message == null && saved.isEmpty())
+            passwords = unlocked && storageChosen && enabled && !busy && message == null && saved.isEmpty(),
+            sync = unlocked && storageChosen && selected != null && !enabled && !busy)
         SignInsPage(setup, logins, busy, stringResource(if (hasSecureScreenLock) R.string.passwords_unlock else R.string.passwords_open),
             SignInsActions(
                 back = ::finish,
+                sync = { setSync(true) },
                 addAccount = { openOrSay(Intent(android.provider.Settings.ACTION_ADD_ACCOUNT)
                     .putExtra(android.provider.Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google"))) },
                 autofill = { SyncPasswords.autofillIntent(this, on = false)?.let(::openOrSay) },
@@ -360,6 +364,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                     SyncPasswords.autofillEnabled(context)
             }
             hasGoogleAccount = account; autofillOn = autofill
+            // Back from adding a Google account: the next unlock picks it rather than keeping this device's storage.
+            if (account && deviceForLackOfAccount && selected == null) { storageChosen = false; deviceForLackOfAccount = false }
         }
     }
 
@@ -726,6 +732,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 it.length in 1..4096 && it.none(Char::isISOControl)
             }
             choose(account, realm.orEmpty())
+            deviceForLackOfAccount = account == null
         }
     }
     override fun onOwnerAuthenticationFailed() {
@@ -744,7 +751,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         if (!exportPending) clearExport()
     }
     private fun choose(account: Account?, initialQuery: String = "") {
-        requireOwner(); selected = account; storageChosen = true; storageOpen = false; entries = emptyList(); query = initialQuery; detailId = null
+        requireOwner(); deviceForLackOfAccount = false; selected = account; storageChosen = true; storageOpen = false; entries = emptyList(); query = initialQuery; detailId = null
         showCheckup = false; dismissedCheckup = false; checkupDismissal = null
         perform { }
     }
