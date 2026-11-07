@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.auth.folsom.utils
 
+import org.microg.gms.common.ProcessFileLock
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
@@ -13,7 +14,7 @@ internal object FolsomAccountLock {
         val file = File(directory, "folsom-enroll-$lockName.lock")
         val mutex = mutexes.getOrPut(file.canonicalPath) { Any() }
         return synchronized(mutex) {
-            RandomAccessFile(file, "rw").use { lock -> lock.channel.lock().use { action() } }
+            RandomAccessFile(file, "rw").use { lock -> ProcessFileLock.lock(lock.channel).use { action() } }
         }
     }
 }

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.common.ProcessFileLock
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
@@ -26,7 +27,7 @@ internal class AndroidPasskeyStore(context: Context, identity: String, private v
     private val alias = "microg.passkeys.v1.$id"
     private val aad = "microg.passkeys.v1:$id".toByteArray(Charsets.UTF_8)
     fun <T> locked(action: (Session) -> T): T = synchronized(LOCKS.getOrPut(id) { Any() }) {
-        RandomAccessFile(File(root, "$id.lock"), "rw").use { lock -> lock.channel.lock().use {
+        RandomAccessFile(File(root, "$id.lock"), "rw").use { lock -> ProcessFileLock.lock(lock.channel).use {
             verify()
             action(Session()).also { verify() }
         } }
@@ -84,7 +85,7 @@ internal class AndroidPasskeyStore(context: Context, identity: String, private v
             for (file in root.listFiles().orEmpty().filter { Regex("[0-9a-f]{64}\\.bin(?:\\.bak)?").matches(it.name) }) {
                 val id = file.name.substringBefore('.')
                 synchronized(LOCKS.getOrPut(id) { Any() }) {
-                    RandomAccessFile(File(root, "$id.lock"), "rw").use { lock -> lock.channel.lock().use {
+                    RandomAccessFile(File(root, "$id.lock"), "rw").use { lock -> ProcessFileLock.lock(lock.channel).use {
                         if (id !in active().map(::marker)) {
                             AtomicFile(File(root, "$id.bin")).delete()
                             KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("microg.passkeys.v1.$id") }
