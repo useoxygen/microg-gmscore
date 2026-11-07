@@ -1,4 +1,5 @@
-// Modified by Cyclon in 2026: notice for work accounts whose management mode is unsupported.
+// Modified by Cyclon in 2026: notice for work accounts whose management mode is unsupported; the action notice has
+// its own tag and is cleared once its screen lock is proven.
 package org.microg.gms.accountaction
 
 import android.Manifest
@@ -26,6 +27,36 @@ private const val CHANNEL_ID = "AccountNotification"
 /** Channel for account notifications that need the user, registered by [registerAccountNotificationChannel]. */
 const val ACCOUNT_NOTIFICATION_CHANNEL_ID = CHANNEL_ID
 
+/** Tag of "Account action required", so it is cleared on its own (the account's other notices are untagged). */
+internal const val ACCOUNT_ACTION_TAG = "account_action"
+
+/**
+ * Posts one of [account]'s notices on the account's id. The newest replaces the others: the action notice (tagged
+ * [ACCOUNT_ACTION_TAG]) removes the untagged re-auth or unsupported-management notice, and those remove it.
+ */
+internal fun Context.notifyAccountNotice(account: Account, notification: Notification, action: Boolean) {
+    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED
+    ) return
+    val manager = NotificationManagerCompat.from(this)
+    if (action) {
+        manager.cancel(account.hashCode())
+        manager.notify(ACCOUNT_ACTION_TAG, account.hashCode(), notification)
+    } else {
+        manager.cancel(ACCOUNT_ACTION_TAG, account.hashCode())
+        manager.notify(account.hashCode(), notification)
+    }
+}
+
+/**
+ * Clears [account]'s "Account action required" once Google issued a token after its screen lock was proven: what it
+ * asked for is done. It would otherwise stay until tapped, telling the owner a working account still needs setup. The
+ * account's re-auth and unsupported-management notices are untagged and stay.
+ */
+fun Context.clearAccountActionNotification(account: Account) {
+    NotificationManagerCompat.from(this).cancel(ACCOUNT_ACTION_TAG, account.hashCode())
+}
+
 @RequiresApi(21)
 fun Context.sendAccountReAuthNotification(account: Account) {
     Log.d(TAG, "sendAccountReAuthNotification: account: ${account.name}")
@@ -51,11 +82,7 @@ fun Context.sendAccountReAuthNotification(account: Account) {
             .setAutoCancel(true)
             .build()
 
-    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-        PackageManager.PERMISSION_GRANTED
-    ) {
-        NotificationManagerCompat.from(this).notify(account.hashCode(), notification)
-    }
+    notifyAccountNotice(account, notification, action = false)
 }
 
 @RequiresApi(21)
@@ -86,11 +113,7 @@ fun Context.sendAccountActionNotification(account: Account, action: UserSatisfyR
             .setAutoCancel(true)
             .build()
 
-    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-        PackageManager.PERMISSION_GRANTED
-    ) {
-        NotificationManagerCompat.from(this).notify(account.hashCode(), notification)
-    }
+    notifyAccountNotice(account, notification, action = true)
 
 }
 
@@ -115,11 +138,7 @@ fun Context.sendAccountUnsupportedNotification(account: Account) {
             .setAutoCancel(true)
             .build()
 
-    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
-        PackageManager.PERMISSION_GRANTED
-    ) {
-        NotificationManagerCompat.from(this).notify(account.hashCode(), notification)
-    }
+    notifyAccountNotice(account, notification, action = false)
 }
 
 fun Context.registerAccountNotificationChannel() {
@@ -139,4 +158,5 @@ fun Context.registerAccountNotificationChannel() {
 
 fun Context.cancelAccountNotificationChannel(account: Account) {
     NotificationManagerCompat.from(this).cancel(account.hashCode())
+    clearAccountActionNotification(account)
 }
