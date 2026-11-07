@@ -174,10 +174,9 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                                     else -> throw VaultLockedException()
                                 }
                         } }
-                        // Always skips asking, so it needs the screen lock right now. Without a lock,
-                        // only Cyclon's own sign-in card can grant it.
-                        if (level != AgentSignInAccess.Level.ALWAYS) save()
-                        else if (!hasSecureScreenLock) message = R.string.passwords_assistant_always_on_card
+                        // Always skips asking, so with a screen lock it is confirmed with the lock first. Without a
+                        // lock there is nothing to confirm: the dialog has warned that anyone with the phone can use it.
+                        if (level != AgentSignInAccess.Level.ALWAYS || !hasSecureScreenLock) save()
                         else { afterAuthentication = { if (hasSecureScreenLock) save() }; reconfirmOwner() }
                     })
             } }
@@ -903,8 +902,7 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
                 Column(Modifier.selectableGroup()) {
                     AgentSignInAccess.Level.values().forEach { level ->
                         val always = level == AgentSignInAccess.Level.ALWAYS
-                        if (always && !hasSecureScreenLock && current != level) return@forEach
-                        val choiceEnabled = !busy && !(requireAuthentication && always) && (hasSecureScreenLock || !always)
+                        val choiceEnabled = !busy && !(requireAuthentication && always)
                         CyclonChoiceRow(stringResource(accessLabel(level)), stringResource(when (level) {
                             AgentSignInAccess.Level.ASK -> R.string.passwords_assistant_ask_description
                             AgentSignInAccess.Level.ALWAYS -> R.string.passwords_assistant_always_description
@@ -912,7 +910,8 @@ private fun SignInAccessDialog(entry: PasswordView, current: AgentSignInAccess.L
                         }), selected == level, enabled = choiceEnabled, inset = 0.dp) { selected = level }
                     }
                 }
-                if (!hasSecureScreenLock) Text(stringResource(R.string.passwords_assistant_always_on_card),
+                if (!hasSecureScreenLock && selected == AgentSignInAccess.Level.ALWAYS) Text(
+                    stringResource(R.string.passwords_assistant_always_no_lock),
                     Modifier.padding(vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = p.ink)
                 CyclonHairline()
                 CyclonSwitchRow(stringResource(R.string.passwords_assistant_require_authentication),

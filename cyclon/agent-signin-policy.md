@@ -7,6 +7,11 @@ configured Android screen lock. Removing the requirement does not restore an old
 Allow grant; the owner can explicitly choose a new access level. Both transitions
 rotate the incarnation so a waiting request cannot inherit a different policy.
 
+Allow sign-in itself does not need a screen lock. On a phone with one, choosing it
+in Settings is confirmed with the lock first. On a phone without one, Settings and
+Cyclon's sign-in card both warn that anyone holding the phone can then have Cyclon
+sign in with that login (CYC-1633).
+
 Core receives only account metadata, including `require_authentication`. For a
 strict login it asks the native broker to redeem and opens the returned Services
 PendingIntent. The broker keeps the selected entry and one-use request in memory;
