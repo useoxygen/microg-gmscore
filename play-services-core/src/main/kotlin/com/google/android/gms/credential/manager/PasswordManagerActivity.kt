@@ -60,6 +60,13 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     private var storageOpen by mutableStateOf(false)
     private var enabled by mutableStateOf(false)
     private var assistantAccess by mutableStateOf<Map<String, AgentSignInAccess.State>>(emptyMap())
+    /** Opened as Sign-ins for Cyclon ([SignIns]); [signIns] is false while the owner looks at the rest of Passwords from there. */
+    private val openedForSignIns by lazy { intent.getStringExtra(SignIns.EXTRA_PAGE) == SignIns.PAGE }
+    private var signIns by mutableStateOf(false)
+    private var hasGoogleAccount by mutableStateOf(true)
+    private var autofillOn by mutableStateOf<Boolean?>(null)
+    /** This device's storage was picked only because there was no Google account; one added later takes over. */
+    private var deviceForLackOfAccount = false
     private var accessEditing by mutableStateOf<PasswordView?>(null)
     private var editing by mutableStateOf<PasswordView?>(null)
     private var editorOpen by mutableStateOf(false)
@@ -125,14 +132,18 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (android.os.Build.VERSION.SDK_INT < 26) { finish(); return }
+        signIns = openedForSignIns
         window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         setContent { CyclonMaterialTheme(settingsLook = true) { CyclonSettingsPage(Modifier.fillMaxSize()) {
+            // From Sign-ins, Back on the rest of Passwords returns to Sign-ins rather than closing.
+            BackHandler(enabled = openedForSignIns && !signIns && detailId == null) { signIns = true }
             BackHandler(enabled = detailId != null) { detailId = null }
             val scroll = rememberScrollState()
-            LaunchedEffect(showSettings, showCheckup, detailId) { scroll.scrollTo(0) }
+            LaunchedEffect(showSettings, showCheckup, detailId, signIns) { scroll.scrollTo(0) }
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(scroll).padding(bottom = 32.dp)) {
                 val detail = entries.singleOrNull { it.id == detailId && !it.data.blocked }
-                if (unlocked && !showSettings && !showCheckup && detail != null) DetailPage(detail) else MainPage()
+                if (signIns) SignInsMain()
+                else if (unlocked && !showSettings && !showCheckup && detail != null) DetailPage(detail) else MainPage()
             }
             accessEditing?.takeIf { unlocked }?.let { entry -> assistantAccess[entry.id]?.let { state ->
                 SignInAccessDialog(entry, state.level, state.requireDeviceAuthentication, hasSecureScreenLock, busy,
@@ -309,11 +320,65 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         } } }
     }
 
+    /** Sign-ins for Cyclon: setup still to do, each login's choice for Cyclon, and the way to the rest of Passwords. */
+    @Composable
+    private fun SignInsMain() {
+        val saved = entries.filter { !it.data.blocked }
+        val logins = when {
+            !unlocked -> SignIns.Logins.Locked
+            !storageChosen -> SignIns.Logins.Choosing
+            else -> SignIns.Logins.Shown(saved.mapNotNull { entry -> assistantAccess[entry.id]?.let { access ->
+                SignIns.Login(entry.id, loginTitle(entry), entry.data.username, loginPackage(entry), access.level, access.lastUsed)
+            } })
+        }
+        // No saved passwords is known only once unlocked, with the vault read and syncing.
+        val setup = SignIns.Setup(account = !hasGoogleAccount, autofill = autofillOn == false,
+            passwords = unlocked && storageChosen && enabled && !busy && message == null && saved.isEmpty(),
+            sync = unlocked && storageChosen && selected != null && !enabled && !busy)
+        SignInsPage(setup, logins, busy, stringResource(if (hasSecureScreenLock) R.string.passwords_unlock else R.string.passwords_open),
+            SignInsActions(
+                back = ::finish,
+                sync = { setSync(true) },
+                addAccount = { openOrSay(Intent(android.provider.Settings.ACTION_ADD_ACCOUNT)
+                    .putExtra(android.provider.Settings.EXTRA_ACCOUNT_TYPES, arrayOf("com.google"))) },
+                autofill = { SyncPasswords.autofillIntent(this, on = false)?.let(::openOrSay) },
+                addPassword = { editing = null; editorOpen = true },
+                import = { signIns = false; showSettings = true; showCheckup = false; detailId = null },
+                unlock = ::authenticateOwner,
+                login = { id -> accessEditing = entries.singleOrNull { it.id == id && !it.data.blocked } },
+                allPasswords = { signIns = false; showSettings = false; showCheckup = false; detailId = null },
+                passwordSettings = { openOrSay(Intent(this, SyncPasswordsActivity::class.java)) },
+            ), status = { StatusBlock() }, storage = { StoragePicker() })
+    }
+
+    private fun openOrSay(intent: Intent) {
+        runCatching { startActivity(intent) }.onFailure { message = R.string.passwords_access_failed }
+    }
+
+    /** Whether there is a Google account and filling passwords is on, for Sign-ins' setup; again on every return. */
+    private fun refreshSetup() {
+        val context = applicationContext
+        lifecycleScope.launch {
+            val (account, autofill) = withContext(Dispatchers.IO) {
+                runCatching { DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google")).any() }.getOrDefault(true) to
+                    SyncPasswords.autofillEnabled(context)
+            }
+            hasGoogleAccount = account; autofillOn = autofill
+            // Back from adding a Google account: the next unlock picks it rather than keeping this device's storage.
+            if (account && deviceForLackOfAccount && selected == null) { storageChosen = false; deviceForLackOfAccount = false }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (openedForSignIns) refreshSetup()
+    }
+
     /** The top bar with its count, then where passwords are saved, tabs and the chosen tab; changes awaiting the owner last. */
     @Composable
     private fun MainPage() {
         val saved = entries.count { !it.data.blocked }
-        CyclonTopBar(stringResource(R.string.passwords_title), stringResource(R.string.cyclon_back), ::finish, trailing = {
+        CyclonTopBar(stringResource(R.string.passwords_title), stringResource(R.string.cyclon_back), { if (openedForSignIns) signIns = true else finish() }, trailing = {
             if (unlocked && storageChosen && enabled && (saved > 0 || message == null))
                 CyclonVoice(resources.getQuantityString(R.plurals.passwords_count, saved, saved), size = 14)
         })
@@ -667,6 +732,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
                 it.length in 1..4096 && it.none(Char::isISOControl)
             }
             choose(account, realm.orEmpty())
+            deviceForLackOfAccount = account == null
         }
     }
     override fun onOwnerAuthenticationFailed() {
@@ -675,6 +741,8 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         message = R.string.passwords_access_failed
     }
     override fun onOwnerLocked() {
+        // The page stays: the screen lock's own prompt stops this activity too, and unlocking from All saved passwords
+        // must land there, not back on Sign-ins.
         unlocked = false; entries = emptyList(); assistantAccess = emptyMap(); accessEditing = null; editing = null; deleting = null; editorOpen = false; passphrase = ""
         query = ""; showSettings = false; detailId = null; blockedSiteOpen = false; storageOpen = false
         pendingChanges = emptyList(); transfers = emptyList(); resolving = null; moving = null
@@ -684,7 +752,7 @@ class PasswordManagerActivity : PasswordOwnerActivity() {
         if (!exportPending) clearExport()
     }
     private fun choose(account: Account?, initialQuery: String = "") {
-        requireOwner(); selected = account; storageChosen = true; storageOpen = false; entries = emptyList(); query = initialQuery; detailId = null
+        requireOwner(); deviceForLackOfAccount = false; selected = account; storageChosen = true; storageOpen = false; entries = emptyList(); query = initialQuery; detailId = null
         showCheckup = false; dismissedCheckup = false; checkupDismissal = null
         perform { }
     }

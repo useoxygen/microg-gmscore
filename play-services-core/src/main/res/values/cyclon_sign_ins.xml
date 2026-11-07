@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Cyclon
+     SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <string name="cyclon_sign_ins_title">Sign-ins for Cyclon</string>
+    <string name="cyclon_sign_ins_intro">Cyclon can sign in to apps and sites for you with your saved logins. It never sees your passwords. For each login, choose whether Cyclon asks you first, always may, or never may.</string>
+
+    <string name="cyclon_sign_ins_setup">Set up passwords</string>
+    <string name="cyclon_sign_ins_setup_account">Sign in to Google</string>
+    <string name="cyclon_sign_ins_setup_account_summary">Brings the passwords saved in your Google account to this phone</string>
+    <string name="cyclon_sign_ins_setup_sync">Turn on password sync</string>
+    <string name="cyclon_sign_ins_setup_sync_summary">Brings the passwords saved in your Google account to this phone, and keeps them in step</string>
+    <string name="cyclon_sign_ins_setup_autofill">Turn on filling passwords in apps</string>
+    <string name="cyclon_sign_ins_setup_autofill_summary">Fills your saved passwords in apps and sites, and offers to save new ones when you sign in</string>
+    <string name="cyclon_sign_ins_setup_passwords">Add or import passwords</string>
+    <string name="cyclon_sign_ins_setup_passwords_summary">No saved passwords yet. Add one by hand, or import a file exported from Google Passwords.</string>
+    <string name="cyclon_sign_ins_add">Add a password</string>
+    <string name="cyclon_sign_ins_import">Import</string>
+
+    <string name="cyclon_sign_ins_logins">What Cyclon may use</string>
+    <string name="cyclon_sign_ins_locked">Unlock to see your saved logins and choose what Cyclon may use.</string>
+    <string name="cyclon_sign_ins_none">No saved logins yet. Once you save one, it shows here.</string>
+    <string name="cyclon_sign_ins_last_used">used %1$s</string>
+    <string name="cyclon_sign_ins_this_phone">These choices stay on this phone. On a new phone, Cyclon asks again for every login.</string>
+
+    <string name="cyclon_sign_ins_settings">Password settings</string>
+    <string name="cyclon_sign_ins_all_passwords">All saved passwords</string>
+    <string name="cyclon_sign_ins_all_passwords_summary">See, add, import and check your passwords</string>
+    <string name="cyclon_sign_ins_sync_settings">Google sync &amp; passwords</string>
+    <string name="cyclon_sign_ins_sync_settings_summary">Sync, filling passwords in apps, and which password service this phone uses</string>
+</resources>
