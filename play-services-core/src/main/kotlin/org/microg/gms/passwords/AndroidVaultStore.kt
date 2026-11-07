@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.common.ProcessFileLock
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
@@ -61,7 +62,7 @@ class AndroidVaultStore private constructor(context: Context, identity: String, 
         val directory = File(this.context.noBackupFilesDir, "password-vault-locks")
         if (!directory.isDirectory && !directory.mkdirs()) throw IllegalStateException("Vault lock unavailable")
         RandomAccessFile(File(directory, "$id.lock"), "rw").use { file ->
-            file.channel.lock().use {
+            ProcessFileLock.lock(file.channel).use {
                 action(object : VaultSession {
                     override fun load(): VaultState {
                         verifyAccess()

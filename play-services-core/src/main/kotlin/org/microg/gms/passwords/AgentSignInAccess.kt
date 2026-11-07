@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package org.microg.gms.passwords
 
+import org.microg.gms.common.ProcessFileLock
 import android.content.Context
 import android.util.AtomicFile
 import org.json.JSONObject
@@ -28,7 +29,7 @@ class AgentSignInAccess(context: Context, private val now: () -> Long = System::
     private fun <T> locked(action: () -> T): T = synchronized(LOCK) {
         directory.mkdirs()
         RandomAccessFile(File(directory, "agent-signin-access-v1.lock"), "rw").use { lock ->
-            lock.channel.lock().use { action() }
+            ProcessFileLock.lock(lock.channel).use { action() }
         }
     }
 

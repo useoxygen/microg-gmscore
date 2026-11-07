@@ -5,6 +5,7 @@
 
 package org.microg.gms.auth.folsom.utils
 
+import org.microg.gms.common.ProcessFileLock
 import org.microg.gms.cyclon.DeviceAccount
 import android.annotation.SuppressLint
 import android.content.Context
@@ -170,7 +171,7 @@ class LocalKeyManager(private val context: Context) {
     private inline fun <T> lockedStore(action: () -> T): T = synchronized(storeLock) {
             if (android.os.Build.VERSION.SDK_INT < 23) throw TinkEncryptionException("Keystore protection unavailable")
             RandomAccessFile(File(context.noBackupFilesDir, "folsom-store.lock"), "rw").use { lock ->
-                lock.channel.lock().use {
+                ProcessFileLock.lock(lock.channel).use {
                     action()
                 }
             }
