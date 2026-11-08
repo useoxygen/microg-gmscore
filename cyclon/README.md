@@ -45,8 +45,8 @@ both codes for each subsequent delivery, and update the tag/allocation when
 rebasing to a new upstream release. The product activation gate also requires
 both codes to exceed the versions in the existing signed APK lock.
 
-The CYC-1633 Sign-ins Always-allow delivery reserves GmsCore `254132111` and Companion/FakeStore
-`84022711`. The immutable published pairs up to `254132110` / `84022710` cannot be reused;
+The CYC-1693 eSIM-transfer delivery reserves GmsCore `254132112` and Companion/FakeStore
+`84022712`. The immutable published pairs up to `254132111` / `84022711` cannot be reused;
 both allocations also exceed the owner-reported installed `254132096` / `84022699` baseline.
 The first FakeStore allocation block is exhausted, so `version.gradle` permits
 the next 100 delivery codes while retaining upstream vending compatibility
