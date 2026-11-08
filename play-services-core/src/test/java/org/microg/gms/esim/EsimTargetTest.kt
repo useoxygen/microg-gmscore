@@ -24,11 +24,12 @@ class EsimTargetTest {
         return config.use { EsimWireRecord.build { parcel -> Writer.write(parcel, 1, 1); Writer.write(parcel, 2, 3); Writer.write(parcel, 6, listOf(it), 0, false) } }
     }
     private inner class Peer : EsimPeer {
-        var session = 0L; var closed = false; val notifications = mutableListOf<EsimProto>()
+        var session = 0L; var closed = false; var exchanges = 0; val notifications = mutableListOf<EsimProto>()
         private fun item() = EsimProto.text(1, iccid) + EsimProto.text(2, "310") + EsimProto.text(3, "260") +
             EsimProto.text(6, "Synthetic carrier") + EsimProto.number(12, 2) +
             EsimProto.bytes(10, EsimProto.text(1, "synthetic-transfer-token") + EsimProto.text(2, "2099-01-01T00:00:00Z"))
         override fun exchange(envelope: ByteArray, expectedField: Int): EsimProto {
+            exchanges++
             val request = EsimProto.decode(envelope)
             return when (expectedField) {
                 2 -> {
@@ -190,7 +191,7 @@ class EsimTargetTest {
                 return true
             }
         }
-        val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = {})
+        val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = {}, transferEnabled = true)
         val data = Parcel.obtain(); val reply = Parcel.obtain()
         try {
             data.writeInterfaceToken(EsimTransferBinder.DESCRIPTOR); data.writeStrongBinder(callback)
@@ -216,7 +217,7 @@ class EsimTargetTest {
                 return true
             }
         }
-        val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { requirements += it })
+        val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { requirements += it }, transferEnabled = true)
         for (code in listOf(5, 6)) {
             val data = Parcel.obtain(); val reply = Parcel.obtain()
             try {
@@ -262,6 +263,67 @@ class EsimTargetTest {
                 assertEquals(48502, assertThrows(EsimFailure::class.java) { engine.retrieveProfiles() }.status)
             } finally { data.recycle(); reply.recycle(); binder.close(); worker.awaitTermination(5, TimeUnit.SECONDS) }
         }
+    }
+    /** CYC-1693/CYC-718: with a paired source open, SIM Manager still cannot start, continue or end a transfer. */
+    @Test fun transferGateFailsEverySessionCallAtOnceEvenWithAPairedSource() {
+        assertFalse("Real eSIM transfer stays off until CYC-718 is accepted", EsimTransferBinder.TRANSFER_ENABLED)
+        val peer = Peer(); var peers = 0
+        val engine = EsimTransferEngine(context, Process.myUid(), peerFactory = { peers++; peer }, carrierId = { 123 })
+        start().use { engine.start(it) }
+        val exchanges = peer.exchanges
+        val required = mutableListOf<Set<String>>()
+        val binder = EsimTransferBinder(context, Binder.getCallingUid(), engine, permission = { required += it })
+        val calls = listOf(1 to "IRetrieveProfilesCallbacks", 2 to "ITransferCredentialsCallbacks", 3 to "IActivateServiceCallbacks",
+            6 to "IStartTransferSessionCallbacks", 10 to "IStartTransferSessionCallbacks", 20 to "IStartTransferSessionCallbacks",
+            16 to "INotifyDownloadStatusCallbacks", 7 to "IEndTransferSessionCallbacks")
+        try {
+            for ((code, name) in calls) {
+                val done = CountDownLatch(1); val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+                val callback = object : Binder() {
+                    override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                        try {
+                            data.enforceInterface(EsimTransferBinder.PREFIX + name)
+                            assertEquals(1, code); assertEquals(IBinder.FLAG_ONEWAY, flags)
+                            assertEquals(1, data.readInt()); assertEquals(EsimTransferBinder.TRANSFER_BLOCKED, Status.CREATOR.createFromParcel(data).statusCode)
+                            if (name == "IRetrieveProfilesCallbacks" || name == "ITransferCredentialsCallbacks") assertEquals(0, data.readInt())
+                            assertEquals(0, data.dataAvail())
+                        } catch (e: Throwable) { failure.set(e) } finally { done.countDown() }
+                        return true
+                    }
+                }
+                val listener = object : Binder() {
+                    override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                        failure.set(AssertionError("No progress event may be invented")); return true
+                    }
+                }
+                val data = Parcel.obtain(); val reply = Parcel.obtain()
+                try {
+                    data.writeInterfaceToken(EsimTransferBinder.DESCRIPTOR); data.writeStrongBinder(callback)
+                    when (code) {
+                        2, 3, 16 -> {
+                            if (code == 3) data.writeInt(7)
+                            profile(engine).use { data.writeInt(1); it.writeToParcel(data, 0) }
+                            if (code == 16) data.writeInt(0)
+                        }
+                        6, 10, 20 -> {
+                            start().use { data.writeInt(1); it.writeToParcel(data, 0) }
+                            if (code != 6) data.writeStrongBinder(listener)
+                        }
+                        7 -> EsimWireRecord.build { Writer.write(it, 1, 0) }.use { data.writeInt(1); it.writeToParcel(data, 0) }
+                    }
+                    assertTrue(binder.transact(code, data, reply, 0)); reply.readException()
+                    if (code == 10 || code == 20) assertNotNull(reply.readStrongBinder())
+                    assertEquals(0, reply.dataAvail())
+                    assertTrue("tx$code must answer at once", done.await(5, TimeUnit.SECONDS)); failure.get()?.let { throw AssertionError("tx$code", it) }
+                } finally { data.recycle(); reply.recycle() }
+            }
+            assertEquals("No call may reach the source peer", exchanges, peer.exchanges)
+            assertTrue("No status may be reported to the source", peer.notifications.isEmpty())
+            assertFalse("End must not close the paired session", peer.closed)
+            assertEquals("No call may start another session", 1, peers)
+            engine.retrieveProfiles().close() // the engine's session is untouched
+            assertEquals(calls.size, required.size)
+        } finally { binder.close() }
     }
     @Test fun binderChecksRealPermissionsBeforeDispatch() {
         val binder = EsimTransferBinder(context, Binder.getCallingUid(), permission = { throw SecurityException("fixture") })
