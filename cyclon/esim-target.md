@@ -54,6 +54,16 @@ private reverse-engineering input/source material is not shipped with this repo.
    6→12 user input;7→9 interaction; unknown→0. Session UUID and ICCID must match.
    End reports remaining ongoing operations as failures, never invented success.
 
+## Transfer gate (CYC-1693)
+
+Broker333 advertises `esim_transfer` v1 so SIM Manager's calls reach the binder
+instead of retrying for 2 min and posting "Update Google Play services". While
+`EsimTransferBinder.TRANSFER_ENABLED` is `false`, the session calls (6/10/20, 1, 2,
+3, 16, 7) answer status 17 at once without reaching `EsimTransferEngine`, and
+availability 12/19 answers false, so SIM Manager never offers transfer and its
+setup-wizard step falls back to download. The table below describes the binder
+with the gate on. Turning it on is a one-line change that needs the approval above.
+
 ## Binder coverage in C round 2
 
 All callbacks are oneway transaction1 with their exact descriptor.

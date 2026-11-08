@@ -10,7 +10,9 @@ import android.os.*
 import android.telephony.euicc.EuiccManager
 import androidx.lifecycle.LifecycleService
 import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.Feature
 import com.google.android.gms.common.api.Status
+import com.google.android.gms.common.internal.ConnectionInfo
 import com.google.android.gms.common.internal.GetServiceRequest
 import com.google.android.gms.common.internal.IGmsCallbacks
 import org.microg.gms.AbstractGmsServiceBroker
@@ -35,8 +37,14 @@ class EsimTransferService : LifecycleService() {
             }
             val uid = Binder.getCallingUid()
             val binder = synchronized(binders) { binders.getOrPut(uid) { EsimTransferBinder(this@EsimTransferService, uid) } }
-            callback.onPostInitComplete(ConnectionResult.SUCCESS, binder, null)
+            // Google's client library refuses every IEsimTransferService call unless the connection advertises
+            // esim_transfer v1, and then posts "Update Google Play services" (CYC-1693).
+            callback.onPostInitCompleteWithConnectionInfo(ConnectionResult.SUCCESS, binder, ConnectionInfo().apply { features = FEATURES })
         }
+    }
+    companion object {
+        /** The only feature the esim client defines (SIM Manager D.2.1 `Features.ALL_FEATURES`). */
+        internal val FEATURES = arrayOf(Feature("esim_transfer", 1))
     }
     override fun onBind(intent: Intent): IBinder { super.onBind(intent); return broker }
     override fun onDestroy() { synchronized(binders) { binders.values.forEach { it.close() }; binders.clear() }; super.onDestroy() }
@@ -49,7 +57,13 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
             if (context.checkPermission(name, Binder.getCallingPid(), Binder.getCallingUid()) != PackageManager.PERMISSION_GRANTED)
                 throw SecurityException("Missing $name")
         }
-    }, private val worker: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor()) : MigrationBinder(DESCRIPTOR, uid), java.io.Closeable {
+    }, private val worker: java.util.concurrent.ExecutorService = Executors.newSingleThreadExecutor(),
+    private val transferEnabled: Boolean = TRANSFER_ENABLED) : MigrationBinder(DESCRIPTOR, uid), java.io.Closeable {
+    /** Runs [action] only when transfer is enabled; otherwise the caller's callback gets [TRANSFER_BLOCKED] at once. */
+    private inline fun <T> transfer(action: () -> T): T {
+        if (!transferEnabled) throw EsimFailure(TRANSFER_BLOCKED)
+        return action()
+    }
     private fun record(data: Parcel): EsimWireRecord {
         require(data.readInt() == 1); return EsimWireRecord.CREATOR.createFromParcel(data)
     }
@@ -90,15 +104,15 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
         when (code) {
             1 -> {
                 val callback = requireNotNull(data.readStrongBinder()); data.requireEnd()
-                perform(callback, "IRetrieveProfilesCallbacks", value = true) { engine.retrieveProfiles() }
+                perform(callback, "IRetrieveProfilesCallbacks", value = true) { transfer { engine.retrieveProfiles() } }
             }
             2 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val profile = record(data); data.requireEnd()
-                perform(callback, "ITransferCredentialsCallbacks", profile, true) { engine.credential(profile) }
+                perform(callback, "ITransferCredentialsCallbacks", profile, true) { transfer { engine.credential(profile) } }
             }
             3 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val subscription = data.readInt(); val profile = record(data); data.requireEnd()
-                perform(callback, "IActivateServiceCallbacks", profile) { engine.activate(subscription, profile); null }
+                perform(callback, "IActivateServiceCallbacks", profile) { transfer { engine.activate(subscription, profile) }; null }
             }
             4 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val request = record(data); data.requireEnd()
@@ -140,14 +154,14 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
                 val callback = requireNotNull(data.readStrongBinder()); val request = record(data)
                 if (code != 6) data.readStrongBinder() // IStartTransferSessionListener; no invented progress events.
                 data.requireEnd()
-                perform(callback, "IStartTransferSessionCallbacks", request) { engine.start(request); null }
+                perform(callback, "IStartTransferSessionCallbacks", request) { transfer { engine.start(request) }; null }
                 if (code != 6) {
                     reply?.writeNoException(); reply?.writeStrongBinder(signal(code == 10)); return true
                 }
             }
             7 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val request = record(data); data.requireEnd()
-                perform(callback, "IEndTransferSessionCallbacks", request) { engine.end(); null }
+                perform(callback, "IEndTransferSessionCallbacks", request) { transfer { engine.end() }; null }
             }
             8 -> {
                 val callback = requireNotNull(data.readStrongBinder()); data.requireEnd()
@@ -170,14 +184,15 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
             12, 19 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val sessionType = data.readInt()
                 val connector = if (code == 19) data.readInt() else 0; data.requireEnd()
-                val enabled = context.getSystemService(EuiccManager::class.java)?.isEnabled == true
+                // While transfer is blocked, answer "not available" so SIM Manager never offers the transfer UI.
+                val enabled = transferEnabled && context.getSystemService(EuiccManager::class.java)?.isEnabled == true
                 sendCallback(callback, PREFIX + "IIsEsimTransferAvailableCallbacks", 1) {
                     writeNullable(Status.SUCCESS); writeInt(if (enabled && connector in 0..1 && sessionType in 0..3) 1 else 0)
                 }
             }
             16 -> {
                 val callback = requireNotNull(data.readStrongBinder()); val profile = record(data); val status = data.readInt(); data.requireEnd()
-                perform(callback, "INotifyDownloadStatusCallbacks", profile) { engine.notifyDownload(profile, status); null }
+                perform(callback, "INotifyDownloadStatusCallbacks", profile) { transfer { engine.notifyDownload(profile, status) }; null }
             }
             else -> return false
         }
@@ -199,5 +214,17 @@ internal class EsimTransferBinder(private val context: Context, private val uid:
         execute { releaseOperation() }
         worker.shutdown()
     }
-    companion object { const val DESCRIPTOR = "com.google.android.gms.esim.internal.IEsimTransferService"; const val PREFIX = "com.google.android.gms.esim.internal." }
+    companion object {
+        const val DESCRIPTOR = "com.google.android.gms.esim.internal.IEsimTransferService"; const val PREFIX = "com.google.android.gms.esim.internal."
+        /**
+         * Gate for real eSIM transfer (CYC-718). The broker advertises esim_transfer v1 (CYC-1693), so SIM Manager
+         * can reach every call here. Until CYC-718 is accepted on a designated line (cyclon/esim-target.md), the
+         * session calls (start 6/10/20, profiles 1, credential 2, activate 3, download report 16, end 7) fail at once
+         * with [TRANSFER_BLOCKED] without reaching [EsimTransferEngine], and the availability check (12/19)
+         * answers false. Turning transfer on is this one line and needs Thomas's approval.
+         */
+        const val TRANSFER_ENABLED = false
+        /** The status this binder already uses for unsupported calls. */
+        const val TRANSFER_BLOCKED = 17
+    }
 }
