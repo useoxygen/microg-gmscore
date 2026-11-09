@@ -70,6 +70,9 @@ jobs:
       - name: "Test service binding and DroidGuard callback lifecycle"
         if: matrix.target == 'Debug'
         run: "./gradlew :play-services-base:testDebugUnitTest :play-services-droidguard-core:testDebugUnitTest"
+      - name: "Test reCAPTCHA Base service wire contract and lifecycle"
+        if: matrix.target == 'Debug'
+        run: "./gradlew :play-services-recaptcha-core:testDebugUnitTest"
       - name: "Test Cyclon health and license text pagination"
         run: "./gradlew :play-services-core:testMapboxDefaultDebugUnitTest"
       - name: "Test calendar sync and geofence transitions"

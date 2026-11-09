@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: reCAPTCHA Base (service 380) parcelables use the SafeParcel processor.
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -38,4 +39,6 @@ dependencies {
     api project(':play-services-base')
     api project(':play-services-basement')
     api project(':play-services-tasks')
+
+    annotationProcessor project(':safe-parcel-processor')
 }

@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: a framed flow's client trace starts when the handle is requested (CYC-1544).
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -38,15 +39,17 @@ public class DroidGuardClientImpl extends GoogleApi<DroidGuardClientImpl.Options
     @NonNull
     public Task<DroidGuardHandle> init(@NonNull String flow, @Nullable DroidGuardResultsRequest request) {
         DroidGuardResultsRequest finalRequest = request != null ? request : new DroidGuardResultsRequest();
-        return scheduleTask((ReturningGoogleApiCall<DroidGuardHandle, DroidGuardApiClient>) client -> client.openHandle(flow, finalRequest));
+        DroidGuardClientTrace trace = DroidGuardResponseFrame.startTrace(flow);
+        return scheduleTask((ReturningGoogleApiCall<DroidGuardHandle, DroidGuardApiClient>) client -> client.openHandle(flow, finalRequest, trace));
     }
 
     @Override
     @NonNull
     public Task<String> getResults(@NonNull String flow, @Nullable Map<String, String> data, @Nullable DroidGuardResultsRequest request) {
         DroidGuardResultsRequest finalRequest = request != null ? request : new DroidGuardResultsRequest();
+        DroidGuardClientTrace trace = DroidGuardResponseFrame.startTrace(flow);
         return scheduleTask((ReturningGoogleApiCall<String, DroidGuardApiClient>) client -> {
-            DroidGuardHandle handle = client.openHandle(flow, finalRequest);
+            DroidGuardHandle handle = client.openHandle(flow, finalRequest, trace);
             try {
                 return handle.snapshot(data);
             } finally {
