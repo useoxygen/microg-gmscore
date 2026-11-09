@@ -324,6 +324,7 @@ suspend fun updateLocalExpressFilePB(context: Context, intermediateIntegrityResp
             creationTime = intermediateIntegrity.callerKey.generated
             serverGenerated = intermediateIntegrity.serverGenerated
             deviceIntegrityToken = intermediateIntegrity.intermediateToken
+            errorCode = intermediateIntegrity.testErrorCode
         }.build()
         intermediateIntegrity.integrityAdvice?.let { advice = it }
     }.build()
