@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: a reply that is present on the wire is kept even when it carries no supplemental action.
 /*
  * SPDX-FileCopyrightText: 2020, microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -36,10 +37,10 @@ public class DroidGuardInitReply implements Parcelable {
         public DroidGuardInitReply createFromParcel(Parcel source) {
             ParcelFileDescriptor pfd = source.readParcelable(ParcelFileDescriptor.class.getClassLoader());
             Parcelable object = source.readParcelable(getClass().getClassLoader());
-            if (pfd != null && object != null) {
-                return new DroidGuardInitReply(pfd, object);
-            }
-            return null;
+            // The reply is present: an absent reply is a null marker in the Parcel and never reaches this creator. A
+            // service answers DroidGuardInitReply(null, null) when the client has nothing more to do; returning null
+            // here would make the client take that for a service without initWithRequest and initialize again.
+            return new DroidGuardInitReply(pfd, object);
         }
 
         @Override

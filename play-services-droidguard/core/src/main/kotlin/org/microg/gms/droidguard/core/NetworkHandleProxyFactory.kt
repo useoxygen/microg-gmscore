@@ -23,12 +23,12 @@ import java.util.concurrent.TimeUnit
 import com.android.volley.Request as VolleyRequest
 import com.android.volley.Response as VolleyResponse
 
-class NetworkHandleProxyFactory(private val context: Context) : HandleProxyFactory(context) {
+open class NetworkHandleProxyFactory(private val context: Context) : HandleProxyFactory(context) {
     private val dgDb: DgDatabaseHelper = DgDatabaseHelper(context)
     private val version = VersionUtil(context)
     private val queue = singleInstanceOf { Volley.newRequestQueue(context.applicationContext) }
 
-    fun createHandle(packageName: String, flow: String?, callback: GuardCallback, request: DroidGuardResultsRequest?): HandleProxy {
+    open fun createHandle(packageName: String, flow: String?, callback: GuardCallback, request: DroidGuardResultsRequest?): HandleProxy {
         if (!DroidGuardPreferences.isLocalAvailable(context)) throw IllegalAccessException("DroidGuard should not be available locally")
         val (vmKey, byteCode, bytes) = readFromDatabase(flow) ?: fetchFromServer(flow, packageName)
         return createHandleProxy(flow, vmKey, byteCode, bytes, callback, request)
