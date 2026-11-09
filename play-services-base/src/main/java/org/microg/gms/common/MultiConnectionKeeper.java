@@ -1,3 +1,4 @@
+// Modified by Cyclon in 2026: service bindings no longer set BIND_DEBUG_UNBIND (CYC-1502).
 /*
  * Copyright (C) 2013-2017 microG Project Team
  *
@@ -283,7 +284,10 @@ public class MultiConnectionKeeper {
                 return;
             }
 
-            int flags = Context.BIND_AUTO_CREATE | Context.BIND_DEBUG_UNBIND;
+            // No BIND_DEBUG_UNBIND: it only records unbind stacks for diagnostics, and it shares the value 0x2 with
+            // ServiceInfo.FLAG_ISOLATED_PROCESS, which some framework builds test on the binding when choosing its host.
+            // There the bound service lost the client's importance and was frozen while the binding was held (CYC-1502).
+            int flags = Context.BIND_AUTO_CREATE;
             if (SDK_INT >= 14) {
                 flags |= Context.BIND_ADJUST_WITH_ACTIVITY;
             }

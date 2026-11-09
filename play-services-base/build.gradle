@@ -4,6 +4,7 @@
  */
 
 apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
 apply plugin: 'maven-publish'
 apply plugin: 'signing'
 
@@ -27,6 +28,14 @@ android {
         targetSdkVersion androidTargetSdk
     }
 
+    sourceSets {
+        test.java.srcDirs += 'src/test/kotlin'
+    }
+
+    kotlinOptions {
+        jvmTarget = 1.8
+    }
+
     compileOptions {
         sourceCompatibility = 1.8
         targetCompatibility = 1.8
@@ -46,4 +55,7 @@ dependencies {
     api project(':play-services-tasks')
 
     annotationProcessor project(':safe-parcel-processor')
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.16.1'
 }
