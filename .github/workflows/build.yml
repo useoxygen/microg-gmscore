@@ -67,9 +67,9 @@ jobs:
         run: "./gradlew :people-sync:test"
       - name: "Test password protocol, encryption and durable sync"
         run: "./gradlew :password-sync:test"
-      - name: "Test legacy DroidGuard callback lifecycle"
+      - name: "Test service binding and DroidGuard callback lifecycle"
         if: matrix.target == 'Debug'
-        run: "./gradlew :play-services-droidguard-core:testDebugUnitTest"
+        run: "./gradlew :play-services-base:testDebugUnitTest :play-services-droidguard-core:testDebugUnitTest"
       - name: "Test Cyclon health and license text pagination"
         run: "./gradlew :play-services-core:testMapboxDefaultDebugUnitTest"
       - name: "Test calendar sync and geofence transitions"
