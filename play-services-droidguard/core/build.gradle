@@ -25,6 +25,9 @@ dependencies {
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlinVersion"
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.16.1'
+    // NetworkHandleProxyFactory's Volley queue references these optional platform classes.
+    testImplementation files("${android.sdkDirectory}/platforms/android-${androidCompileSdk}/optional/org.apache.http.legacy.jar")
 }
 
 wire {
@@ -52,6 +55,7 @@ android {
 
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
+        test.java.srcDirs += 'src/test/kotlin'
     }
 
     lintOptions {
