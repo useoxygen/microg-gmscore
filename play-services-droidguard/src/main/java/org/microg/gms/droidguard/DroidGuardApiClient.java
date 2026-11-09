@@ -1,5 +1,6 @@
 // Modified by Cyclon in 2026: the legacy init runs only when initWithRequest returned no reply; incomplete replies are
-// ignored, and a handle whose initialization failed is closed on the service.
+// ignored, and a handle whose initialization failed is closed on the service. A handle of a framed flow carries its
+// client trace (CYC-1544).
 /*
  * SPDX-FileCopyrightText: 2022 microG Project Team
  * SPDX-License-Identifier: Apache-2.0
@@ -51,6 +52,14 @@ public class DroidGuardApiClient extends GmsClient<IDroidGuardService> {
     }
 
     public DroidGuardHandle openHandle(String flow, DroidGuardResultsRequest request) {
+        return openHandle(flow, request, DroidGuardResponseFrame.startTrace(flow));
+    }
+
+    /**
+     * Opens a handle for {@code flow}. {@code trace}, started when the caller requested the handle, is null unless the
+     * flow's responses are framed ({@link DroidGuardResponseFrame#startTrace}); it records when initialization ended.
+     */
+    public DroidGuardHandle openHandle(String flow, DroidGuardResultsRequest request, DroidGuardClientTrace trace) {
         IDroidGuardHandle handle = null;
         try {
             handle = getServiceInterface().getHandle();
@@ -65,7 +74,8 @@ public class DroidGuardApiClient extends GmsClient<IDroidGuardService> {
                 handleInitReply(reply);
             }
             openHandles++;
-            return new DroidGuardHandleImpl(this, request, handle);
+            if (trace != null) trace.record(DroidGuardClientTrace.INIT_END);
+            return new DroidGuardHandleImpl(this, request, handle, trace);
         } catch (Exception e) {
             if (handle != null) {
                 try {
