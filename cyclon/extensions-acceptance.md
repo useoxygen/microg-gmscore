@@ -1,7 +1,9 @@
 # Cyclon app compatibility, geofencing and Calendar sync
 
 This round adds per-app troubleshooting, explicit failed callbacks for unsupported
-location APIs, app-scoped geofencing, and opt-in Google Calendar sync. Download-only
+location APIs, app-scoped geofencing, and Google Calendar sync (on by default, download
+only, since CYC-2073; it steps aside for the Google Calendar app's own sync where that
+app can sync, see [two-way Calendar sync](calendar-two-way.md)). Download-only
 mode uses the native account consent flow and the `calendar.readonly` OAuth scope.
 An explicit two-way option authorizes the full `calendar` scope and uploads local
 event changes only in selected writable calendars. Conflicting changes are held

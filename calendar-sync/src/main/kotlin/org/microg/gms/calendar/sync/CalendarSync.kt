@@ -7,8 +7,12 @@ import org.json.JSONObject
 data class CalendarReminder(val method: String, val minutes: Int)
 data class RemoteCalendar(val id: String, val title: String, val zone: String, val color: String,
     val reminders: List<Int>, val deleted: Boolean = false, val accessRole: String = "reader",
-    val defaultReminders: List<CalendarReminder> = reminders.map { CalendarReminder("popup", it) }) {
+    val defaultReminders: List<CalendarReminder> = reminders.map { CalendarReminder("popup", it) },
+    val selected: Boolean = true, val hidden: Boolean = false, val primary: Boolean = false) {
     val writable: Boolean get() = accessRole in setOf("owner", "writer")
+    /** A calendar new to this phone syncs its events when the owner shows it in Google Calendar and owns or writes it, or it
+     * is a holiday calendar; the primary calendar always. The owner's later per-calendar choice on the phone is kept. */
+    val syncByDefault: Boolean get() = primary || selected && !hidden && (writable || id.endsWith("#holiday@group.v.calendar.google.com"))
 }
 data class EventTime(val millis: Long, val allDay: Boolean, val zone: String)
 data class RemoteEvent(val id: String, val etag: String, val title: String, val description: String,
@@ -43,6 +47,10 @@ interface CalendarStore {
     fun reconcile(calendar: RemoteCalendar, present: Set<String>): Int
     fun checkpoint(calendar: String, value: String)
     fun reconcileCalendars(present: Set<String>) {}
+    /** The run's complete calendar list from Google, before any calendar is synced. */
+    fun calendarList(calendars: List<RemoteCalendar>) {}
+    /** This run has stored [calendar]'s download (or it does not sync events): nothing of it is missing from the store. */
+    fun calendarSynced(calendar: RemoteCalendar) {}
     /** Only dirty rows or durable journals in this owned, selected calendar; missing rows are never deletions. */
     fun localEvents(calendar: RemoteCalendar): List<LocalEvent> = emptyList()
     fun uploadAllowed(calendar: RemoteCalendar): Boolean = false
@@ -88,6 +96,8 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
             page = response.next
             check(page == null || seen.add(page!!))
         } while (page != null)
+        consent()
+        store.calendarList(calendars.distinctBy { it.id }.filterNot { it.deleted })
         var count = 0
         var conflicts = 0
         var skipped = 0
@@ -101,6 +111,7 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
                 val outcome = syncCalendar(calendar, ::consent)
                 count += outcome.events; conflicts += outcome.conflicts; skipped += outcome.skipped
                 uploaded += outcome.uploaded; uncertain += outcome.uncertain
+                store.calendarSynced(calendar)
             } catch (e: SyncStopped) { throw e
             } catch (e: InterruptedException) { throw e
             } catch (e: CalendarRequestException) {

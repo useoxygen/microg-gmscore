@@ -7,7 +7,7 @@ internal enum class HealthState { OFF, PAUSED, READY, CONNECTED, ATTENTION, UNKN
 internal enum class HealthReason {
     DISABLED, UNREADABLE, CONNECTED, DISCONNECTED, NO_ACCOUNTS, SYNC_PAUSED,
     SYNC_PENDING, SYNC_SUCCESS, SYNC_PARTIAL, CONTACT_PERMISSION, AUTHORIZATION, NETWORK, LOCAL, CONFLICT, UNCERTAIN,
-    LOCATION_READY, LOCATION_PERMISSION, REGISTRATION_PENDING, REGISTRATION_RECORDED, CALENDAR_PERMISSION
+    LOCATION_READY, LOCATION_PERMISSION, REGISTRATION_PENDING, REGISTRATION_RECORDED, CALENDAR_PERMISSION, GOOGLE_CALENDAR
 }
 internal data class HealthReading(val state: HealthState, val reason: HealthReason, val lastSuccessAt: Long? = null)
 internal val unknownHealth = HealthReading(HealthState.UNKNOWN, HealthReason.UNREADABLE)
@@ -52,10 +52,20 @@ internal fun contactHealthReason(stored: String): HealthReason = when (stored) {
     else -> HealthReason.UNREADABLE
 }
 
-internal fun calendarHealth(accounts: List<ContactHealthObservation>?, masterSync: Boolean?, permitted: Boolean?): HealthReading =
-    contactsHealth(accounts, masterSync, permitted).let {
+/** [googleSyncing]: the Google Calendar app's own adapter keeps the store in sync and ours steps aside (CYC-2073); ours'
+ * permission and status then say nothing about the calendar, and an account is on when Android's per-account switch, which
+ * that adapter follows too, is on ([ContactHealthObservation.enabled]). */
+internal fun calendarHealth(accounts: List<ContactHealthObservation>?, masterSync: Boolean?, permitted: Boolean?,
+    googleSyncing: Boolean? = false): HealthReading = when {
+    googleSyncing == true && !accounts.isNullOrEmpty() -> when {
+        accounts.none { it.enabled } -> HealthReading(HealthState.OFF, HealthReason.DISABLED)
+        masterSync == false -> HealthReading(HealthState.PAUSED, HealthReason.SYNC_PAUSED)
+        else -> HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR)
+    }
+    else -> contactsHealth(accounts, masterSync, permitted).let {
         if (it.reason == HealthReason.CONTACT_PERMISSION) it.copy(reason = HealthReason.CALENDAR_PERMISSION) else it
     }
+}
 
 internal fun locationHealth(systemEnabled: Boolean?, configured: Boolean?, permitted: Boolean?): HealthReading = when {
     systemEnabled == false || configured == false -> HealthReading(HealthState.OFF, HealthReason.DISABLED)

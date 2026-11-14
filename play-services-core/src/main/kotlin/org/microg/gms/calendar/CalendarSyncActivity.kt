@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -39,6 +40,8 @@ class CalendarSyncActivity : ComponentActivity() {
     private var failed by mutableStateOf(false)
     private var revision by mutableStateOf(0)
     private var resolving: Account? by mutableStateOf(null)
+    /** The account whose switch to download only was refused because of unsent changes (CYC-2073). */
+    private var leaveRefused: Account? by mutableStateOf(null)
     private var authFuture: AccountManagerFuture<Bundle>? = null
     private val permissions = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -63,6 +66,8 @@ class CalendarSyncActivity : ComponentActivity() {
                     }) { Text(stringResource(R.string.cyclon_calendar_use_google)) } })
             }
             LaunchedEffect(Unit) { while (true) { delay(3_000); revision++ } }
+            // Opening this screen also decides again who keeps the calendar in sync (CYC-2073).
+            LaunchedEffect(Unit) { withContext(Dispatchers.IO) { runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncActivity) } }; revision++ }
             Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 CyclonTextButton(onClick = { finish() }) { Text(stringResource(R.string.cyclon_back)) }
                 Text(stringResource(R.string.cyclon_calendar_title), style = MaterialTheme.typography.headlineSmall)
@@ -71,10 +76,31 @@ class CalendarSyncActivity : ComponentActivity() {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 @Suppress("UNUSED_EXPRESSION")
                 revision
+                // Google Calendar's own adapter keeps the store in sync: ours has no switches until it hands back, and each account
+                // shows Android's own switch for it, which that adapter follows too. The owner's saved choices for ours stay.
+                val google = CalendarHandover.steppedAside(this@CalendarSyncActivity)
+                if (google) Text(stringResource(R.string.cyclon_calendar_google_sync))
+                CalendarHandover.reason(this@CalendarSyncActivity)?.let { (reason, account) ->
+                    when (reason) {
+                        "two_way" -> Text(stringResource(R.string.cyclon_calendar_google_two_way, account ?: ""))
+                        "cleanup" -> Text(stringResource(R.string.cyclon_calendar_google_cleanup))
+                        "unclaimed" -> Text(stringResource(R.string.cyclon_calendar_google_unclaimed))
+                        "stalled" -> Text(stringResource(R.string.cyclon_calendar_google_stalled, account ?: ""))
+                    }
+                }
                 val accounts = DeviceAccount.visible(this@CalendarSyncActivity, AccountManager.get(this@CalendarSyncActivity).getAccountsByType("com.google"))
                     .sortedBy { it.name != intent.getStringExtra("account_name") }
                 if (accounts.isEmpty()) Text(stringResource(R.string.contacts_sync_no_accounts))
-                for (account in accounts.take(100)) {
+                if (google) for (account in accounts.take(100)) {
+                    val prefs = CalendarSyncPreferences(this@CalendarSyncActivity, account)
+                    Text(account.name, style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(if (prefs.googleSyncs) R.string.cyclon_calendar_google_account_on else R.string.cyclon_calendar_google_account_off))
+                    if (!prefs.googleSyncs) CyclonOutlinedButton(onClick = {
+                        runCatching { startActivity(Intent(Settings.ACTION_SYNC_SETTINGS)) }
+                    }) { Text(stringResource(R.string.cyclon_sync_open_android_sync)) }
+                    HorizontalDivider()
+                }
+                if (!google) for (account in accounts.take(100)) {
                     val prefs = CalendarSyncPreferences(this@CalendarSyncActivity, account)
                     Text(account.name, style = MaterialTheme.typography.titleMedium)
                     Row {
@@ -88,10 +114,16 @@ class CalendarSyncActivity : ComponentActivity() {
                         })
                         Text(stringResource(R.string.cyclon_calendar_download), Modifier.padding(12.dp))
                     }
+                    if (prefs.onByDefault) Text(stringResource(R.string.cyclon_calendar_default_on))
                     if (prefs.enabled) {
                         Row {
                             Switch(checked = prefs.twoWay, enabled = !busy, onCheckedChange = { twoWay ->
-                                if (!twoWay) { prefs.configure(true, false); revision++ }
+                                // Download only lets Google's copy replace a local edit: leave two-way only with nothing left to send.
+                                if (!twoWay) lifecycleScope.launch {
+                                    val clear = withContext(Dispatchers.IO) { CalendarHandover.canLeaveTwoWay(this@CalendarSyncActivity, account) }
+                                    if (clear) { prefs.configure(true, false); leaveRefused = null } else leaveRefused = account
+                                    revision++
+                                }
                                 else {
                                     pending = account; pendingTwoWay = true; busy = true; failed = false
                                     if (permissions.all { ContextCompat.checkSelfPermission(this@CalendarSyncActivity, it) == PackageManager.PERMISSION_GRANTED }) authorize(account, true)
@@ -100,6 +132,8 @@ class CalendarSyncActivity : ComponentActivity() {
                             })
                             Text(stringResource(R.string.cyclon_calendar_two_way), Modifier.padding(12.dp))
                         }
+                        if (leaveRefused == account && prefs.twoWay) Text(stringResource(R.string.cyclon_calendar_two_way_unsent))
+                        if (prefs.strandedChanges > 0) Text(pluralStringResource(R.plurals.cyclon_calendar_stranded, prefs.strandedChanges, prefs.strandedChanges))
                         if (prefs.uploadsHeld) {
                             Text(stringResource(R.string.cyclon_calendar_upload_hold))
                             CyclonOutlinedButton(onClick = { prefs.ownerResumeUploads(); revision++ }, enabled = !busy) {

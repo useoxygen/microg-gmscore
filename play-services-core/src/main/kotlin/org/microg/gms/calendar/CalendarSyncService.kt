@@ -21,12 +21,20 @@ class CalendarSyncService : Service() {
     private val adapter by lazy { object : AbstractThreadedSyncAdapter(this, true) {
         override fun onPerformSync(account: Account, extras: Bundle, authority: String,
             provider: ContentProviderClient, result: SyncResult) {
+            // A calendar permission grant sends no broadcast, but the Google Calendar app requests a sync when it starts and
+            // the request reaches whichever adapter holds the slot: here ours notices Google's adapter can take over (CYC-2073).
+            if (runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncService) }.getOrNull() == CalendarHandover.Owner.GOOGLE) return
             // Cyclon's device account is only for registration: nothing is synced for it (CYC-927).
             if (DeviceAccount.isDevice(this@CalendarSyncService, account)) return
             val prefs = CalendarSyncPreferences(this@CalendarSyncService, account)
+            prefs.ensureDefaults()
             if (!prefs.enabled) return
+            prefs.schedulePeriodic()
             val twoWay = prefs.twoWay
-            fun active() = prefs.enabled && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted
+            // Stepping aside for Google Calendar's adapter also stops a sync already running before our rows leave (CYC-2073):
+            // the flag is set before the removal starts, and every store write refuses while it is set.
+            fun active() = prefs.mayWrite && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted &&
+                !CalendarHandover.steppedAside(this@CalendarSyncService)
             var token: String? = null
             try {
                 token = calendarToken(this@CalendarSyncService, account, twoWay)
@@ -57,6 +65,7 @@ class CalendarSyncService : Service() {
                         HttpReply(it.code, buffer.readUtf8(), it.header("Retry-After")?.toLongOrNull()?.coerceAtLeast(0) ?: 0)
                     }
                 })
+                // The first sync after a hand-back also removes Google's adapter's copies once the calendar list is in (CYC-2073).
                 val report = CalendarSync(api, AndroidCalendarStore(provider, account, prefs), ::active,
                     { active() && twoWay && prefs.uploadsAllowed }).sync()
                 result.stats.numUpdates += report.events + report.uploaded
@@ -88,6 +97,8 @@ class CalendarSyncService : Service() {
                     prefs.status = "local"; result.stats.numParseExceptions++
                 }
             }
+            // Changes Google Calendar's adapter left unsent at a hand-back stay on the phone; Calendar sync counts them (CYC-2073).
+            runCatching { prefs.strandedChanges = AndroidCalendarStore(provider, account, prefs).strandedChanges() }
         }
     } }
     override fun onBind(intent: Intent) = adapter.syncAdapterBinder

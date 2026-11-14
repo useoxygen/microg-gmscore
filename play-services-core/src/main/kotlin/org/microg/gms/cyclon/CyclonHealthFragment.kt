@@ -168,4 +168,5 @@ private fun reasonText(reason: HealthReason): Int = when (reason) {
     HealthReason.REGISTRATION_PENDING -> R.string.cyclon_health_registration_pending
     HealthReason.REGISTRATION_RECORDED -> R.string.cyclon_health_registration_recorded
     HealthReason.CALENDAR_PERMISSION -> R.string.cyclon_calendar_permissions
+    HealthReason.GOOGLE_CALENDAR -> R.string.cyclon_calendar_google_sync
 }

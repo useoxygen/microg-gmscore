@@ -7,6 +7,7 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Intent
 import android.os.Build
+import android.provider.BaseColumns
 import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
@@ -27,7 +28,8 @@ class CalendarProviderTest {
     private val resolver get() = context.contentResolver
     private lateinit var account: Account
     private lateinit var prefs: CalendarSyncPreferences
-    private val calendar = RemoteCalendar("fixture", "Cyclon calendar fixture", "UTC", "#64748b", listOf(10))
+    // Primary: shown and syncing on first creation whatever its access role (CYC-2073 defaults).
+    private val calendar = RemoteCalendar("fixture", "Cyclon calendar fixture", "UTC", "#64748b", listOf(10), primary = true)
     @Before fun setup() {
         check(Build.HARDWARE in listOf("ranchu", "goldfish") && context.packageName == "org.microg.gms.calendar.sync.android.test")
         account = Account("fixture-" + UUID.randomUUID(), "org.microg.gms.calendar.fixture")
@@ -57,6 +59,107 @@ class CalendarProviderTest {
             arrayOf(AndroidCalendarStore.MARKER, calendarId.toString()), Events._ID)!!.use { c ->
                 buildList<Long> { while(c.moveToNext()) add(c.getLong(0)) }
             }
+    }
+    private fun asAdapter(uri: android.net.Uri, owner: Account) = uri.buildUpon().appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+        .appendQueryParameter(Calendars.ACCOUNT_NAME, owner.name).appendQueryParameter(Calendars.ACCOUNT_TYPE, owner.type).build()
+    private fun insertCalendar(owner: Account, sync1: String?) = ContentUris.parseId(requireNotNull(resolver.insert(asAdapter(Calendars.CONTENT_URI, owner),
+        ContentValues().apply {
+            put(Calendars.ACCOUNT_NAME, owner.name); put(Calendars.ACCOUNT_TYPE, owner.type); put(Calendars.NAME, "fixture-$sync1")
+            put(Calendars.CALENDAR_DISPLAY_NAME, "Fixture $sync1"); put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_OWNER)
+            put(Calendars.OWNER_ACCOUNT, owner.name); put(Calendars.CAL_SYNC1, sync1); put(Calendars.SYNC_EVENTS, 1); put(Calendars.VISIBLE, 1)
+        })))
+    /** An event as a sync adapter writes it (clean), or with [app] as an app writes it (DIRTY=1, set by the provider). */
+    private fun insertEvent(owner: Account, calendar: Long, remote: String?, app: Boolean = false, values: ContentValues.() -> Unit = {}) =
+        ContentUris.parseId(requireNotNull(resolver.insert(if (app) Events.CONTENT_URI else asAdapter(Events.CONTENT_URI, owner), ContentValues().apply {
+            put(Events.CALENDAR_ID, calendar); put(Events.TITLE, "fixture $remote"); put(Events.EVENT_TIMEZONE, "UTC")
+            put(Events.DTSTART, 1_790_000_000_000L); put(Events.DTEND, 1_790_003_600_000L)
+            if (remote != null) put(Events._SYNC_ID, remote)
+            values()
+        })))
+    private fun count(uri: android.net.Uri, selection: String, vararg args: String) =
+        resolver.query(uri, arrayOf(BaseColumns._ID), selection, arrayOf(*args), null)!!.use { it.count }
+    // CYC-2073 hand-over: on the real provider, removing our calendars as the sync adapter leaves no DELETED=1 row (a dirty and a
+    // locally deleted event included), and touches neither a LOCAL calendar nor another account.
+    @Test fun handOverRemovalLeavesNoDeletedRowsAndTouchesNothingElse() {
+        store { assertTrue(it.event(calendar, event())); assertTrue(it.event(calendar, event("edited"))); assertTrue(it.event(calendar, event("gone"))) }
+        val (clean, edited, gone) = ids()
+        resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, edited), ContentValues().apply { put(Events.TITLE, "Local edit") }, null, null)
+        resolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, gone), null, null)
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=? AND ${Events.DELETED}=1", gone.toString()))
+        val ourCalendar = resolver.query(Calendars.CONTENT_URI, arrayOf(Calendars._ID), "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.CAL_SYNC1}=?",
+            arrayOf(account.name, AndroidCalendarStore.MARKER), null)!!.use { it.moveToFirst(); it.getLong(0) }
+        val local = Account("fixture-local-" + UUID.randomUUID(), CalendarContract.ACCOUNT_TYPE_LOCAL)
+        val other = Account("fixture-" + UUID.randomUUID(), account.type)
+        assertTrue(AccountManager.get(context).addAccountExplicitly(other, null, null))
+        val otherPrefs = CalendarSyncPreferences(context, other)
+        try {
+            val localCalendar = insertCalendar(local, null)
+            insertEvent(local, localCalendar, null, app = true)
+            otherPrefs.configure(true)
+            requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
+                AndroidCalendarStore(it, other, otherPrefs).apply { calendar(calendar); assertTrue(event(calendar, event())) }
+            }
+            requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
+                assertTrue(AndroidCalendarStore(it, account, prefs).removeOwnRows())
+            }
+            assertEquals(0, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", ourCalendar.toString()))
+            assertEquals(0, count(Events.CONTENT_URI, "${Events._ID} IN (?,?,?)", clean.toString(), edited.toString(), gone.toString()))
+            assertEquals(0, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", ourCalendar.toString()))
+            assertEquals(0, count(Events.CONTENT_URI, "${Events.ACCOUNT_NAME}=? AND ${Events.ACCOUNT_TYPE}=?", account.name, account.type))
+            assertEquals(1, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", localCalendar.toString()))
+            assertEquals(1, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=? AND ${Events.DELETED}=0", localCalendar.toString()))
+            assertEquals(1, ids(other).size)
+        } finally {
+            try { otherPrefs.configure(false) } finally {
+                try {
+                    for (owner in listOf(local, other)) resolver.delete(asAdapter(Calendars.CONTENT_URI, owner),
+                        "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=?", arrayOf(owner.name, owner.type))
+                } finally { AccountManager.get(context).removeAccountExplicitly(other) }
+            }
+        }
+    }
+    // CYC-2073 hand-back: the first sync's cleanup, on the real provider, removes a clean copy in the calendar Google's adapter
+    // left for a calendar Google still lists, keeps a dirty exception and its master (the provider's cascade must not take it),
+    // and leaves a calendar that matches nothing on Google untouched.
+    @Test fun handBackCleanupKeepsAnUnmatchedCalendarAndADirtyExceptionWithItsMaster() {
+        val google = insertCalendar(account, calendar.id)
+        val single = insertEvent(account, google, "single")
+        val master = insertEvent(account, google, "series") { remove(Events.DTEND); put(Events.DURATION, "PT1H"); put(Events.RRULE, "FREQ=DAILY;COUNT=3") }
+        val exception = insertEvent(account, google, null, app = true) {
+            put(Events.ORIGINAL_ID, master); put(Events.ORIGINAL_SYNC_ID, "series"); put(Events.ORIGINAL_INSTANCE_TIME, 1_790_086_400_000L)
+            put(Events.DTSTART, 1_790_090_000_000L); put(Events.DTEND, 1_790_093_600_000L); put(Events.TITLE, "moved on the phone")
+        }
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=? AND ${Events.DIRTY}=1", exception.toString()))
+        val unmatched = insertCalendar(account, "another-app")
+        val unmatchedEvent = insertEvent(account, unmatched, "kept")
+        prefs.rebuild = true
+        requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
+            // The copy goes only once this run stored the calendar's download.
+            AndroidCalendarStore(it, account, prefs).run {
+                calendarList(listOf(calendar))
+                assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=?", single.toString()))
+                calendarSynced(calendar)
+            }
+        }
+        assertFalse(prefs.rebuild)
+        assertEquals(0, count(Events.CONTENT_URI, "${Events._ID}=?", single.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=? AND ${Events.DELETED}=0", master.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=? AND ${Events.DELETED}=0 AND ${Events.DIRTY}=1", exception.toString()))
+        assertEquals(1, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", google.toString()))
+        assertEquals(1, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", unmatched.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=? AND ${Events.DELETED}=0", unmatchedEvent.toString()))
+        requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
+            assertEquals(1, AndroidCalendarStore(it, account, prefs).strandedChanges())
+        }
+    }
+    // CYC-2073: the hand-over reads which package holds a sync-adapter slot from SyncAdapterType.toString(), as Android 10+ prints it.
+    @Test fun syncAdapterTypesNameTheirPackage() {
+        val types = android.content.ContentResolver.getSyncAdapterTypes().filterNot { it.isKey }
+        assertTrue(types.isNotEmpty())
+        for (type in types) {
+            val name = requireNotNull(CalendarHandover.packageOf(type)) { type.toString() }
+            context.packageManager.getPackageInfo(name, android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS)
+        }
     }
     @Test fun clearedProviderRowsLoseTheirCheckpointAndRestoreACompleteSnapshot() {
         store { assertTrue(it.event(calendar,event())); it.checkpoint(calendar.id,"old"); assertEquals("old",it.checkpoint(calendar.id)) }
@@ -139,6 +242,7 @@ class CalendarProviderTest {
         }
     }
     @Test fun dirtyRowsSurviveUpdatesAndRemoteDeletion() {
+        prefs.configure(true, twoWay = true) // download only lets Google's copy win since CYC-2073
         store { it.event(calendar, event()) }
         val id = ids().single()
         resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI,id), ContentValues().apply { put(Events.TITLE,"Local edit") }, null,null)

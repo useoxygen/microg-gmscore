@@ -16,6 +16,19 @@ class CalendarSyncTest {
             }
         }
     }
+    // New calendars: events for the ones the owner shows and owns or writes, holidays and the primary calendar (CYC-2073).
+    @Test fun calendarListFlagsDecideWhichNewCalendarsSyncEvents() {
+        val api = GoogleCalendarApi(HttpTransport { _, _, _ -> HttpReply(200, """{"items":[
+            {"id":"me@example.invalid","accessRole":"owner","primary":true},
+            {"id":"team","accessRole":"writer","selected":true},
+            {"id":"shown-reader","accessRole":"reader","selected":true},
+            {"id":"en.usa#holiday@group.v.calendar.google.com","accessRole":"reader","selected":true},
+            {"id":"unselected","accessRole":"owner"},
+            {"id":"hidden","accessRole":"owner","selected":true,"hidden":true}]}""", 0) })
+        val calendars = api.calendars(null).calendars.associate { it.id to it.syncByDefault }
+        assertEquals(mapOf("me@example.invalid" to true, "team" to true, "shown-reader" to false,
+            "en.usa#holiday@group.v.calendar.google.com" to true, "unselected" to false, "hidden" to false), calendars)
+    }
     private val calendar = RemoteCalendar("primary", "Fixture", "Europe/Berlin", "#64748b", listOf(10))
     private fun event(id: String = "one") = GoogleCalendarApi.parseEvent(JSONObject("""{"id":"$id","etag":"e1","summary":"Fixture","start":{"date":"2026-10-06"},"end":{"date":"2026-10-07"}}"""), calendar)
     private class Store : CalendarStore {
@@ -165,6 +178,8 @@ class CalendarSyncTest {
         override fun checkpoint(calendar: String, value: String) { tokens[calendar] = value }
         override fun event(calendar: RemoteCalendar, event: RemoteEvent): Boolean { rows.getOrPut(calendar.id) { mutableSetOf() } += event.id; return true }
         override fun reconcile(calendar: RemoteCalendar, present: Set<String>) = 0
+        val synced = mutableListOf<String>()
+        override fun calendarSynced(calendar: RemoteCalendar) { synced += calendar.id }
     }
     private fun twoCalendars(first: (RemoteCalendar) -> EventPage) = object : CalendarApi {
         val calendars = listOf(RemoteCalendar("primary", "Main", "UTC", "#64748b", emptyList()), RemoteCalendar("holidays", "Holidays", "UTC", "#64748b", emptyList()))
@@ -183,6 +198,8 @@ class CalendarSyncTest {
         assertEquals(listOf("primary", "holidays"), api.attempted)
         assertEquals(setOf("holiday"), store.rows["holidays"]); assertEquals("h1", store.tokens["holidays"])
         assertNull(store.rows["primary"]); assertNull(store.tokens["primary"])
+        // Only a calendar whose download was stored counts as synced: a hand-back keeps Google's copy of the other (CYC-2073).
+        assertEquals(listOf("holidays"), store.synced)
     }
     @Test fun authorizationRateLimitsAndTheOffSwitchStillStopTheWholeRun() {
         for (failure in listOf(CalendarRequestException(401), CalendarRequestException(429), CalendarRequestException(403, rateLimited = true))) {
