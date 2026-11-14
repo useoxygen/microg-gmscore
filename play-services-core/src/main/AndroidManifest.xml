@@ -536,6 +536,18 @@
         <activity-alias android:name="org.microg.gms.calendar.CalendarSyncSettings"
             android:targetActivity="org.microg.gms.calendar.CalendarSyncActivity"
             android:exported="true" android:permission="android.permission.NETWORK_SETUP_WIZARD" />
+        <receiver android:name="org.microg.gms.calendar.CalendarSyncAccountsReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.accounts.LOGIN_ACCOUNTS_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_FULLY_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_DATA_CLEARED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
         <service android:name="org.microg.gms.calendar.CalendarSyncService" android:exported="false">
             <intent-filter><action android:name="android.content.SyncAdapter" /></intent-filter>
             <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/calendar_syncadapter" />

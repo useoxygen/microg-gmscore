@@ -16,6 +16,19 @@ class CalendarSyncTest {
             }
         }
     }
+    // New calendars: events for the ones the owner shows and owns or writes, holidays and the primary calendar (CYC-2073).
+    @Test fun calendarListFlagsDecideWhichNewCalendarsSyncEvents() {
+        val api = GoogleCalendarApi(HttpTransport { _, _, _ -> HttpReply(200, """{"items":[
+            {"id":"me@example.invalid","accessRole":"owner","primary":true},
+            {"id":"team","accessRole":"writer","selected":true},
+            {"id":"shown-reader","accessRole":"reader","selected":true},
+            {"id":"en.usa#holiday@group.v.calendar.google.com","accessRole":"reader","selected":true},
+            {"id":"unselected","accessRole":"owner"},
+            {"id":"hidden","accessRole":"owner","selected":true,"hidden":true}]}""", 0) })
+        val calendars = api.calendars(null).calendars.associate { it.id to it.syncByDefault }
+        assertEquals(mapOf("me@example.invalid" to true, "team" to true, "shown-reader" to false,
+            "en.usa#holiday@group.v.calendar.google.com" to true, "unselected" to false, "hidden" to false), calendars)
+    }
     private val calendar = RemoteCalendar("primary", "Fixture", "Europe/Berlin", "#64748b", listOf(10))
     private fun event(id: String = "one") = GoogleCalendarApi.parseEvent(JSONObject("""{"id":"$id","etag":"e1","summary":"Fixture","start":{"date":"2026-10-06"},"end":{"date":"2026-10-07"}}"""), calendar)
     private class Store : CalendarStore {

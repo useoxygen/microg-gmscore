@@ -84,7 +84,9 @@ class GoogleCalendarApi(private val transport: CalendarTransport) : CalendarApi 
             val row = items!!.getJSONObject(i)
             RemoteCalendar(row.getString("id"), row.optString("summary"), row.optString("timeZone", "UTC"),
                 row.optString("backgroundColor", "#64748b"), reminders(row.optJSONArray("defaultReminders")), row.optBoolean("deleted"), row.optString("accessRole", "reader"),
-                reminderEntries(row.optJSONArray("defaultReminders")))
+                reminderEntries(row.optJSONArray("defaultReminders")),
+                // Google leaves out "selected" and "hidden" when they are false.
+                row.optBoolean("selected"), row.optBoolean("hidden"), row.optBoolean("primary"))
         }
         return CalendarPage(calendars, body.optString("nextPageToken").takeIf { it.isNotBlank() })
     }

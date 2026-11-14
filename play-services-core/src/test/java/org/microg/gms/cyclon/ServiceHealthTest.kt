@@ -41,6 +41,15 @@ class ServiceHealthTest {
         assertEquals(HealthReason.CONTACT_PERMISSION, contactsHealth(listOf(account(true, "success", 123)), true, false).reason)
         assertEquals(HealthState.OFF, contactsHealth(listOf(account(false, "", 0)), true, false).state)
     }
+    // CYC-2073: the Google Calendar app's own adapter keeps the calendar in sync; ours' permission and status do not apply.
+    @Test fun calendarSyncedByGoogleCalendarIsReadyNotOffOrFailing() {
+        val reading = calendarHealth(listOf(account(true, "authorization", 0)), true, false, googleSyncing = true)
+        assertEquals(HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR), reading)
+        assertEquals(HealthReason.NO_ACCOUNTS, calendarHealth(emptyList(), true, true, googleSyncing = true).reason)
+        assertEquals(HealthReason.CALENDAR_PERMISSION, calendarHealth(listOf(account(true, "success", 1)), true, false, googleSyncing = false).reason)
+        assertTrue(ServiceHealthSnapshot(calendar = reading, servicesVersionCode = 1, androidApi = 35).diagnosticReport()
+            .contains("calendar=ready; code=google_calendar"))
+    }
     @Test fun locationReadyDoesNotClaimAMeasuredPosition() {
         assertEquals(HealthState.OFF, locationHealth(false, true, true).state)
         assertEquals(HealthState.OFF, locationHealth(true, false, null).state)

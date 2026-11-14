@@ -61,5 +61,6 @@ normal delivery acceptance before it changes an installed Cyclon image.
 The [extension acceptance guide](extensions-acceptance.md) covers app troubleshooting,
 location API callbacks, geofencing and native Calendar sync, including the
 repeatable emulator fixture runner and the signed-device acceptance still required.
-The [two-way Calendar guide](calendar-two-way.md) documents event uploads, consent,
-conflict resolution and the system Transfer Phone companion contract.
+The [two-way Calendar guide](calendar-two-way.md) documents the download-only default,
+the hand-over to the Google Calendar app's own sync adapter (and its kill switch), event
+uploads, consent, conflict resolution and the system Transfer Phone companion contract.

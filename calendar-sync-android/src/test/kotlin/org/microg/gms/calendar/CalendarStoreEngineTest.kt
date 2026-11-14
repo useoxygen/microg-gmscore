@@ -89,6 +89,81 @@ class CalendarStoreEngineTest {
     private fun title(id: Long, value: String) = edit(id, ContentValues().apply { put(Events.TITLE, value) })
     private fun assertNoFailure(report: CalendarReport) { if (report.failure != null) throw AssertionError("Sync failed", report.failure) }
 
+    // Download only uploads nothing: Google's later version replaces a local edit instead of holding it for ever (CYC-2073).
+    @Test fun downloadOnlyDirtyRowTakesGooglesLaterVersion() {
+        prefs.configure(true, false)
+        val id = seed(event())
+        title(id, "phone edit")
+        api.remote["event"] = event(title = "web edit", sequence = 2, etag = "web-etag")
+        val report = sync()
+        assertNoFailure(report)
+        assertEquals(0, report.conflicts)
+        assertEquals("web edit", row(id).getAsString(Events.TITLE))
+        assertEquals(0, row(id).getAsInteger(Events.DIRTY).toInt())
+        assertTrue(api.patches.isEmpty())
+        assertEquals("token-10", store().checkpoint(calendar.id))
+    }
+    // Two-way keeps holding the same edit for upload, and counts as unsent for the hand-over to Google's adapter.
+    @Test fun twoWayDirtyRowIsUnsentUntilUploaded() {
+        val id = seed(event())
+        assertFalse(store().hasUnsentChanges())
+        title(id, "phone edit")
+        assertTrue(store().hasUnsentChanges())
+        assertNoFailure(sync())
+        assertEquals("phone edit", api.remote["event"]!!.title)
+        assertFalse(store().hasUnsentChanges())
+    }
+    private fun foreignCalendar(sync1: String?): Long = ContentUris.parseId(requireNotNull(client.insert(Calendars.CONTENT_URI, ContentValues().apply {
+        put(Calendars.ACCOUNT_NAME, account.name); put(Calendars.ACCOUNT_TYPE, account.type)
+        put(Calendars._SYNC_ID, "chosen"); put(Calendars.CAL_SYNC1, sync1); put(Calendars.SYNC_EVENTS, 1); put(Calendars.VISIBLE, 1)
+    })))
+    private fun foreignEvent(calendar: Long, remote: String?, dirty: Boolean, parent: Long? = null): Long =
+        ContentUris.parseId(requireNotNull(client.insert(Events.CONTENT_URI, ContentValues().apply {
+            put(Events.CALENDAR_ID, calendar); put(Events._SYNC_ID, remote); put(Events.TITLE, "copy of $remote")
+            put(Events.DTSTART, 0L); put(Events.DTEND, 3_600_000L); put(Events.DIRTY, if (dirty) 1 else 0)
+            if (parent != null) put(Events.ORIGINAL_ID, parent)
+        })))
+    private fun count(table: Uri, selection: String, vararg args: String) =
+        requireNotNull(client.query(table, null, selection, arrayOf(*args), null)).use { it.count }
+    // Hand-back: Google's adapter left its own copies (CAL_SYNC1 = Google's calendar id). Its clean copies go from this phone
+    // only, an unsent edit and its series stay, local calendars are untouched, and ours downloads everything again.
+    @Test fun firstSyncAfterHandBackRebuildsWithoutDoublingOrDeletingOnGoogle() {
+        seed(event())
+        val google = foreignCalendar("chosen@group.calendar.google.com")
+        foreignEvent(google, "event", dirty = false)
+        val master = foreignEvent(google, "series", dirty = false)
+        foreignEvent(google, null, dirty = true, parent = master)
+        val clean = foreignCalendar("other@group.calendar.google.com")
+        foreignEvent(clean, "other", dirty = false)
+        val local = foreignCalendar(null)
+        foreignEvent(local, null, dirty = false)
+        store().prepareAfterHandBack()
+        assertNull(store().checkpoint(calendar.id))
+        assertEquals(2, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", google.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=?", master.toString()))
+        assertEquals(0, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", clean.toString()))
+        assertEquals(0, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", clean.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", local.toString()))
+        api.checkpoints.clear()
+        assertNoFailure(sync())
+        assertEquals(listOf<String?>(null), api.checkpoints)
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._SYNC_ID}=? AND ${Events.SYNC_DATA1}=?", "event", AndroidCalendarStore.MARKER))
+        assertTrue(api.patches.isEmpty()); assertEquals(0, api.creates)
+        assertEquals("event", api.remote.keys.single())
+    }
+    // A calendar new to this phone takes Google's selected/hidden flags and access role; the owner's later choice stays.
+    @Test fun newCalendarsSyncOnlyWhatTheOwnerShowsAndCanWrite() {
+        val store = store()
+        val reader = RemoteCalendar("reader", "Shared", "UTC", "#64748b", emptyList(), accessRole = "reader", selected = true)
+        val hidden = RemoteCalendar("hidden", "Hidden", "UTC", "#64748b", emptyList(), accessRole = "owner", selected = true, hidden = true)
+        val mine = RemoteCalendar("mine", "Mine", "UTC", "#64748b", emptyList(), accessRole = "owner", selected = true)
+        for (c in listOf(reader, hidden, mine)) store.calendar(c)
+        assertFalse(store.shouldSync(reader)); assertFalse(store.shouldSync(hidden)); assertTrue(store.shouldSync(mine))
+        assertEquals(1, client.update(Calendars.CONTENT_URI, ContentValues().apply { put(Calendars.SYNC_EVENTS, 1) },
+            "${Calendars._SYNC_ID}=?", arrayOf("reader")))
+        store.calendar(reader)
+        assertTrue(store.shouldSync(reader))
+    }
     @Test fun concurrentPhoneTitleEditDoesNotTurnStaleProviderLocationIntoANewUpload() {
         concurrentAcknowledgement(false)
     }
@@ -462,8 +537,9 @@ class CalendarStoreEngineTest {
         var revision = 10
         var creates = 0
         override fun calendars(page: String?) = CalendarPage(listOf(calendar), null)
+        val checkpoints = mutableListOf<String?>()
         override fun events(calendar: RemoteCalendar, checkpoint: String?, page: String?) =
-            EventPage(remote.values.toList(), null, "token-$revision")
+            EventPage(remote.values.toList(), null, "token-$revision").also { checkpoints += checkpoint }
         override fun get(calendar: RemoteCalendar, id: String) = remote[id] ?: occurrence?.takeIf { it.id == id }
         override fun instance(calendar: RemoteCalendar, masterId: String, original: EventTime) =
             occurrence?.takeIf { it.masterId == masterId && it.original == original }

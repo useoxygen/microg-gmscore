@@ -21,10 +21,15 @@ class CalendarSyncService : Service() {
     private val adapter by lazy { object : AbstractThreadedSyncAdapter(this, true) {
         override fun onPerformSync(account: Account, extras: Bundle, authority: String,
             provider: ContentProviderClient, result: SyncResult) {
+            // A calendar permission grant sends no broadcast, but the Google Calendar app requests a sync when it starts and
+            // the request reaches whichever adapter holds the slot: here ours notices Google's adapter can take over (CYC-2073).
+            if (runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncService) }.getOrNull() == CalendarHandover.Owner.GOOGLE) return
             // Cyclon's device account is only for registration: nothing is synced for it (CYC-927).
             if (DeviceAccount.isDevice(this@CalendarSyncService, account)) return
             val prefs = CalendarSyncPreferences(this@CalendarSyncService, account)
+            prefs.ensureDefaults()
             if (!prefs.enabled) return
+            prefs.schedulePeriodic()
             val twoWay = prefs.twoWay
             fun active() = prefs.enabled && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted
             var token: String? = null
@@ -57,8 +62,9 @@ class CalendarSyncService : Service() {
                         HttpReply(it.code, buffer.readUtf8(), it.header("Retry-After")?.toLongOrNull()?.coerceAtLeast(0) ?: 0)
                     }
                 })
-                val report = CalendarSync(api, AndroidCalendarStore(provider, account, prefs), ::active,
-                    { active() && twoWay && prefs.uploadsAllowed }).sync()
+                val store = AndroidCalendarStore(provider, account, prefs)
+                if (prefs.rebuild) { store.prepareAfterHandBack(); prefs.rebuild = false }
+                val report = CalendarSync(api, store, ::active, { active() && twoWay && prefs.uploadsAllowed }).sync()
                 result.stats.numUpdates += report.events + report.uploaded
                 result.stats.numConflictDetectedExceptions += report.conflicts + report.uncertain
                 result.stats.numSkippedEntries += report.skipped
@@ -88,6 +94,8 @@ class CalendarSyncService : Service() {
                     prefs.status = "local"; result.stats.numParseExceptions++
                 }
             }
+            // Waiting for unsent changes: this sync may have uploaded the last of them.
+            if (CalendarHandover.waiting(this@CalendarSyncService)) runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncService) }
         }
     } }
     override fun onBind(intent: Intent) = adapter.syncAdapterBinder

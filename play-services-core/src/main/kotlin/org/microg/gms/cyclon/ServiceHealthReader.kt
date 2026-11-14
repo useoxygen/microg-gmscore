@@ -99,7 +99,8 @@ internal class ServiceHealthReader(private val context: Context) {
                 @Suppress("DEPRECATION")
                 val info = context.packageManager.getPackageInfo("com.android.vending", 0)
                 if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-            }, Build.VERSION.SDK_INT, calendarHealth(calendars, masterSync, calendarPermission)
+            }, Build.VERSION.SDK_INT, calendarHealth(calendars, masterSync, calendarPermission,
+                observe { org.microg.gms.calendar.CalendarHandover.steppedAside(context) })
         )
     }
 

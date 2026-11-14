@@ -8,12 +8,16 @@ import android.content.ContentResolver
 import android.content.Context
 import android.os.Bundle
 
-class CalendarSyncPreferences(context: Context, val account: Account) {
+class CalendarSyncPreferences(private val context: Context, val account: Account) {
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val prefix = "${account.type}:${account.name}:"
-    val enabled get() = prefs.getBoolean(prefix + "enabled", false)
-    /** Absence is different from an owner's saved off choice. Transfers must never overwrite either choice. */
+    /** The owner's saved choice, else the default: download only, on for every visible Google account (CYC-2073). */
+    val enabled get() = prefs.getBoolean(prefix + "enabled", prefs.getBoolean(prefix + "defaultEnabled", false))
+    /** Absence is different from an owner's saved off choice. Transfers must never overwrite either choice. The default is
+     * stored apart ("defaultEnabled"), so it is never mistaken for an owner's choice. */
     val hasSavedChoice get() = prefs.contains(prefix + "enabled")
+    /** On only by default: the owner has not chosen on this phone. */
+    val onByDefault get() = !hasSavedChoice && enabled
     val twoWay get() = prefs.getBoolean(prefix + "twoWay", false)
     val uploadsHeld get() = prefs.getBoolean(prefix + "uploadsHeld", false)
     val uploadsAllowed get() = enabled && twoWay && !uploadsHeld
@@ -35,16 +39,53 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
         set(value) { prefs.edit().putLong(prefix + "lastSuccess", value).apply() }
     fun configure(value: Boolean, twoWay: Boolean = this.twoWay) {
         check(prefs.edit().putBoolean(prefix + "enabled", value).putBoolean(prefix + "twoWay", twoWay).commit())
-        ContentResolver.setIsSyncable(account, AUTHORITY, if (value) 1 else 0)
-        ContentResolver.setSyncAutomatically(account, AUTHORITY, value)
-        if (value) {
-            ContentResolver.addPeriodicSync(account, AUTHORITY, Bundle.EMPTY, 3600)
-            refresh()
-        } else {
+        schedule(value)
+        if (value) refresh()
+    }
+    /**
+     * Records the default for an account without a saved choice, once: download only, scheduled like turning sync on. Android
+     * requests the first sync itself when the account becomes syncable, following master sync. A saved choice, including off,
+     * is never changed; nor is a default already recorded (Android's own account switch may have turned it off since).
+     */
+    fun ensureDefaults() {
+        if (hasSavedChoice || prefs.contains(prefix + "defaultEnabled")) return
+        check(prefs.edit().putBoolean(prefix + "defaultEnabled", true).commit())
+        schedule(true)
+    }
+    /** Android's sync settings follow the choice. While Google Calendar's own adapter holds the slot they are its settings too,
+     * so they stay as they are (CYC-2073). */
+    private fun schedule(on: Boolean) {
+        if (CalendarHandover.steppedAside(context)) return
+        ContentResolver.setIsSyncable(account, AUTHORITY, if (on) 1 else 0)
+        ContentResolver.setSyncAutomatically(account, AUTHORITY, on)
+        if (on) schedulePeriodic() else {
             ContentResolver.cancelSync(account, AUTHORITY)
             ContentResolver.removePeriodicSync(account, AUTHORITY, Bundle.EMPTY)
+            ContentResolver.removePeriodicSync(account, AUTHORITY, periodicExtras())
         }
     }
+    /** Hourly, with a marker extra: the Google Calendar app removes a periodic sync with empty extras for this authority when
+     * it is opened. Replaces the empty-extras schedule earlier builds registered. Called again by every sync ours runs. */
+    fun schedulePeriodic() {
+        ContentResolver.removePeriodicSync(account, AUTHORITY, Bundle.EMPTY)
+        ContentResolver.addPeriodicSync(account, AUTHORITY, periodicExtras(), 3600)
+    }
+    /** Ours holds the slot again after Google Calendar's adapter: rebuild on the next sync and schedule as before. Android's
+     * own account switch stays as the owner left it; only an account Android has never asked about becomes syncable. */
+    fun takeBack() {
+        rebuild = true
+        if (!enabled) return
+        if (ContentResolver.getIsSyncable(account, AUTHORITY) < 0) {
+            ContentResolver.setIsSyncable(account, AUTHORITY, 1)
+            ContentResolver.setSyncAutomatically(account, AUTHORITY, true)
+        }
+        schedulePeriodic()
+        ContentResolver.requestSync(account, AUTHORITY, Bundle.EMPTY)
+    }
+    /** The first sync after Google Calendar's adapter gave the slot back rebuilds this account from a full download. */
+    var rebuild: Boolean
+        get() = prefs.getBoolean(prefix + "rebuild", false)
+        set(value) { check(prefs.edit().putBoolean(prefix + "rebuild", value).commit()) }
     /** On here, but Android's own switch for this account (Settings › Accounts › Account sync) stops it running. */
     val androidSyncOff: Boolean get() = enabled &&
         (!ContentResolver.getSyncAutomatically(account, AUTHORITY) || ContentResolver.getIsSyncable(account, AUTHORITY) <= 0)
@@ -53,7 +94,7 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
         if (!enabled) return
         ContentResolver.setIsSyncable(account, AUTHORITY, 1)
         ContentResolver.setSyncAutomatically(account, AUTHORITY, true)
-        ContentResolver.addPeriodicSync(account, AUTHORITY, Bundle.EMPTY, 3600)
+        schedulePeriodic()
         refresh()
     }
     fun refresh() {
@@ -70,12 +111,14 @@ class CalendarSyncPreferences(context: Context, val account: Account) {
     companion object {
         const val AUTHORITY = "com.android.calendar"
         const val PREFERENCES = "calendar-sync"
+        const val PERIODIC = "cyclon_calendar_periodic"
+        fun periodicExtras() = Bundle().apply { putBoolean(PERIODIC, true) }
         /** Removal must withdraw the old opt-in, even if the same account is added again later. */
         fun forgetRemovedAccounts(context: Context) {
             val accounts = AccountManager.get(context).accounts.toSet()
             val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             val keys = prefs.all.keys
-            val removedPrefixes = keys.filter { it.endsWith(":enabled") || it.endsWith(":uploadsHeld") }.mapNotNull { key ->
+            val removedPrefixes = keys.filter { key -> listOf(":enabled", ":defaultEnabled", ":uploadsHeld", ":rebuild").any(key::endsWith) }.mapNotNull { key ->
                 val identity = key.substringBeforeLast(':')
                 val separator = identity.indexOf(':')
                 if (separator <= 0 || separator == identity.lastIndex) null else {

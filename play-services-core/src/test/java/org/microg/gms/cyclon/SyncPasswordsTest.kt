@@ -34,6 +34,9 @@ class SyncPasswordsTest {
         assertEquals(Summary(R.string.cyclon_sync_on), SyncPasswords.contactsSummary(ready, Accounts(0, 0)))
     }
 
+    @Test fun calendarKeptInSyncByGoogleCalendarSaysSo() = assertEquals(Summary(R.string.cyclon_sync_calendar_google),
+        SyncPasswords.calendarSummary(HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR), Accounts(0, 2)))
+
     @Test fun problemsAndPausesAreNamed() {
         assertEquals(Summary(R.string.cyclon_sync_attention), SyncPasswords.calendarSummary(HealthReading(HealthState.ATTENTION, HealthReason.AUTHORIZATION), Accounts(1, 2)))
         assertEquals(Summary(R.string.cyclon_sync_paused), SyncPasswords.contactsSummary(HealthReading(HealthState.PAUSED, HealthReason.SYNC_PAUSED), Accounts(1, 2)))

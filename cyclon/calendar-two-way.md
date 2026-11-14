@@ -1,11 +1,99 @@
 # Google Calendar sync and Transfer Phone
 
-Calendar sync is opt-in per Google account. Existing download-only opt-ins keep
-their mode. Enable **Two-way event sync** in Cyclon Services → Calendar sync to
+Calendar sync is on by default, download only, for every visible Google account
+that has no saved choice (CYC-2073); existing phones get the default with the
+update (`BOOT_COMPLETED`, `MY_PACKAGE_REPLACED`, account changes and the first sync
+of an account). The default is stored apart from the owner's choice
+(`defaultEnabled`, not `enabled`), so a saved on, off or two-way choice is never
+overridden and "no saved choice" stays distinguishable. Android's own account
+switch for the authority is set once, when the default is recorded; turning it
+off later is respected. Existing download-only opt-ins keep their mode. Enable
+**Two-way event sync** in Cyclon Services → Calendar sync to
 authorize `https://www.googleapis.com/auth/calendar`; download-only mode uses
 `https://www.googleapis.com/auth/calendar.readonly`. The authorization screen
 finishes before two-way background scheduling is enabled. Turning sync off keeps
 local events and saves the off choice.
+
+The default needs no screen for the OAuth token, but not for the permission:
+
+- GmsCore's own `calendar.readonly` token comes through the same AccountManager
+  path contacts sync already uses in the background: `AuthManager` lets the request
+  through while **Trust Google for app permissions** is on (`auth_manager_trust_google`,
+  default on), and GmsCore asks as itself (`appIsGms`). If Google answers with a
+  consent request instead, the token is missing and the status says
+  `authorization`; **Reconnect** in Calendar sync is the one-tap fix.
+- `READ_CALENDAR`/`WRITE_CALENDAR` are runtime permissions. Cyclon's images do not
+  pre-grant them to GmsCore: partner_gms's
+  `default-permissions-com.google.android.gms.xml` grants contacts but not calendar,
+  and Android's default grant to calendar sync adapters covers only packages
+  without a launcher activity, while GmsCore has one (Cyclon Services). Without the
+  permission the account is still on by default; Calendar sync and Cyclon Services
+  health say the permission is missing, and **Reconnect** asks for it. Adding the
+  two permissions to the partner_gms default grants would remove that tap.
+
+A calendar new to the phone syncs events when Google marks it shown in Google
+Calendar (`selected`, not `hidden`) and the owner owns or writes it, when it is a
+holiday calendar, and always for the primary calendar. Other calendars are
+created with sync and visibility off; the owner's per-calendar choice on the
+phone then wins, as before. In download-only mode Google's version replaces a
+locally changed event (and Google's deletion removes it) instead of holding it as
+a conflict for ever; a journal from an earlier two-way run still waits.
+
+## Handing over to the Google Calendar app
+
+Android gives the `com.android.calendar` slot for `com.google` accounts to one
+sync adapter; ours wins because it is in the system image. The Google Calendar
+app (`com.google.android.calendar`) ships Google's own adapter for the same slot
+(`com.google.android.syncadapters.calendar.CalendarSyncAdapterService`), with
+guests, push and Google's conflict rules. Where that app can sync, ours steps
+aside and Google's fills the store; ours remains the fallback.
+
+- **Condition** (`CalendarHandover.googleCanSync`): the app is installed and
+  enabled and holds both `READ_CALENDAR` and `WRITE_CALENDAR` (it asks on first
+  open; Google's adapter does not run without them).
+- **Stepping aside** disables ours (`CalendarSyncService`, `COMPONENT_ENABLED_STATE_DISABLED`,
+  `DONT_KILL_APP`), removes our periodic sync and requests one sync, which Android
+  gives to Google's adapter. Android reassigns the slot when the component state
+  changes (`RegisteredServicesCache` on `PACKAGE_CHANGED`); the owner's test on a
+  Pixel 7a with `pm disable` showed it take the slot at once, without a reboot.
+- **Not while ours has unsent work**: for a two-way account with dirty or journaled
+  rows in our calendars, a held conflict, or a transfer upload hold (Google's
+  adapter has no hold), ours keeps the slot and Calendar sync says the Google
+  Calendar app takes over once those are uploaded, resolved or resumed.
+- **Handing back**: when the condition stops holding (app removed, disabled,
+  permission revoked) or the kill switch is set, ours returns to its manifest
+  default and every account is marked for a rebuild. Its first sync removes the
+  clean events Google's adapter left (calendars whose `CAL_SYNC1` is set and is
+  not `cyclon-calendar-v1`; removed as the sync adapter, so nothing reaches
+  Google), then the emptied calendars, keeps any event with a change Google's
+  adapter had not uploaded (and its series), leaves local calendars without a
+  sync id alone, drops our checkpoints and downloads everything again. An absent
+  local row is still never a server delete.
+- **When it is decided**: on boot, package replaced and account changes; when the
+  app is fully removed or its data is cleared (both revoke its permissions, and
+  both are broadcasts a manifest receiver of an app targeting Android 8+ still
+  gets); at the start of every sync ours is asked to run (a permission grant sends
+  no broadcast, but the Google Calendar app requests a sync when it starts, and
+  the request reaches ours while ours holds the slot); when Calendar sync is
+  opened; and hourly (WorkManager) while Google's adapter holds the slot, because
+  `PACKAGE_ADDED`/`CHANGED`/`REPLACED` and permission revocation reach no manifest
+  receiver of a target-29 app. A disabled app or revoked permission can therefore
+  take up to about an hour to hand back.
+- **Our schedule** while ours keeps the slot with the app installed: the app
+  removes a periodic sync with empty extras for the authority when it is opened, so
+  ours registers its hourly sync with the extra `cyclon_calendar_periodic` and
+  registers it again at the start of every sync.
+- **Owner choices** (`enabled`, `twoWay`, holds) are not changed by either
+  direction. While aside, Android's per-account switches for the authority belong
+  to Google's adapter too, so ours does not change them.
+- **Kill switch**: `adb shell setprop debug.cyclon.calendar_own_sync 1` keeps ours
+  (until reboot; read at every evaluation, so the next sync request or the hourly
+  check hands back). `persist.cyclon.calendar.own_sync=1` is read the same way and
+  survives a reboot, but Cyclon's sepolicy must first let the shell set it and
+  GmsCore read it (not part of this change).
+- **Status**: Calendar sync and Cyclon Services health say the Google Calendar
+  app keeps the phone's calendar in sync (health `calendar=ready; code=google_calendar`)
+  instead of showing ours as off or failing.
 
 An account opt-in covers its Google calendar list, including calendars Switch
 creates later. CalendarProvider's per-calendar `SYNC_EVENTS` choice is retained.
@@ -35,15 +123,21 @@ Methods:
 - `status`: return current choices without changing them.
 
 Every successful account lookup returns `result`, `enabled`, `two_way`,
-`uploads_held`, and a `settings_intent`. Results:
+`uploads_held`, `default_on`, `google_calendar_sync` and a `settings_intent`.
+`default_on` is true while sync is on only by default (no saved owner choice;
+download only). `google_calendar_sync` is true while the Google Calendar app's
+own adapter keeps the store in sync and ours steps aside; the other fields still
+describe the owner's choices for ours, which apply again if ours takes back the
+slot. Results:
 
 - `enabled`: the saved account opt-in exists and Android calendar permissions are
   granted. Check `two_way` and `uploads_held` separately; this is scheduling state,
   not a claim that any event was downloaded or uploaded.
 - `saved_off`: the owner explicitly turned sync off. Show an owner prompt; do not
   retry enablement or overwrite their preference.
-- `consent_required`: sync has never been enabled. Offer calendar settings so the
-  owner can choose download-only or two-way sync and complete authorization.
+- `consent_required`: sync has never been enabled and no default is recorded yet.
+  Offer calendar settings so the owner can choose download-only or two-way sync and
+  complete authorization.
 - `permission_required`: a saved opt-in exists but Android calendar permission
   is missing. Offer calendar settings.
 - `no_account`: no matching Google account exists. No preferences were changed.
@@ -91,6 +185,35 @@ The first two-way run refreshes the old download-only projection in full. Dirty
 legacy rows acquire newly represented privacy, availability and end-zone metadata
 from a verified Google revision; ambiguous inherited reminders require an owner
 choice rather than being changed into fixed overrides during the upgrade.
+
+## Required device acceptance: default and hand-over (CYC-2073)
+
+No device was used by the implementation agent; none of this has run on a phone.
+
+1. Phone without the Google Calendar app, account added before the update, no
+   saved choice: after the update, Calendar sync shows the account on by default,
+   download only; the store fills without opening any screen. If GmsCore lacks the
+   calendar permission, Calendar sync and health say so and **Reconnect** fixes it
+   in one tap. A saved off choice from before stays off.
+2. Install the Google Calendar app, do not open it: ours keeps the slot. Open it and
+   grant calendar access: within one sync request, `dumpsys package com.google.android.gms`
+   shows `CalendarSyncService` disabled, `dumpsys content` shows Google's adapter
+   for `com.android.calendar`, and the store refills with Google's rows, including
+   attendees. Calendar sync and health say the Google Calendar app keeps the
+   calendar in sync. Insert and delete an event through the store; confirm both
+   reach Google.
+3. With a two-way account, make an event edit on the phone with uploads held (or a
+   held conflict) before opening the Google Calendar app: ours keeps the slot and
+   says it is waiting. Resume or resolve: the next sync request hands over.
+4. Revoke the Google Calendar app's calendar permission, then disable the app, then
+   uninstall it (separately): within about an hour (or on opening Calendar sync),
+   ours is enabled again, rebuilds with one full download, the store holds each
+   event once, and nothing was deleted in Google Calendar web.
+5. With the app installed and permitted, `setprop debug.cyclon.calendar_own_sync 1`:
+   ours takes back the slot at the next evaluation; clearing it hands over again.
+6. With ours holding the slot and the app installed without permission, open the
+   app: `dumpsys content` still lists ours' hourly periodic sync (with
+   `cyclon_calendar_periodic`).
 
 ## Required device acceptance (parent workstream)
 

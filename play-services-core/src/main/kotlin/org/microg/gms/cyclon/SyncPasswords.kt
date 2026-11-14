@@ -52,6 +52,7 @@ internal object SyncPasswords {
         HealthState.PAUSED -> Summary(R.string.cyclon_sync_paused)
         // With several accounts, say when only some sync, so "On" never hides an account that is off.
         HealthState.READY, HealthState.CONNECTED -> when {
+            reading.reason == HealthReason.GOOGLE_CALENDAR -> Summary(R.string.cyclon_sync_calendar_google)
             accounts.total > 1 && accounts.on in 1 until accounts.total -> Summary(
                 if (reading.reason == HealthReason.SYNC_PENDING) R.plurals.cyclon_sync_pending_some else R.plurals.cyclon_sync_on_some,
                 listOf(accounts.on, accounts.total), count = accounts.total)

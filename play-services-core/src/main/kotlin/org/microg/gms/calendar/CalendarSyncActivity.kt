@@ -63,6 +63,8 @@ class CalendarSyncActivity : ComponentActivity() {
                     }) { Text(stringResource(R.string.cyclon_calendar_use_google)) } })
             }
             LaunchedEffect(Unit) { while (true) { delay(3_000); revision++ } }
+            // Opening this screen also decides again who keeps the calendar in sync (CYC-2073).
+            LaunchedEffect(Unit) { withContext(Dispatchers.IO) { runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncActivity) } }; revision++ }
             Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 CyclonTextButton(onClick = { finish() }) { Text(stringResource(R.string.cyclon_back)) }
                 Text(stringResource(R.string.cyclon_calendar_title), style = MaterialTheme.typography.headlineSmall)
@@ -71,9 +73,14 @@ class CalendarSyncActivity : ComponentActivity() {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 @Suppress("UNUSED_EXPRESSION")
                 revision
-                val accounts = DeviceAccount.visible(this@CalendarSyncActivity, AccountManager.get(this@CalendarSyncActivity).getAccountsByType("com.google"))
+                // Google Calendar's own adapter keeps the store in sync: ours has nothing to show or switch until it hands back.
+                // The owner's saved choices for ours stay as they are.
+                val google = CalendarHandover.steppedAside(this@CalendarSyncActivity)
+                if (google) Text(stringResource(R.string.cyclon_calendar_google_sync))
+                else if (CalendarHandover.waiting(this@CalendarSyncActivity)) Text(stringResource(R.string.cyclon_calendar_google_waiting))
+                val accounts = if (google) emptyList() else DeviceAccount.visible(this@CalendarSyncActivity, AccountManager.get(this@CalendarSyncActivity).getAccountsByType("com.google"))
                     .sortedBy { it.name != intent.getStringExtra("account_name") }
-                if (accounts.isEmpty()) Text(stringResource(R.string.contacts_sync_no_accounts))
+                if (accounts.isEmpty() && !google) Text(stringResource(R.string.contacts_sync_no_accounts))
                 for (account in accounts.take(100)) {
                     val prefs = CalendarSyncPreferences(this@CalendarSyncActivity, account)
                     Text(account.name, style = MaterialTheme.typography.titleMedium)
@@ -88,6 +95,7 @@ class CalendarSyncActivity : ComponentActivity() {
                         })
                         Text(stringResource(R.string.cyclon_calendar_download), Modifier.padding(12.dp))
                     }
+                    if (prefs.onByDefault) Text(stringResource(R.string.cyclon_calendar_default_on))
                     if (prefs.enabled) {
                         Row {
                             Switch(checked = prefs.twoWay, enabled = !busy, onCheckedChange = { twoWay ->

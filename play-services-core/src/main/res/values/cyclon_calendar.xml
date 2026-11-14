@@ -17,5 +17,9 @@
     <string name="cyclon_calendar_partial">Last sync completed, but some events could not be read and were skipped.</string>
     <string name="cyclon_calendar_conflict">Some local changes need review or could not be uploaded. Local changes and the Google version were preserved.</string>
     <string name="cyclon_calendar_local">Calendar data could not be applied. Local data was retained; try again.</string>
+    <string name="cyclon_calendar_google_sync">The Google Calendar app keeps this phone’s calendar in sync with Google. Cyclon’s own calendar sync steps aside while it does, and takes over again if that app is removed, disabled or loses its calendar permission.</string>
+    <string name="cyclon_calendar_google_waiting">The Google Calendar app can keep this phone’s calendar in sync. It takes over once Cyclon’s calendar sync has uploaded your unsent changes, conflicts are resolved and paused uploads are resumed.</string>
+    <string name="cyclon_calendar_default_on">On by default, download only. Choose here to turn it off or sync both ways.</string>
+    <string name="cyclon_sync_calendar_google">On: kept in sync by the Google Calendar app</string>
     <string name="cyclon_calendar_permissions">Calendar permission is missing. Review permissions in Calendar sync.</string>
 </resources>
