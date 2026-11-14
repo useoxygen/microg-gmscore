@@ -88,6 +88,11 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
         schedulePeriodic()
         ContentResolver.requestSync(account, AUTHORITY, Bundle.EMPTY)
     }
+    /** Ours is stepping aside, or aside, for Google Calendar's adapter (CYC-2073): set before its rows start to leave, so a sync
+     * of ours that is still running stops at its next step and writes nothing. Phone-wide, not per account. */
+    val steppingAside: Boolean get() = prefs.getBoolean(STEPPING_ASIDE, false)
+    /** Ours may write to the store for this account: sync is on and ours is not stepping aside. */
+    val mayWrite: Boolean get() = enabled && !steppingAside
     /** Ours has created a calendar in the store since its rows last left it (CYC-2073); read when ours cannot read the store. */
     fun markOwnRows() { if (!prefs.getBoolean(OWN_ROWS, false)) check(prefs.edit().putBoolean(OWN_ROWS, true).commit()) }
     /** The first sync after Google Calendar's adapter gave the slot back rebuilds this account from a full download. */
@@ -154,6 +159,9 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
         const val PREFERENCES = "calendar-sync"
         const val PERIODIC = "cyclon_calendar_periodic"
         const val OWN_ROWS = "ownRows"
+        const val STEPPING_ASIDE = "steppingAside"
+        /** Every row of ours left the store after ours disabled itself; the hand-over is complete only with this set. */
+        const val ROWS_REMOVED = "asideRowsRemoved"
         fun periodicExtras() = Bundle().apply { putBoolean(PERIODIC, true) }
         /** Removal must withdraw the old opt-in, even if the same account is added again later. */
         fun forgetRemovedAccounts(context: Context) {

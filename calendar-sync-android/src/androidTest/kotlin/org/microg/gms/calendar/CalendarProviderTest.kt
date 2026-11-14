@@ -134,7 +134,12 @@ class CalendarProviderTest {
         val unmatchedEvent = insertEvent(account, unmatched, "kept")
         prefs.rebuild = true
         requireNotNull(resolver.acquireContentProviderClient(CalendarContract.AUTHORITY)).use {
-            AndroidCalendarStore(it, account, prefs).calendarList(listOf(calendar))
+            // The copy goes only once this run stored the calendar's download.
+            AndroidCalendarStore(it, account, prefs).run {
+                calendarList(listOf(calendar))
+                assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=?", single.toString()))
+                calendarSynced(calendar)
+            }
         }
         assertFalse(prefs.rebuild)
         assertEquals(0, count(Events.CONTENT_URI, "${Events._ID}=?", single.toString()))

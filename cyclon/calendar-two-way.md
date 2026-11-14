@@ -70,19 +70,32 @@ aside and Google's fills the store; ours remains the fallback.
 - **Order of a hand-over** (rules 2 and 7):
   1. The hourly check is scheduled (WorkManager, unique, kept), so a process
      death later in the hand-over still leaves something that decides again.
-  2. Ours stops writing: it cancels its running and pending syncs for the
-     authority, removes its periodic sync and disables `CalendarSyncService`
-     (`COMPONENT_ENABLED_STATE_DISABLED`, `DONT_KILL_APP`). A sync of ours that is
-     still running stops at its next write, since its "active" check also asks
-     whether ours stepped aside.
+  2. Ours stops writing: it sets its persisted "stepping aside" flag
+     (`steppingAside` in GmsCore's preferences), cancels its running and pending
+     syncs for the authority, removes its periodic sync and disables
+     `CalendarSyncService` (`COMPONENT_ENABLED_STATE_DISABLED`, `DONT_KILL_APP`).
+     Disabling the component does not stop a sync thread that already passed its
+     checks, so the flag does: while it is set, the sync's "active" check fails at
+     its next step and every store write of ours refuses. The flag stays set while
+     ours is aside and is cleared when ours takes the slot back or undoes.
   3. Ours removes **all** of its calendars (`CAL_SYNC1=cyclon-calendar-v1`) and
      their events for every Google account, as the sync adapter, on the phone
      only, including accounts whose sync ours has off. Google's adapter then
      starts from nothing of ours instead of finding rows whose `_SYNC_ID`s are
      Google's ids. A local edit or delete in them is dropped by definition.
   4. Ours checks that Android gave the slot to the Google Calendar app (rule 5a,
-     below), then requests a forced (manual, expedited) sync for every account
-     whose sync is on.
+     below). It then queries once more for calendars with our marker and removes
+     any that appeared (a write that was already under way when the flag was
+     set); if that fails, ours takes the slot back. Only then does it record that
+     the removal is complete (`asideRowsRemoved`) and request a forced (manual,
+     expedited) sync for every account whose sync is on.
+
+  The hand-over is complete only with that record, not with the component
+  state. An evaluation that finds `CalendarSyncService` disabled without it (a
+  process death between disabling and finishing the removal) finishes the
+  removal first; if that fails, or ours may hold rows it cannot reach without
+  calendar permission, it takes the slot back like a hand-back (rule 2's undo,
+  with a rebuild, since Google's adapter may have held the slot meanwhile).
 
   If the removal leaves a row with our marker, ours undoes: it enables its
   component again, registers its periodic syncs again, keeps the slot, and
@@ -96,9 +109,12 @@ aside and Google's fills the store; ours remains the fallback.
   test on a Pixel 7a with `pm disable` showed it take the slot at once.
 - **Per-calendar choices survive** (rule 3): before removing its calendars, ours
   remembers per account each calendar's visibility and sync choice
-  (`VISIBLE`, `SYNC_EVENTS`) by Google calendar id. When ours creates that
-  calendar again after a hand-back, it applies the remembered choice once
-  instead of the default from Google's flags.
+  (`VISIBLE`, `SYNC_EVENTS`) by Google calendar id. At a hand-back, a choice the
+  owner made while Google's adapter held the calendar is newer: when the
+  hand-back cleanup finds that adapter's copy of the calendar, ours takes
+  `VISIBLE` and `SYNC_EVENTS` from it, and uses the remembered choice only for a
+  calendar without a copy. When ours creates the calendar again it applies that
+  choice once instead of the default from Google's flags.
 - **Liveness** (rule 5), measured on the adapter, not the clock:
   - (a) Right after disabling ours, the hand-over waits up to 10 seconds for
     `ContentResolver.getSyncAdapterTypes()` to list the `com.google` /
@@ -112,6 +128,9 @@ aside and Google's fills the store; ours remains the fallback.
     sync is on and that has no calendar row created after the hand-over (ours
     records the store's highest calendar `_id` once its rows are gone) is not
     being synced: ours takes back the slot and Calendar sync names the account.
+    A calendar with our marker never counts as a row Google's adapter created.
+    This check does not run while GmsCore lacks the calendar permission: it
+    cannot read the store then, and ours could not sync without it either.
     Opening Calendar sync, boot or a sync request does not count. The counter and
     the recorded `_id` are kept in GmsCore's preferences, so they survive a reboot
     and a GmsCore update.
@@ -121,16 +140,22 @@ aside and Google's fills the store; ours remains the fallback.
   permission revoked), a two-way choice or transfer hold appears, liveness
   applies or the kill switch is set, ours returns to its manifest default and
   every account is marked for a rebuild.
-- **Hand-back cleanup** (rule 4) runs inside the account's first sync, after the
-  calendar list has been fetched from Google and before any calendar syncs. A
-  calendar of the account without our marker is cleaned only when it matches a
-  calendar in that list: its `CAL_SYNC1` (where Google's adapter puts the Google
-  calendar id; seen on a Pixel 7a) or `_SYNC_ID` equals a listed id, or, when the
-  list has a primary calendar, equals the account name. So everything removed is
-  downloaded again in the same run. A calendar that matches nothing (another
-  app's under the same account) is left untouched. In a matched calendar the
-  clean events are removed as the sync adapter (nothing reaches Google), then the
-  calendar if it is empty; our checkpoints are dropped. Each delete repeats its
+- **Hand-back cleanup** (rule 4) runs inside the account's first sync. Once the
+  calendar list has been fetched from Google and before any calendar syncs, ours
+  drops its checkpoints and finds the calendars of the account without our
+  marker that match a calendar in that list: its `CAL_SYNC1` (where Google's
+  adapter puts the Google calendar id; seen on a Pixel 7a) or `_SYNC_ID` equals a
+  listed id, or, when the list has a primary calendar, equals the account name.
+  A row of this Google account carrying Google's own calendar id is that
+  adapter's copy by definition, so no further test is applied. A calendar that
+  matches nothing (another app's under the same account) is left untouched. A
+  matched copy is cleaned only after ours has stored that calendar's download in
+  the same run (`CalendarStore.calendarSynced`), so no event is missing in
+  between; for that short time the calendar shows twice. If a calendar's
+  download fails, its copy stays and the account stays marked for a rebuild, so
+  the next sync downloads again and retries the cleanup; the rebuild ends once
+  every matched calendar is done. In a copy the clean events are removed as the
+  sync adapter (nothing reaches Google), then the calendar if it is empty. Each delete repeats its
   condition when it runs: an event only while `DIRTY=0`; a recurring master (or
   any row an exception points at) only in the batch that asserts no row with
   `ORIGINAL_ID` / `ORIGINAL_SYNC_ID` pointing at it is dirty; a calendar only in
@@ -323,7 +348,9 @@ No device was used by the implementation agent; none of this has run on a phone.
    and no `deleted=1` event of ours (`content query --uri content://com.android.calendar/events`),
    Google's adapter writes its own calendars, and each event appears once in the
    calendar app. Before step 2, hide one calendar and turn sync off for another in
-   the calendar app; after a later hand-back (step 4) both keep that choice.
+   the calendar app; after a later hand-back (step 4) both keep that choice. While
+   Google's adapter holds the slot, show the hidden calendar again: after the
+   hand-back it stays shown.
 8. Download-only hand-over with phone-side changes: before granting the Google
    Calendar app access, edit one event and delete another on the phone (download
    only). Grant access: both changes are gone from the phone, Google's versions

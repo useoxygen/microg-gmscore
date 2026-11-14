@@ -164,6 +164,69 @@ class CalendarHandoverTest {
         assertEquals(0, client.count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", ours.toString()))
         assertEquals(1, client.count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", other.toString()))
     }
+    // A sync of ours that passed its checks before the hand-over: the "stepping aside" flag is set before our rows start to
+    // leave, so its next step and every store write refuse, and a calendar of ours that still lands meanwhile is removed by
+    // one more pass before the hand-over counts as complete.
+    @Test fun aWriteOfOursThatLandsDuringTheHandOverIsRemovedToo() {
+        val client = store()
+        prefs.configure(true)
+        client.event(client.calendar(AndroidCalendarStore.MARKER), "clean")
+        googleCalendar()
+        var flagged = false
+        fixture.beforeBatch = { flagged = prefs.steppingAside && !prefs.mayWrite }
+        var late = false
+        CalendarHandover.slotHolder = {
+            if (!late) { late = true; client.event(client.calendar(AndroidCalendarStore.MARKER, syncing = 0), "late") }
+            CalendarHandover.GOOGLE_CALENDAR
+        }
+        assertEquals(Owner.GOOGLE, CalendarHandover.evaluate(context))
+        assertTrue(late); assertTrue(flagged)
+        assertEquals(0, client.count(Calendars.CONTENT_URI, "${Calendars.CAL_SYNC1}=?", AndroidCalendarStore.MARKER))
+        assertEquals(0, client.count(Events.CONTENT_URI, "${Events.SYNC_DATA1}=?", AndroidCalendarStore.MARKER))
+        assertTrue(state().getBoolean(CalendarSyncPreferences.ROWS_REMOVED, false))
+        assertTrue(prefs.steppingAside)
+        // Taking back clears the flag, so ours can write again.
+        googleCalendar(read = false)
+        assertEquals(Owner.OURS, CalendarHandover.evaluate(context))
+        assertFalse(prefs.steppingAside); assertTrue(prefs.mayWrite)
+    }
+    // A process death after ours disabled itself and before its rows left: the next evaluation does not take that for a
+    // finished hand-over. It removes our rows first, or, if it cannot, undoes the hand-over.
+    @Test fun aHandOverCutShortFinishesItsRemovalOrIsUndone() {
+        val client = store()
+        prefs.configure(true)
+        client.event(client.calendar(AndroidCalendarStore.MARKER), "clean")
+        googleCalendar()
+        fun dieMidway() {
+            state().edit().putBoolean(CalendarSyncPreferences.STEPPING_ASIDE, true).commit()
+            context.packageManager.setComponentEnabledSetting(ours, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+        }
+        dieMidway()
+        fixture.beforeBatch = { throw android.content.OperationApplicationException("fixture") }
+        assertEquals(Owner.OURS, CalendarHandover.evaluate(context))
+        assertFalse(CalendarHandover.steppedAside(context)); assertFalse(prefs.steppingAside); assertTrue(prefs.rebuild)
+        assertEquals("cleanup" to null, CalendarHandover.reason(context))
+        assertEquals(1, client.count(Calendars.CONTENT_URI, "${Calendars.CAL_SYNC1}=?", AndroidCalendarStore.MARKER))
+        dieMidway()
+        fixture.beforeBatch = null
+        assertEquals(Owner.GOOGLE, CalendarHandover.evaluate(context))
+        assertTrue(CalendarHandover.steppedAside(context))
+        assertEquals(0, client.count(Calendars.CONTENT_URI, "${Calendars.CAL_SYNC1}=?", AndroidCalendarStore.MARKER))
+        assertEquals(0, client.count(Events.CONTENT_URI, "${Events.SYNC_DATA1}=?", AndroidCalendarStore.MARKER))
+        assertTrue(state().getBoolean(CalendarSyncPreferences.ROWS_REMOVED, false))
+    }
+    // A calendar with our marker is no sign that Google's adapter syncs the account.
+    @Test fun ourOwnCalendarsAreNoEvidenceOfLiveness() {
+        val client = store()
+        ContentResolver.setMasterSyncAutomatically(true)
+        prefs.configure(true)
+        googleCalendar()
+        assertEquals(Owner.GOOGLE, CalendarHandover.evaluate(context))
+        client.calendar(AndroidCalendarStore.MARKER)
+        repeat(CalendarHandover.LIVENESS_CHECKS - 1) { assertEquals(Owner.GOOGLE, CalendarHandover.evaluate(context, hourly = true)) }
+        assertEquals(Owner.OURS, CalendarHandover.evaluate(context, hourly = true))
+        assertEquals("stalled" to account.name, CalendarHandover.reason(context))
+    }
     // The slot is per account type and authority: one two-way account keeps ours for every account, whatever rows it has, and
     // nothing of ours is removed. Calendar sync names the account.
     @Test fun anyTwoWayAccountKeepsTheSlotForAll() {

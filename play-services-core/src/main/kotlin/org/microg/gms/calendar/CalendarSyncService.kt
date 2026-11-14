@@ -31,8 +31,9 @@ class CalendarSyncService : Service() {
             if (!prefs.enabled) return
             prefs.schedulePeriodic()
             val twoWay = prefs.twoWay
-            // Stepping aside for Google Calendar's adapter also stops a sync already running before our rows leave (CYC-2073).
-            fun active() = prefs.enabled && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted &&
+            // Stepping aside for Google Calendar's adapter also stops a sync already running before our rows leave (CYC-2073):
+            // the flag is set before the removal starts, and every store write refuses while it is set.
+            fun active() = prefs.mayWrite && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted &&
                 !CalendarHandover.steppedAside(this@CalendarSyncService)
             var token: String? = null
             try {

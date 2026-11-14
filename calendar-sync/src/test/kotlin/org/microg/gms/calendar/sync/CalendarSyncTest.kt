@@ -178,6 +178,8 @@ class CalendarSyncTest {
         override fun checkpoint(calendar: String, value: String) { tokens[calendar] = value }
         override fun event(calendar: RemoteCalendar, event: RemoteEvent): Boolean { rows.getOrPut(calendar.id) { mutableSetOf() } += event.id; return true }
         override fun reconcile(calendar: RemoteCalendar, present: Set<String>) = 0
+        val synced = mutableListOf<String>()
+        override fun calendarSynced(calendar: RemoteCalendar) { synced += calendar.id }
     }
     private fun twoCalendars(first: (RemoteCalendar) -> EventPage) = object : CalendarApi {
         val calendars = listOf(RemoteCalendar("primary", "Main", "UTC", "#64748b", emptyList()), RemoteCalendar("holidays", "Holidays", "UTC", "#64748b", emptyList()))
@@ -196,6 +198,8 @@ class CalendarSyncTest {
         assertEquals(listOf("primary", "holidays"), api.attempted)
         assertEquals(setOf("holiday"), store.rows["holidays"]); assertEquals("h1", store.tokens["holidays"])
         assertNull(store.rows["primary"]); assertNull(store.tokens["primary"])
+        // Only a calendar whose download was stored counts as synced: a hand-back keeps Google's copy of the other (CYC-2073).
+        assertEquals(listOf("holidays"), store.synced)
     }
     @Test fun authorizationRateLimitsAndTheOffSwitchStillStopTheWholeRun() {
         for (failure in listOf(CalendarRequestException(401), CalendarRequestException(429), CalendarRequestException(403, rateLimited = true))) {

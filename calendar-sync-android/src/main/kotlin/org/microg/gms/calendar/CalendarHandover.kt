@@ -156,25 +156,33 @@ object CalendarHandover {
     private fun syncOn(account: Account) = ContentResolver.getMasterSyncAutomatically() &&
         ContentResolver.getSyncAutomatically(account, CalendarSyncPreferences.AUTHORITY) &&
         ContentResolver.getIsSyncable(account, CalendarSyncPreferences.AUTHORITY) != 0
-    /** The newest calendar row of the store, or of [account]: after the hand-over only Google's adapter creates calendars. */
+    /** The newest calendar row of the store, or of [account]: after the hand-over only Google's adapter creates calendars. A
+     * calendar with our marker is never evidence that Google's adapter syncs. */
     private fun newestCalendar(context: Context, account: Account? = null): Long = runCatching {
+        val notOurs = "(${Calendars.CAL_SYNC1} IS NULL OR ${Calendars.CAL_SYNC1}!=?)"
         requireNotNull(context.contentResolver.query(Calendars.CONTENT_URI, arrayOf(Calendars._ID),
-            account?.let { "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=?" }, account?.let { arrayOf(it.name, it.type) },
+            if (account == null) notOurs else "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND $notOurs",
+            if (account == null) arrayOf(AndroidCalendarStore.MARKER) else arrayOf(account.name, account.type, AndroidCalendarStore.MARKER),
             "${Calendars._ID} DESC")).use { if (it.moveToFirst()) it.getLong(0) else 0L }
     }.getOrDefault(-1L)
 
     /**
      * Decides and applies; returns who holds the slot now. Changes something only on a transition, so it is safe to call
      * often. Only the [hourly] check counts towards liveness. [beforeAside] schedules that check before ours disables itself,
-     * so a process death cannot leave ours disabled with nothing to decide again. Stepping aside: ours stops its syncs and
-     * disables its service, removes every calendar of its own (undone if that fails), checks that Android gave the slot to
-     * Google's adapter, then requests a forced sync. Taking back restores ours to its manifest default and marks every account
-     * for a rebuild; after Google's adapter did not take or use the slot, ours waits for a new version of its app.
+     * so a process death cannot leave ours disabled with nothing to decide again. Stepping aside: ours sets its "stepping aside"
+     * flag (its running sync stops and its store writes refuse), stops its syncs and disables its service, removes every
+     * calendar of its own (undone if that fails), checks that Android gave the slot to Google's adapter, removes any calendar
+     * of ours that appeared meanwhile, records that the removal is complete, then requests a forced sync. A hand-over found
+     * disabled without that record (a process death in between) finishes the removal first, or is undone. Taking back
+     * restores ours to its manifest default, clears the flag and marks every account for a rebuild; after Google's adapter did
+     * not take or use the slot, ours waits for a new version of its app.
      */
     @Synchronized fun evaluate(context: Context, hourly: Boolean = false, beforeAside: () -> Unit = {}): Owner {
         val accounts = AccountManager.get(context).getAccountsByType("com.google")
         val state = state(context)
         val aside = steppedAside(context)
+        // Disabled, but the removal of our rows never completed (a process death in between): not handed over yet.
+        val unfinished = aside && !state.getBoolean(CalendarSyncPreferences.ROWS_REMOVED, false)
         val can = googleCanSync(context) && !forceOurs()
         val version = googleVersion(context)
         val twoWay = accounts.firstOrNull { CalendarSyncPreferences(context, it).let { p -> p.enabled && (p.twoWay || p.uploadsHeld) } }
@@ -187,7 +195,7 @@ object CalendarHandover {
             if (checks >= LIVENESS_CHECKS && permitted(context))
                 stalled = accounts.firstOrNull { syncOn(it) && newestCalendar(context, it) in 0..since }
         }
-        val outOfReach = !aside && can && rowsOutOfReach(context, accounts)
+        val outOfReach = (!aside || unfinished) && can && rowsOutOfReach(context, accounts)
         var owner = if (stalled != null || outOfReach) Owner.OURS else decide(can, false, twoWay != null, backingOff)
         var why: Pair<String, String?>? = when {
             !can -> null
@@ -198,20 +206,30 @@ object CalendarHandover {
             else -> null
         }
         fun enable(state: Int) = context.packageManager.setComponentEnabledSetting(component(context), state, PackageManager.DONT_KILL_APP)
-        fun takeBack() { enable(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT); accounts.forEach { CalendarSyncPreferences(context, it).takeBack() } }
-        if (owner == Owner.GOOGLE && !aside) {
-            beforeAside()
-            // Ours first stops writing, then its rows leave; Google's adapter never sees a row of ours.
-            for (account in accounts) {
-                ContentResolver.cancelSync(account, CalendarSyncPreferences.AUTHORITY)
-                // Only ours: the Google Calendar app registers its own periodic sync.
-                ContentResolver.removePeriodicSync(account, CalendarSyncPreferences.AUTHORITY, CalendarSyncPreferences.periodicExtras())
+        fun release() = check(state.edit().remove(CalendarSyncPreferences.STEPPING_ASIDE).remove(CalendarSyncPreferences.ROWS_REMOVED).commit())
+        fun takeBack() {
+            release(); enable(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
+            accounts.forEach { CalendarSyncPreferences(context, it).takeBack() }
+        }
+        if (owner == Owner.GOOGLE && (!aside || unfinished)) {
+            if (!aside) beforeAside()
+            // Ours first stops writing, then its rows leave; Google's adapter never sees a row of ours. The flag also stops a
+            // sync of ours that already passed its checks: its next step and every store write refuse.
+            check(state.edit().putBoolean(CalendarSyncPreferences.STEPPING_ASIDE, true).remove(CalendarSyncPreferences.ROWS_REMOVED).commit())
+            if (!aside) {
+                for (account in accounts) {
+                    ContentResolver.cancelSync(account, CalendarSyncPreferences.AUTHORITY)
+                    // Only ours: the Google Calendar app registers its own periodic sync.
+                    ContentResolver.removePeriodicSync(account, CalendarSyncPreferences.AUTHORITY, CalendarSyncPreferences.periodicExtras())
+                }
+                enable(PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
             }
-            enable(PackageManager.COMPONENT_ENABLED_STATE_DISABLED)
             when {
-                !removeOurRows(context, accounts) -> {
+                // An unfinished hand-over that still cannot remove our rows is undone like a taking back: Google's adapter
+                // may have held the slot meanwhile.
+                !removeOurRows(context, accounts) -> if (aside) { takeBack(); owner = Owner.OURS; why = "cleanup" to null } else {
                     // Undone without a rebuild or sync request (no retry loop): a calendar that left lost its checkpoint.
-                    enable(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
+                    release(); enable(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
                     accounts.map { CalendarSyncPreferences(context, it) }.filter { it.enabled }.forEach { it.schedulePeriodic() }
                     owner = Owner.OURS; why = "cleanup" to null
                 }
@@ -219,8 +237,11 @@ object CalendarHandover {
                     takeBack(); owner = Owner.OURS; why = "unclaimed" to null
                     state.edit().putLong("stalledVersion", version).apply()
                 }
+                // Once more: a write of ours that was already under way when the flag was set has landed by now.
+                !removeOurRows(context, accounts) -> { takeBack(); owner = Owner.OURS; why = "cleanup" to null }
                 else -> {
-                    state.edit().putInt("checks", 0).putLong("asideNewest", newestCalendar(context)).remove("stalledVersion").apply()
+                    check(state.edit().putBoolean(CalendarSyncPreferences.ROWS_REMOVED, true).putInt("checks", 0)
+                        .putLong("asideNewest", newestCalendar(context)).remove("stalledVersion").commit())
                     // Forced, so Google's adapter also refills what an earlier hand-back removed; never for an account that is off.
                     for (account in accounts) if (syncOn(account)) ContentResolver.requestSync(account, CalendarSyncPreferences.AUTHORITY, Bundle().apply {
                         putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true); putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
@@ -230,7 +251,7 @@ object CalendarHandover {
         } else if (owner == Owner.OURS && aside) {
             if (stalled != null) state.edit().putLong("stalledVersion", version).apply()
             takeBack()
-        }
+        } else if (owner == Owner.OURS && state.getBoolean(CalendarSyncPreferences.STEPPING_ASIDE, false)) release() // left before ours was disabled
         state.edit().putString("reason", why?.first).putString("reasonAccount", why?.second).apply()
         return owner
     }

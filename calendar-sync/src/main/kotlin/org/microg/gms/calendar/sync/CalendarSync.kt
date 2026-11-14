@@ -49,6 +49,8 @@ interface CalendarStore {
     fun reconcileCalendars(present: Set<String>) {}
     /** The run's complete calendar list from Google, before any calendar is synced. */
     fun calendarList(calendars: List<RemoteCalendar>) {}
+    /** This run has stored [calendar]'s download (or it does not sync events): nothing of it is missing from the store. */
+    fun calendarSynced(calendar: RemoteCalendar) {}
     /** Only dirty rows or durable journals in this owned, selected calendar; missing rows are never deletions. */
     fun localEvents(calendar: RemoteCalendar): List<LocalEvent> = emptyList()
     fun uploadAllowed(calendar: RemoteCalendar): Boolean = false
@@ -109,6 +111,7 @@ class CalendarSync(private val api: CalendarApi, private val store: CalendarStor
                 val outcome = syncCalendar(calendar, ::consent)
                 count += outcome.events; conflicts += outcome.conflicts; skipped += outcome.skipped
                 uploaded += outcome.uploaded; uncertain += outcome.uncertain
+                store.calendarSynced(calendar)
             } catch (e: SyncStopped) { throw e
             } catch (e: InterruptedException) { throw e
             } catch (e: CalendarRequestException) {
