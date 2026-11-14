@@ -31,7 +31,9 @@ class CalendarSyncService : Service() {
             if (!prefs.enabled) return
             prefs.schedulePeriodic()
             val twoWay = prefs.twoWay
-            fun active() = prefs.enabled && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted
+            // Stepping aside for Google Calendar's adapter also stops a sync already running before our rows leave (CYC-2073).
+            fun active() = prefs.enabled && prefs.twoWay == twoWay && !Thread.currentThread().isInterrupted &&
+                !CalendarHandover.steppedAside(this@CalendarSyncService)
             var token: String? = null
             try {
                 token = calendarToken(this@CalendarSyncService, account, twoWay)
@@ -62,9 +64,9 @@ class CalendarSyncService : Service() {
                         HttpReply(it.code, buffer.readUtf8(), it.header("Retry-After")?.toLongOrNull()?.coerceAtLeast(0) ?: 0)
                     }
                 })
-                val store = AndroidCalendarStore(provider, account, prefs)
-                if (prefs.rebuild) { store.prepareAfterHandBack(); prefs.rebuild = false }
-                val report = CalendarSync(api, store, ::active, { active() && twoWay && prefs.uploadsAllowed }).sync()
+                // The first sync after a hand-back also removes Google's adapter's copies once the calendar list is in (CYC-2073).
+                val report = CalendarSync(api, AndroidCalendarStore(provider, account, prefs), ::active,
+                    { active() && twoWay && prefs.uploadsAllowed }).sync()
                 result.stats.numUpdates += report.events + report.uploaded
                 result.stats.numConflictDetectedExceptions += report.conflicts + report.uncertain
                 result.stats.numSkippedEntries += report.skipped
@@ -96,8 +98,6 @@ class CalendarSyncService : Service() {
             }
             // Changes Google Calendar's adapter left unsent at a hand-back stay on the phone; Calendar sync counts them (CYC-2073).
             runCatching { prefs.strandedChanges = AndroidCalendarStore(provider, account, prefs).strandedChanges() }
-            // Waiting for unsent changes: this sync may have uploaded the last of them.
-            if (CalendarHandover.waiting(this@CalendarSyncService)) runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncService) }
         }
     } }
     override fun onBind(intent: Intent) = adapter.syncAdapterBinder

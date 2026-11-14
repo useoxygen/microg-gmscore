@@ -59,53 +59,83 @@ aside and Google's fills the store; ours remains the fallback.
   open; Google's adapter does not run without them), and declares an enabled
   `android.content.SyncAdapter` service whose meta-data names account type
   `com.google` and authority `com.android.calendar`.
-- **Our rows leave first**: before stepping aside, ours deletes its own calendars
-  (`CAL_SYNC1=cyclon-calendar-v1`) and their events for every Google account, as
-  the sync adapter, on the phone only. Google's adapter then starts from nothing
-  of ours instead of finding rows under the same account whose `_SYNC_ID`s are
-  Google's ids: it could upload a row the owner changed or deleted on the phone (a
-  phone-side delete becoming a delete on Google), or show every event twice. On
-  the Pixel 7a, Google's adapter replaced our clean calendars within 10 seconds;
-  what it does with a dirty or deleted row of ours is not known, so none reaches
-  it. In download-only mode a local edit or delete is not an upload by definition
-  (Google's copy wins), so it is dropped with our rows. Each calendar goes in one
-  provider batch that asserts no event is left in it; if a row ours would upload
-  appeared meanwhile, that calendar stays and ours keeps the slot for now.
-  Without calendar permission ours cannot read the store, and has written nothing
-  since it lost the permission, so it steps aside without this step.
-- **Stepping aside** then disables ours (`CalendarSyncService`, `COMPONENT_ENABLED_STATE_DISABLED`,
-  `DONT_KILL_APP`), cancels and removes our periodic sync and requests a forced
-  (manual, expedited) sync for every account whose sync is on, which Android
-  gives to Google's adapter. Android reassigns the slot when the component state
-  changes (`RegisteredServicesCache` on `PACKAGE_CHANGED`); the owner's test on a
-  Pixel 7a with `pm disable` showed it take the slot at once, without a reboot.
-- **Not while ours has unsent work**: for a two-way account with dirty or journaled
-  rows in a calendar ours uploads from (writable on Google, syncing, not removed),
-  a held conflict, or a transfer upload hold (Google's adapter has no hold), ours
-  keeps the slot and Calendar sync says the Google Calendar app takes over once
-  those are uploaded, resolved or resumed. A dirty row in a read-only, unsynced or
-  removed calendar is never uploaded by ours, so it does not hold the hand-over
-  and goes with our rows.
-- **Liveness**: if ours has been aside for 6 hours (`STALL_MILLIS`) and an account
-  whose sync is on (master sync, Android's switch for the account) still has no
-  calendar that is not ours, Google's adapter is not syncing it: ours takes back
-  the slot, and Calendar sync names the account and says why. Six hours leave
-  room for a phone that was offline; Google's first sync took seconds on the
-  Pixel 7a. To avoid a loop, ours does not step aside again until the Google
-  Calendar app's version changes or a day has passed. An account whose sync is
-  off is not expected to have Google's rows and does not count.
+- **Not while any account syncs two-way** (rule 1): the slot is per account type
+  and authority, so it is all accounts or none. If any Google account has
+  two-way on, ours keeps the slot for every account and Calendar sync says why
+  ("Two-way sync is on for …, so the Google Calendar app's sync is not used").
+  A transfer upload hold keeps ours the same way, because Google's adapter has no
+  hold and would upload what Switch copies at once. There is no check of unsent
+  rows at hand-over time: only download-only accounts are ever handed over, and
+  in download only a local edit is not an upload (Google's copy wins).
+- **Order of a hand-over** (rules 2 and 7):
+  1. The hourly check is scheduled (WorkManager, unique, kept), so a process
+     death later in the hand-over still leaves something that decides again.
+  2. Ours stops writing: it cancels its running and pending syncs for the
+     authority, removes its periodic sync and disables `CalendarSyncService`
+     (`COMPONENT_ENABLED_STATE_DISABLED`, `DONT_KILL_APP`). A sync of ours that is
+     still running stops at its next write, since its "active" check also asks
+     whether ours stepped aside.
+  3. Ours removes **all** of its calendars (`CAL_SYNC1=cyclon-calendar-v1`) and
+     their events for every Google account, as the sync adapter, on the phone
+     only, including accounts whose sync ours has off. Google's adapter then
+     starts from nothing of ours instead of finding rows whose `_SYNC_ID`s are
+     Google's ids. A local edit or delete in them is dropped by definition.
+  4. Ours checks that Android gave the slot to the Google Calendar app (rule 5a,
+     below), then requests a forced (manual, expedited) sync for every account
+     whose sync is on.
+
+  If the removal leaves a row with our marker, ours undoes: it enables its
+  component again, registers its periodic syncs again, keeps the slot, and
+  Calendar sync says so. Ours never steps aside while rows with our marker
+  remain. Without calendar permission ours cannot remove them: it then does not
+  try at all while it may hold rows (it created a calendar since its rows last
+  left; a phone from before this change counts if any account ever synced), and
+  says so; a phone where ours never wrote, or whose rows already left, steps
+  aside without the permission. Android reassigns the slot when the component
+  state changes (`RegisteredServicesCache` on `PACKAGE_CHANGED`); the owner's
+  test on a Pixel 7a with `pm disable` showed it take the slot at once.
+- **Per-calendar choices survive** (rule 3): before removing its calendars, ours
+  remembers per account each calendar's visibility and sync choice
+  (`VISIBLE`, `SYNC_EVENTS`) by Google calendar id. When ours creates that
+  calendar again after a hand-back, it applies the remembered choice once
+  instead of the default from Google's flags.
+- **Liveness** (rule 5), measured on the adapter, not the clock:
+  - (a) Right after disabling ours, the hand-over waits up to 10 seconds for
+    `ContentResolver.getSyncAdapterTypes()` to list the `com.google` /
+    `com.android.calendar` type for the Google Calendar app's package (read from
+    `SyncAdapterType.toString()`, which names the package since Android 10;
+    the package name is not public API). If it still does not, ours takes the
+    slot back at once.
+  - (b) Each hourly check while ours is aside counts when the phone has a
+    validated network and at least one account's sync is on (master sync and
+    Android's switch for the account). After 6 such checks, an account whose
+    sync is on and that has no calendar row created after the hand-over (ours
+    records the store's highest calendar `_id` once its rows are gone) is not
+    being synced: ours takes back the slot and Calendar sync names the account.
+    Opening Calendar sync, boot or a sync request does not count. The counter and
+    the recorded `_id` are kept in GmsCore's preferences, so they survive a reboot
+    and a GmsCore update.
+  - After (a) or (b), ours does not step aside again until the Google Calendar
+    app's version changes; there is no time-based retry.
 - **Handing back**: when the condition stops holding (app removed, disabled,
-  permission revoked), the liveness rule applies or the kill switch is set, ours
-  returns to its manifest default and every account is marked for a rebuild. Its
-  first sync removes the clean events Google's adapter left (every calendar of
-  the account without our `cyclon-calendar-v1` marker; removed as the sync
-  adapter, so nothing reaches Google), then the emptied calendars, keeps any
-  event with a change Google's adapter had not uploaded (and its series), drops
-  our checkpoints and downloads everything again. Each delete repeats its
-  condition when it runs: an event only while `DIRTY=0`, a series only in a batch
-  asserting no changed occurrence depends on it, a calendar only in a batch
-  asserting no event is left in it, so an edit another app makes meanwhile stays.
-  An absent local row is still never a server delete.
+  permission revoked), a two-way choice or transfer hold appears, liveness
+  applies or the kill switch is set, ours returns to its manifest default and
+  every account is marked for a rebuild.
+- **Hand-back cleanup** (rule 4) runs inside the account's first sync, after the
+  calendar list has been fetched from Google and before any calendar syncs. A
+  calendar of the account without our marker is cleaned only when it matches a
+  calendar in that list: its `CAL_SYNC1` (where Google's adapter puts the Google
+  calendar id; seen on a Pixel 7a) or `_SYNC_ID` equals a listed id, or, when the
+  list has a primary calendar, equals the account name. So everything removed is
+  downloaded again in the same run. A calendar that matches nothing (another
+  app's under the same account) is left untouched. In a matched calendar the
+  clean events are removed as the sync adapter (nothing reaches Google), then the
+  calendar if it is empty; our checkpoints are dropped. Each delete repeats its
+  condition when it runs: an event only while `DIRTY=0`; a recurring master (or
+  any row an exception points at) only in the batch that asserts no row with
+  `ORIGINAL_ID` / `ORIGINAL_SYNC_ID` pointing at it is dirty; a calendar only in
+  the batch that asserts no event is left in it. An absent local row is still
+  never a server delete.
 - **Edits Google's adapter had not uploaded** stay on the phone after a hand-back,
   in Google's old calendar next to our fresh copy. Ours does not upload them.
   Calendar sync counts them ("N changes made while the Google Calendar app was
@@ -121,8 +151,8 @@ aside and Google's fills the store; ours remains the fallback.
   opened; and hourly (WorkManager) while Google's adapter holds the slot, because
   `PACKAGE_ADDED`/`CHANGED`/`REPLACED` and permission revocation reach no manifest
   receiver of a target-29 app. A disabled app or revoked permission can therefore
-  take up to about an hour to hand back. The hourly check also applies the
-  liveness rule.
+  take up to about an hour to hand back. Only the hourly check counts for
+  liveness.
 - **Our schedule** while ours keeps the slot with the app installed: the app
   removes a periodic sync with empty extras for the authority when it is opened, so
   ours registers its hourly sync with the extra `cyclon_calendar_periodic` and
@@ -133,10 +163,13 @@ aside and Google's fills the store; ours remains the fallback.
   account and authority, not per adapter: an account the owner turned off (ours
   sets `isSyncable` 0 then) or switched off in Android's account settings stays
   off for Google's adapter, and the forced hand-over sync skips it.
-- **Leaving two-way**: download only lets Google's copy replace a local edit, so
-  the settings switch refuses to leave two-way while unsent or conflicting rows
-  exist in calendars ours uploads from, and says to tap **Sync now** or resolve
-  the conflicts first.
+- **Leaving two-way** (rule 6): download only lets Google's copy replace a local
+  edit, so the settings switch refuses to leave two-way while unsent or
+  conflicting rows exist in calendars ours uploads from, and says to tap
+  **Sync now** or resolve the conflicts first. Download only stores every
+  calendar read-only, so right after turning two-way on the local access levels
+  say nothing; until a sync has written them from Google's calendar list, every
+  dirty row in a syncing calendar counts as unsent.
 - **Kill switch**: `adb shell setprop debug.cyclon.calendar_own_sync 1` keeps ours
   (until reboot). While ours is aside it runs no sync, so the property is read at
   the hourly check, when Calendar sync is opened, and on boot, package replaced and
@@ -271,9 +304,11 @@ No device was used by the implementation agent; none of this has run on a phone.
    attendees. Calendar sync and health say the Google Calendar app keeps the
    calendar in sync. Insert and delete an event through the store; confirm both
    reach Google.
-3. With a two-way account, make an event edit on the phone with uploads held (or a
-   held conflict) before opening the Google Calendar app: ours keeps the slot and
-   says it is waiting. Resume or resolve: the next sync request hands over.
+3. Two accounts, one in two-way mode: open the Google Calendar app and grant
+   access. Ours keeps the slot for both accounts, nothing of ours is removed, and
+   Calendar sync says "Two-way sync is on for <account>". Switch that account to
+   download only (after **Sync now** if it has unsent edits): the next sync
+   request hands over. A transfer hold (`beginMigration`) keeps ours the same way.
 4. Revoke the Google Calendar app's calendar permission, then disable the app, then
    uninstall it (separately): within about an hour (or on opening Calendar sync),
    ours is enabled again, rebuilds with one full download, the store holds each
@@ -284,24 +319,42 @@ No device was used by the implementation agent; none of this has run on a phone.
 6. With ours holding the slot and the app installed without permission, open the
    app: `dumpsys content` still lists ours' hourly periodic sync (with
    `cyclon_calendar_periodic`).
-7. Our rows absent: after step 2, the store holds no `cyclon-calendar-v1` calendar,
+7. Our rows absent: after step 2, the store holds no `cyclon-calendar-v1` calendar
+   and no `deleted=1` event of ours (`content query --uri content://com.android.calendar/events`),
    Google's adapter writes its own calendars, and each event appears once in the
-   calendar app.
+   calendar app. Before step 2, hide one calendar and turn sync off for another in
+   the calendar app; after a later hand-back (step 4) both keep that choice.
 8. Download-only hand-over with phone-side changes: before granting the Google
    Calendar app access, edit one event and delete another on the phone (download
    only). Grant access: both changes are gone from the phone, Google's versions
    come back through Google's adapter, and nothing changed in Google Calendar web.
-9. Liveness: put the phone in airplane mode, then grant the Google Calendar app
-   access, so ours steps aside but Google's adapter cannot write a calendar. After
-   6 hours (the next hourly check), ours takes back the slot, Calendar sync names
-   the account and the reason, and ours does not hand over again at later
-   evaluations that day unless the Google Calendar app is updated.
+9. Liveness: restrict the Google Calendar app's background data
+   (`cmd netpolicy add restrict-background-blacklist <its uid>`), so the phone stays
+   online but Google's adapter cannot download, then grant it access. Ours steps
+   aside; after 6 hourly checks online (about 6 hours; airplane mode does not
+   count), ours takes back the slot, Calendar sync names the account and the
+   reason, and ours does not hand over again, however often it is asked, until
+   the Google Calendar app is updated. Reboot once in between: the count
+   continues. Right after each hand-over, `dumpsys content` shows the slot with
+   the Google Calendar app (rule 5a; if Android kept it with ours, ours took it
+   back at once and Calendar sync says so).
 10. Account switched off: with two accounts, turn calendar sync off for one in
     Android's account settings, then hand over. Google's adapter does not sync it;
     Calendar sync shows it as off, health and Sync & passwords say on for 1 of 2.
 11. Two-way to download only: in two-way mode, edit an event with uploads held or
     offline, then switch to download only: the switch refuses and says to sync or
-    resolve first; after **Sync now** uploads the edit, the switch works.
+    resolve first; after **Sync now** uploads the edit, the switch works. Also
+    switch a download-only account to two-way while offline, edit an event in a
+    writable calendar, and switch back at once: refused (access levels not yet
+    refreshed).
+12. Hand-back keeps another app's calendar: create a local calendar under the
+    Google account with another app (or `content insert` as a sync adapter with a
+    `cal_sync1` Google does not know), then hand back (step 4): that calendar and
+    its events stay; Google's adapter's calendars are replaced by ours.
+13. Without calendar permission for GmsCore on a phone where ours synced before:
+    granting the Google Calendar app access does not hand over, and Calendar sync
+    says ours could not remove its own calendars first. Grant GmsCore the
+    permission (**Reconnect**): the next evaluation hands over.
 
 ## Required device acceptance (parent workstream)
 

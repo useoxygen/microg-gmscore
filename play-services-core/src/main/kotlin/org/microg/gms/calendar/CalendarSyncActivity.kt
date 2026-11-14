@@ -80,8 +80,14 @@ class CalendarSyncActivity : ComponentActivity() {
                 // shows Android's own switch for it, which that adapter follows too. The owner's saved choices for ours stay.
                 val google = CalendarHandover.steppedAside(this@CalendarSyncActivity)
                 if (google) Text(stringResource(R.string.cyclon_calendar_google_sync))
-                else if (CalendarHandover.waiting(this@CalendarSyncActivity)) Text(stringResource(R.string.cyclon_calendar_google_waiting))
-                CalendarHandover.stalledAccount(this@CalendarSyncActivity)?.let { Text(stringResource(R.string.cyclon_calendar_google_stalled, it)) }
+                CalendarHandover.reason(this@CalendarSyncActivity)?.let { (reason, account) ->
+                    when (reason) {
+                        "two_way" -> Text(stringResource(R.string.cyclon_calendar_google_two_way, account ?: ""))
+                        "cleanup" -> Text(stringResource(R.string.cyclon_calendar_google_cleanup))
+                        "unclaimed" -> Text(stringResource(R.string.cyclon_calendar_google_unclaimed))
+                        "stalled" -> Text(stringResource(R.string.cyclon_calendar_google_stalled, account ?: ""))
+                    }
+                }
                 val accounts = DeviceAccount.visible(this@CalendarSyncActivity, AccountManager.get(this@CalendarSyncActivity).getAccountsByType("com.google"))
                     .sortedBy { it.name != intent.getStringExtra("account_name") }
                 if (accounts.isEmpty()) Text(stringResource(R.string.contacts_sync_no_accounts))

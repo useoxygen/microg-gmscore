@@ -87,20 +87,24 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
             put(Calendars.NAME, calendar.id); put(Calendars.CALENDAR_DISPLAY_NAME, calendar.title)
             put(Calendars.CALENDAR_TIME_ZONE, calendar.zone); put(Calendars.OWNER_ACCOUNT, account.name)
             put(Calendars.CALENDAR_COLOR, runCatching { android.graphics.Color.parseColor(calendar.color) }.getOrDefault(0xff64748b.toInt()))
-            put(Calendars.CALENDAR_ACCESS_LEVEL, if (!prefs.twoWay) Calendars.CAL_ACCESS_READ else when (calendar.accessRole) {
-                "owner" -> Calendars.CAL_ACCESS_OWNER
-                "writer" -> Calendars.CAL_ACCESS_EDITOR
-                else -> Calendars.CAL_ACCESS_READ
-            })
+            put(Calendars.CALENDAR_ACCESS_LEVEL, accessLevel(calendar))
             put(Calendars.MAX_REMINDERS, 5)
             put(Calendars.ALLOWED_REMINDERS, "0,1")
             put(Calendars.DIRTY, 0)
-            if (id == null) (if (calendar.syncByDefault) 1 else 0).let { put(Calendars.VISIBLE, it); put(Calendars.SYNC_EVENTS, it) }
+            // New here: the owner's choice from before a hand-over to Google Calendar's adapter, else Google's flags (CYC-2073).
+            if (id == null) (prefs.takeCalendarChoice(calendar.id) ?: (if (calendar.syncByDefault) 1 else 0).let { it to it })
+                .let { (visible, syncing) -> put(Calendars.VISIBLE, visible); put(Calendars.SYNC_EVENTS, syncing) }
             restoreVisibility?.let { put(Calendars.VISIBLE,it); putNull(Calendars.CAL_SYNC2); putNull(Calendars.CAL_SYNC3) }
             restoreSyncing?.let { put(Calendars.SYNC_EVENTS,it); putNull(Calendars.CAL_SYNC6) }
         }
+        if (id == null) prefs.markOwnRows()
         calendars[calendar.id] = if (id == null) ContentUris.parseId(requireNotNull(provider.insert(sync(Calendars.CONTENT_URI), values)))
             else { check(provider.update(sync(Calendars.CONTENT_URI), values, selection, args) == 1); id }
+    }
+    private fun accessLevel(calendar: RemoteCalendar) = if (!prefs.twoWay) Calendars.CAL_ACCESS_READ else when (calendar.accessRole) {
+        "owner" -> Calendars.CAL_ACCESS_OWNER
+        "writer" -> Calendars.CAL_ACCESS_EDITOR
+        else -> Calendars.CAL_ACCESS_READ
     }
     private fun owned(calendar: Long, remote: String): Pair<Long, Boolean>? = requireNotNull(provider.query(sync(Events.CONTENT_URI),
         arrayOf(Events._ID, Events.DIRTY), "${Events.CALENDAR_ID}=? AND ${Events._SYNC_ID}=? AND ${Events.SYNC_DATA1}=?",
@@ -265,103 +269,109 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         return try { provider.applyBatch(operations); true } catch (_: android.content.OperationApplicationException) { false }
     }
     /** Our calendars of this account, with whether our uploader would upload from them (writable on Google, syncing, not
-     * removed): the same calendars [uploadAllowed] accepts once the calendar list has been read. */
+     * removed): the same calendars [uploadAllowed] accepts once the calendar list has been read. Until the access levels have
+     * been written from Google's list since two-way was turned on, every syncing calendar counts (CYC-2073). */
     private fun ownCalendars(): List<Pair<Long, Boolean>> = requireNotNull(provider.query(sync(Calendars.CONTENT_URI),
         arrayOf(Calendars._ID, Calendars.CALENDAR_ACCESS_LEVEL, Calendars.SYNC_EVENTS, Calendars.CAL_SYNC2),
         "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=?", arrayOf(account.name, account.type, MARKER), null)).use { c ->
-        buildList { while (c.moveToNext()) add(c.getLong(0) to (c.getInt(1) >= Calendars.CAL_ACCESS_CONTRIBUTOR && c.getInt(2) != 0 && c.getString(3) != "removed")) }
+        val fresh = prefs.accessFresh
+        buildList { while (c.moveToNext()) add(c.getLong(0) to ((c.getInt(1) >= Calendars.CAL_ACCESS_CONTRIBUTOR || !fresh) && c.getInt(2) != 0 && c.getString(3) != "removed")) }
     }
-    private val unsentSelection = "(${Events.DIRTY}!=0 OR ${Events.SYNC_DATA4} IS NOT NULL) AND " +
-        "(${Events.SYNC_DATA1}=? OR (${Events.SYNC_DATA1} IS NULL AND ${Events._SYNC_ID} IS NULL))"
-    /** Rows of this account that ours still has to upload or settle: [localEvents] in the calendars ours uploads from
-     * (CYC-2073). A dirty row in a read-only, unsynced or removed calendar is never uploaded, so it does not count. */
+    /** Rows of this account that ours still has to upload or settle: [localEvents] in the calendars ours uploads from. Leaving
+     * two-way waits for them (CYC-2073). A dirty row in a read-only, unsynced or removed calendar is never uploaded. */
     fun hasUnsentChanges(): Boolean = ownCalendars().filter { it.second }.any { (id, _) ->
-        requireNotNull(provider.query(sync(Events.CONTENT_URI), arrayOf(Events._ID), "${Events.CALENDAR_ID}=? AND $unsentSelection",
+        requireNotNull(provider.query(sync(Events.CONTENT_URI), arrayOf(Events._ID), "${Events.CALENDAR_ID}=? AND " +
+            "(${Events.DIRTY}!=0 OR ${Events.SYNC_DATA4} IS NOT NULL) AND (${Events.SYNC_DATA1}=? OR (${Events.SYNC_DATA1} IS NULL AND ${Events._SYNC_ID} IS NULL))",
             arrayOf(id.toString(), MARKER), null)).use { it.moveToFirst() }
     }
     /**
-     * Before Google Calendar's own adapter takes the slot (CYC-2073): our calendars of this account and their events leave this
-     * phone (as the sync adapter, so nothing reaches Google), and Google's adapter starts from nothing of ours instead of
-     * adopting rows whose sync ids are Google's own (a phone-side change could then be uploaded, or every event shown twice).
-     * With [keepUnsent] (two-way), a row ours would still upload stays: its calendar then stays too and this returns false,
-     * so ours keeps the slot. Without it (download only), a local change is not an upload and goes with our rows. Each
-     * calendar goes in one batch that asserts no event is left in it, so a row added meanwhile keeps its calendar.
+     * Before Google Calendar's own adapter takes the slot (CYC-2073), with ours already unable to sync: our calendars of this
+     * account and all their events leave this phone, as the sync adapter, so nothing reaches Google and Google's adapter starts
+     * from nothing of ours. Ours hands over only in download only, where a local change is not an upload. The owner's
+     * per-calendar choices are remembered first. Returns whether no calendar of ours is left for this account.
      */
-    fun removeOwnRows(keepUnsent: Boolean): Boolean {
-        var removed = true
-        for ((id, uploadable) in ownCalendars()) {
-            val keep = keepUnsent && uploadable
-            val args = arrayOf(id.toString())
-            val operations = arrayListOf(
-                ContentProviderOperation.newDelete(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=?" +
-                    if (keep) " AND COALESCE(($unsentSelection),0)=0" else "", if (keep) args + MARKER else args).build(),
-                ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=?", args)
-                    .withExpectedCount(0).build(),
-                ContentProviderOperation.newDelete(sync(Calendars.CONTENT_URI)).withSelection("${Calendars._ID}=? AND ${Calendars.CAL_SYNC1}=?",
-                    arrayOf(id.toString(), MARKER)).withExpectedCount(1).build())
-            try { provider.applyBatch(operations) } catch (_: android.content.OperationApplicationException) { removed = false }
+    private data class OwnCalendar(val id: Long, val remote: String?, val visible: Int, val syncing: Int, val removed: Boolean)
+    fun removeOwnRows(): Boolean {
+        val rows = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID, Calendars._SYNC_ID, Calendars.VISIBLE,
+            Calendars.SYNC_EVENTS, Calendars.CAL_SYNC2), "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=?",
+            arrayOf(account.name, account.type, MARKER), null)).use { c ->
+            buildList { while (c.moveToNext()) add(OwnCalendar(c.getLong(0), c.getString(1), c.getInt(2), c.getInt(3), c.getString(4) == "removed")) }
         }
-        return removed
+        prefs.rememberCalendarChoices(rows.filter { it.remote != null && !it.removed }.associate { it.remote!! to (it.visible to it.syncing) })
+        for (row in rows) {
+            val id = row.id.toString()
+            runCatching { provider.applyBatch(arrayListOf(
+                ContentProviderOperation.newDelete(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=?", arrayOf(id)).build(),
+                ContentProviderOperation.newDelete(sync(Calendars.CONTENT_URI)).withSelection("${Calendars._ID}=? AND ${Calendars.CAL_SYNC1}=?",
+                    arrayOf(id, MARKER)).build())) }
+        }
+        return requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID),
+            "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=?",
+            arrayOf(account.name, account.type, MARKER), null)).use { it.count == 0 }
     }
-    /** Calendars of this account that are not ours, which only another adapter (Google Calendar's) writes. */
-    private fun foreignCalendars(): List<Long> = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID),
-        "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND (${Calendars.CAL_SYNC1} IS NULL OR ${Calendars.CAL_SYNC1}!=?)",
-        arrayOf(account.name, account.type, MARKER), null)).use { c -> buildList { while (c.moveToNext()) add(c.getLong(0)) } }
-    /** Google Calendar's adapter has written a calendar for this account: the liveness check of the hand-over. */
-    fun hasForeignCalendar(): Boolean = foreignCalendars().isNotEmpty()
-    /** Changes in calendars that are not ours that no adapter uploaded: made while Google Calendar's adapter held the slot,
-     * kept on this phone after it handed back. Ours does not upload them. */
-    fun strandedChanges(): Int = foreignCalendars().sumOf { id ->
+    /** Changes Google Calendar's adapter had not uploaded, kept by [calendarList] after it handed back. Ours does not upload them. */
+    fun strandedChanges(): Int = prefs.strandedCalendars.sumOf { id ->
         requireNotNull(provider.query(sync(Events.CONTENT_URI), arrayOf(Events._ID), "${Events.CALENDAR_ID}=? AND ${Events.DIRTY}!=0",
             arrayOf(id.toString()), null)).use { it.count }
     }
     /**
-     * The first sync after Google Calendar's own adapter held the slot (CYC-2073). Every calendar of this account without our
-     * [MARKER] is Google's adapter's (it puts Google's calendar id in CAL_SYNC1); ours never adopts them. Their clean events,
-     * and then the emptied calendars, are removed from this phone only (as the sync adapter: nothing reaches Google), so the
-     * store does not hold every event twice. An event with a change Google's adapter had not uploaded stays, with its series
-     * and calendar ([strandedChanges]). Each delete repeats its condition when it runs: DIRTY=0, a series only while no
-     * dirty occurrence depends on it, a calendar only while no event is left in it. Our checkpoints are dropped, so this
-     * sync downloads everything again; an absent row is still never a server delete.
+     * Once Google's calendar list is in, before any calendar syncs. Two-way: our calendars' access levels follow it, so
+     * [hasUnsentChanges] is right again. The first sync after Google Calendar's own adapter held the slot (CYC-2073): ours
+     * removes the copies that adapter left of the calendars in this list (it puts Google's calendar id in CAL_SYNC1; _SYNC_ID and,
+     * for the primary calendar, the account name are accepted too), so this run downloads them again and nothing shows twice.
+     * A calendar of this account that matches nothing (another app's) is left alone. Removed from this phone only, as the sync
+     * adapter. An event with a change that adapter had not uploaded stays, with its series and calendar ([strandedChanges]).
+     * Each delete repeats its condition when it runs: DIRTY=0; a series only in the batch that asserts no dirty row points at
+     * it; a calendar only while no event is left in it. Our checkpoints are dropped; an absent row is never a server delete.
      */
-    fun prepareAfterHandBack() {
+    override fun calendarList(calendars: List<RemoteCalendar>) {
         check(prefs.enabled)
+        if (prefs.twoWay) {
+            for (calendar in calendars) provider.update(sync(Calendars.CONTENT_URI), ContentValues().apply {
+                put(Calendars.CALENDAR_ACCESS_LEVEL, accessLevel(calendar)) }, calendarSelection(), calendarArgs(calendar.id))
+            prefs.accessFresh = true
+        }
+        if (!prefs.rebuild) return
         provider.update(sync(Calendars.CONTENT_URI), ContentValues().apply { putNull(Calendars.CAL_SYNC4) },
             "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=?", arrayOf(account.name, account.type, MARKER))
-        for (calendar in foreignCalendars()) {
-            data class Row(val id: Long, val dirty: Boolean, val remote: String?, val parent: Long?, val parentRemote: String?, val series: Boolean)
+        val keys = calendars.map { it.id }.toSet() + listOfNotNull(account.name.takeIf { calendars.any { it.primary } })
+        val matched = requireNotNull(provider.query(sync(Calendars.CONTENT_URI), arrayOf(Calendars._ID, Calendars.CAL_SYNC1, Calendars._SYNC_ID),
+            "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND (${Calendars.CAL_SYNC1} IS NULL OR ${Calendars.CAL_SYNC1}!=?)",
+            arrayOf(account.name, account.type, MARKER), null)).use { c ->
+            buildList { while (c.moveToNext()) if (c.getString(1) in keys || c.getString(2) in keys) add(c.getLong(0)) }
+        }
+        val stranded = mutableSetOf<Long>()
+        for (calendar in matched) {
+            data class Row(val id: Long, val dirty: Boolean, val remote: String?, val parent: Long?, val parentRemote: String?, val recurring: Boolean)
             val rows = requireNotNull(provider.query(sync(Events.CONTENT_URI), arrayOf(Events._ID, Events.DIRTY, Events._SYNC_ID,
                 Events.ORIGINAL_ID, Events.ORIGINAL_SYNC_ID, Events.RRULE, Events.RDATE), "${Events.CALENDAR_ID}=?", arrayOf(calendar.toString()), null)).use { c ->
                 buildList { while (c.moveToNext()) add(Row(c.getLong(0), c.getInt(1) != 0, c.getString(2),
                     if (c.isNull(3)) null else c.getLong(3), c.getString(4), !c.isNull(5) || !c.isNull(6))) }
             }
-            val changed = rows.filter { it.dirty }
-            val keep = changed.mapNotNull { it.parent }.toSet() + changed.mapNotNull { it.parentRemote }.flatMap { remote ->
-                rows.filter { it.remote == remote }.map { it.id } }
-            val (series, single) = rows.filter { !it.dirty && it.id !in keep }.partition { it.series }
-            // DIRTY=0 again in the delete: a row changed since the query stays.
+            val parents = rows.mapNotNull { it.parent }.toSet()
+            val parentRemotes = rows.mapNotNull { it.parentRemote }.toSet()
+            val (series, single) = rows.filter { !it.dirty }.partition { it.recurring || it.id in parents || it.remote in parentRemotes }
+            // Clean again in the delete: a row changed since the query stays. A sync adapter's insert can leave DIRTY null.
+            val clean = "COALESCE(${Events.DIRTY},0)=0"
             single.map { it.id }.chunked(400).forEach { chunk ->
-                provider.delete(sync(Events.CONTENT_URI), "${Events._ID} IN (${chunk.joinToString(",")}) AND ${Events.DIRTY}=0", null)
+                provider.delete(sync(Events.CONTENT_URI), "${Events._ID} IN (${chunk.joinToString(",")}) AND $clean", null)
             }
-            // A series goes only together with the assertion that no changed occurrence depends on it.
-            for (row in series) {
-                try {
-                    provider.applyBatch(arrayListOf(
-                        ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=? AND " +
-                            "(${Events.ORIGINAL_ID}=? OR ${Events.ORIGINAL_SYNC_ID}=?) AND ${Events.DIRTY}!=0",
-                            arrayOf(calendar.toString(), row.id.toString(), row.remote ?: "")).withExpectedCount(0).build(),
-                        ContentProviderOperation.newDelete(sync(Events.CONTENT_URI)).withSelection("${Events._ID}=? AND ${Events.DIRTY}=0",
-                            arrayOf(row.id.toString())).build()))
-                } catch (_: android.content.OperationApplicationException) {}
-            }
-            try {
-                provider.applyBatch(arrayListOf(
-                    ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=?",
-                        arrayOf(calendar.toString())).withExpectedCount(0).build(),
-                    ContentProviderOperation.newDelete(sync(Calendars.CONTENT_URI)).withSelection("${Calendars._ID}=?",
-                        arrayOf(calendar.toString())).build()))
-            } catch (_: android.content.OperationApplicationException) {}
+            // A series goes only with the assertion, in the same batch, that no dirty row points at it.
+            for (row in series) runCatching { provider.applyBatch(arrayListOf(
+                ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=? AND " +
+                    "(${Events.ORIGINAL_ID}=? OR ${Events.ORIGINAL_SYNC_ID}=?) AND ${Events.DIRTY}!=0",
+                    arrayOf(calendar.toString(), row.id.toString(), row.remote ?: "")).withExpectedCount(0).build(),
+                ContentProviderOperation.newDelete(sync(Events.CONTENT_URI)).withSelection("${Events._ID}=? AND $clean",
+                    arrayOf(row.id.toString())).build())) }
+            val emptied = runCatching { provider.applyBatch(arrayListOf(
+                ContentProviderOperation.newAssertQuery(sync(Events.CONTENT_URI)).withSelection("${Events.CALENDAR_ID}=?",
+                    arrayOf(calendar.toString())).withExpectedCount(0).build(),
+                ContentProviderOperation.newDelete(sync(Calendars.CONTENT_URI)).withSelection("${Calendars._ID}=?",
+                    arrayOf(calendar.toString())).build())) }.isSuccess
+            if (!emptied) stranded += calendar
         }
+        prefs.strandedCalendars = stranded
+        prefs.rebuild = false
     }
     override fun uploadAllowed(calendar: RemoteCalendar) = prefs.enabled && prefs.twoWay && !prefs.uploadsHeld &&
         calendar.writable && shouldSync(calendar)

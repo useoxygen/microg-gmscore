@@ -48,16 +48,17 @@ class CalendarSyncAccountsReceiver : BroadcastReceiver() {
 
 /** While Google Calendar's adapter holds the slot ours runs no sync, so this notices when it can no longer sync. */
 class CalendarHandoverWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result { evaluate(applicationContext); return Result.success() }
+    override fun doWork(): Result { evaluate(applicationContext, hourly = true); return Result.success() }
     companion object {
         private const val NAME = "calendar-handover"
-        /** [CalendarHandover.evaluate], with the hourly check scheduled only while Google's adapter holds the slot. */
-        fun evaluate(context: Context): CalendarHandover.Owner {
-            val owner = CalendarHandover.evaluate(context)
+        /** [CalendarHandover.evaluate], with the hourly check scheduled while Google's adapter holds the slot: before ours
+         * disables itself, so a process death in between still leaves a check that decides again. */
+        fun evaluate(context: Context, hourly: Boolean = false): CalendarHandover.Owner {
             val work = WorkManager.getInstance(context)
-            if (owner == CalendarHandover.Owner.GOOGLE) work.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP,
-                PeriodicWorkRequestBuilder<CalendarHandoverWorker>(1, TimeUnit.HOURS).build())
-            else work.cancelUniqueWork(NAME)
+            fun schedule() = work.enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP,
+                PeriodicWorkRequestBuilder<CalendarHandoverWorker>(1, TimeUnit.HOURS).build()).result.get()
+            val owner = CalendarHandover.evaluate(context, hourly) { schedule() }
+            if (owner == CalendarHandover.Owner.GOOGLE) schedule() else work.cancelUniqueWork(NAME)
             return owner
         }
     }

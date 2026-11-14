@@ -38,7 +38,10 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
         get() = prefs.getLong(prefix + "lastSuccess", 0)
         set(value) { prefs.edit().putLong(prefix + "lastSuccess", value).apply() }
     fun configure(value: Boolean, twoWay: Boolean = this.twoWay) {
-        check(prefs.edit().putBoolean(prefix + "enabled", value).putBoolean(prefix + "twoWay", twoWay).commit())
+        val edit = prefs.edit().putBoolean(prefix + "enabled", value).putBoolean(prefix + "twoWay", twoWay)
+        // Download only stores every calendar read-only; two-way's access levels arrive with the next calendar list.
+        if (twoWay && !this.twoWay) edit.putBoolean(prefix + "accessFresh", false)
+        check(edit.commit())
         schedule(value)
         if (value) refresh()
     }
@@ -85,6 +88,8 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
         schedulePeriodic()
         ContentResolver.requestSync(account, AUTHORITY, Bundle.EMPTY)
     }
+    /** Ours has created a calendar in the store since its rows last left it (CYC-2073); read when ours cannot read the store. */
+    fun markOwnRows() { if (!prefs.getBoolean(OWN_ROWS, false)) check(prefs.edit().putBoolean(OWN_ROWS, true).commit()) }
     /** The first sync after Google Calendar's adapter gave the slot back rebuilds this account from a full download. */
     var rebuild: Boolean
         get() = prefs.getBoolean(prefix + "rebuild", false)
@@ -99,6 +104,29 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
     var strandedChanges: Int
         get() = prefs.getInt(prefix + "strandedChanges", 0)
         set(value) { prefs.edit().putInt(prefix + "strandedChanges", value).apply() }
+    /** Google's adapter's calendars that kept such changes at the hand-back cleanup. */
+    var strandedCalendars: Set<Long>
+        get() = prefs.getStringSet(prefix + "strandedCalendars", emptySet())!!.mapNotNull { it.toLongOrNull() }.toSet()
+        set(value) { check(prefs.edit().putStringSet(prefix + "strandedCalendars", value.map { it.toString() }.toSet()).commit()) }
+    /** The calendars' access levels were written from Google's calendar list since two-way was turned on. */
+    var accessFresh: Boolean
+        get() = prefs.getBoolean(prefix + "accessFresh", true)
+        set(value) { prefs.edit().putBoolean(prefix + "accessFresh", value).apply() }
+    /** The owner's per-calendar choices (visible, syncing) by Google calendar id, kept while Google's adapter holds the slot and
+     * applied when ours creates the calendar again (CYC-2073). */
+    fun rememberCalendarChoices(choices: Map<String, Pair<Int, Int>>) {
+        val json = org.json.JSONObject(prefs.getString(prefix + "calendarChoices", "{}")!!)
+        for ((id, choice) in choices) json.put(id, org.json.JSONArray().put(choice.first).put(choice.second))
+        check(prefs.edit().putString(prefix + "calendarChoices", json.toString()).commit())
+    }
+    /** The remembered choice for a calendar ours creates again, consumed. */
+    fun takeCalendarChoice(id: String): Pair<Int, Int>? {
+        val json = org.json.JSONObject(prefs.getString(prefix + "calendarChoices", "{}")!!)
+        val choice = json.optJSONArray(id) ?: return null
+        json.remove(id)
+        check(prefs.edit().putString(prefix + "calendarChoices", json.toString()).commit())
+        return choice.getInt(0) to choice.getInt(1)
+    }
     /** On here, but Android's own switch for this account (Settings › Accounts › Account sync) stops it running. */
     val androidSyncOff: Boolean get() = enabled &&
         (!ContentResolver.getSyncAutomatically(account, AUTHORITY) || ContentResolver.getIsSyncable(account, AUTHORITY) <= 0)
@@ -125,6 +153,7 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
         const val AUTHORITY = "com.android.calendar"
         const val PREFERENCES = "calendar-sync"
         const val PERIODIC = "cyclon_calendar_periodic"
+        const val OWN_ROWS = "ownRows"
         fun periodicExtras() = Bundle().apply { putBoolean(PERIODIC, true) }
         /** Removal must withdraw the old opt-in, even if the same account is added again later. */
         fun forgetRemovedAccounts(context: Context) {
