@@ -313,6 +313,16 @@ legacy rows acquire newly represented privacy, availability and end-zone metadat
 from a verified Google revision; ambiguous inherited reminders require an owner
 choice rather than being changed into fixed overrides during the upgrade.
 
+### What a phone showed (Pixel 7a, 2026-11-14)
+
+The PR's GmsCore was mounted over the installed APK on a rooted test phone (no signing, no image), so the boot and
+account triggers were not exercised. Stepping aside, the status screen, taking the slot back with the kill switch, the
+download-only default, and "a phone-side edit and delete in download-only mode do not reach Google" all behaved as
+described here. One defect was found and fixed: Google's adapter keeps "synced up to" per calendar in the account's
+`SyncState` row of CalendarProvider and afterwards only asks Google for later changes. After Google → ours → Google it
+recreated the calendars and left three of four empty. Ours now deletes that account's `SyncState` row when it cleans up
+after a hand-back; with that, the second hand-over refilled all four calendars (and the attendees) in about a minute.
+
 ## Required device acceptance: default and hand-over (CYC-2073)
 
 No device was used by the implementation agent; none of this has run on a phone.

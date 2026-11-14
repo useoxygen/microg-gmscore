@@ -173,6 +173,21 @@ class CalendarStoreEngineTest {
         handBack(listOf(RemoteCalendar("team", "Team", "UTC", "#64748b", emptyList())))
         assertEquals(1, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", again.toString()))
     }
+    // Google's adapter only asks for changes after the time in its SyncState row: without the row it downloads in full again.
+    @Test fun handBackClearsGooglesSyncStateOfThisAccountOnly() {
+        fun state(of: Account) = provider.database.execSQL("INSERT INTO syncstate (account_name, account_type, data) VALUES (?,?,?)",
+            arrayOf(of.name, of.type, "state"))
+        val other = Account("second@example.invalid", "com.google")
+        state(account); state(other)
+        prefs.rebuild = true
+        handBack(listOf(RemoteCalendar("primary-id", "Me", "UTC", "#64748b", emptyList(), primary = true)))
+        assertEquals(listOf(other.name), provider.database.rawQuery("SELECT account_name FROM syncstate", null).use { c ->
+            buildList { while (c.moveToNext()) add(c.getString(0)) } })
+        // Not outside a hand-back: an ordinary sync of ours leaves the table alone.
+        state(account)
+        handBack(listOf(RemoteCalendar("primary-id", "Me", "UTC", "#64748b", emptyList(), primary = true)))
+        assertEquals(2, provider.database.rawQuery("SELECT COUNT(*) FROM syncstate", null).use { it.moveToFirst(); it.getInt(0) })
+    }
     // Each hand-back delete is decided when it runs: an occurrence another app changes meanwhile keeps its series.
     @Test fun handBackKeepsASeriesWhoseOccurrenceChangedMeanwhile() {
         val google = foreignCalendar("chosen")
@@ -754,9 +769,10 @@ class CalendarSqlFixtureProvider : ContentProvider() {
             mapOf(Reminders.EVENT_ID to "INTEGER", Reminders.MINUTES to "INTEGER", Reminders.METHOD to "INTEGER"))
         table("attendees", listOf(Attendees._ID, Attendees.EVENT_ID, Attendees.ATTENDEE_NAME, Attendees.ATTENDEE_EMAIL,
             Attendees.ATTENDEE_STATUS, Attendees.ATTENDEE_RELATIONSHIP, Attendees.ATTENDEE_TYPE))
+        table("syncstate", listOf("_id", "account_name", "account_type", "data"))
         return true
     }
-    private fun table(uri: Uri) = uri.pathSegments.first().also { require(it in setOf("calendars", "events", "reminders", "attendees")) }
+    private fun table(uri: Uri) = uri.pathSegments.first().also { require(it in setOf("calendars", "events", "reminders", "attendees", "syncstate")) }
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, order: String?): Cursor =
         database.query(table(uri), projection, selection, args, null, null, order)
     override fun insert(uri: Uri, values: ContentValues?): Uri =

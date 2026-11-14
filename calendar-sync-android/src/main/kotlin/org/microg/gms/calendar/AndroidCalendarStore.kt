@@ -333,6 +333,11 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
         }
         foreignCopies.clear()
         if (!prefs.rebuild) return
+        // Google's adapter keeps "synced up to" per calendar in the account's SyncState row and then only asks for later
+        // changes. Its copies are about to leave, so that row leaves too: when it holds the slot again it downloads in full
+        // (seen on a phone, CYC-2073: after a round trip it recreated the calendars and left three of four empty).
+        provider.delete(sync(CalendarContract.SyncState.CONTENT_URI), "${CalendarContract.SyncState.ACCOUNT_NAME}=? AND " +
+            "${CalendarContract.SyncState.ACCOUNT_TYPE}=?", arrayOf(account.name, account.type))
         provider.update(sync(Calendars.CONTENT_URI), ContentValues().apply { putNull(Calendars.CAL_SYNC4) },
             "${Calendars.ACCOUNT_NAME}=? AND ${Calendars.ACCOUNT_TYPE}=? AND ${Calendars.CAL_SYNC1}=?", arrayOf(account.name, account.type, MARKER))
         val ids = calendars.map { it.id }.toSet()
