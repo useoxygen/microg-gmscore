@@ -46,6 +46,10 @@ class ServiceHealthTest {
         val reading = calendarHealth(listOf(account(true, "authorization", 0)), true, false, googleSyncing = true)
         assertEquals(HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR), reading)
         assertEquals(HealthReason.NO_ACCOUNTS, calendarHealth(emptyList(), true, true, googleSyncing = true).reason)
+        // Android's switch per account is that adapter's too: every account off is off, and master sync off pauses it.
+        assertEquals(HealthReading(HealthState.OFF, HealthReason.DISABLED),
+            calendarHealth(listOf(account(false, "success", 1), account(false, "", 0)), true, true, googleSyncing = true))
+        assertEquals(HealthState.PAUSED, calendarHealth(listOf(account(true, "success", 1)), false, true, googleSyncing = true).state)
         assertEquals(HealthReason.CALENDAR_PERMISSION, calendarHealth(listOf(account(true, "success", 1)), true, false, googleSyncing = false).reason)
         assertTrue(ServiceHealthSnapshot(calendar = reading, servicesVersionCode = 1, androidApi = 35).diagnosticReport()
             .contains("calendar=ready; code=google_calendar"))

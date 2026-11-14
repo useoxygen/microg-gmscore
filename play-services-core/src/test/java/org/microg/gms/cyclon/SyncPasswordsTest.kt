@@ -34,8 +34,12 @@ class SyncPasswordsTest {
         assertEquals(Summary(R.string.cyclon_sync_on), SyncPasswords.contactsSummary(ready, Accounts(0, 0)))
     }
 
-    @Test fun calendarKeptInSyncByGoogleCalendarSaysSo() = assertEquals(Summary(R.string.cyclon_sync_calendar_google),
-        SyncPasswords.calendarSummary(HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR), Accounts(0, 2)))
+    @Test fun calendarKeptInSyncByGoogleCalendarSaysSo() {
+        val google = HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR)
+        assertEquals(Summary(R.string.cyclon_sync_calendar_google), SyncPasswords.calendarSummary(google, Accounts(2, 2)))
+        // An account that is off is off for the Google Calendar app's adapter too: "On" must not hide it.
+        assertEquals(Summary(R.plurals.cyclon_sync_on_some, listOf(1, 2), count = 2), SyncPasswords.calendarSummary(google, Accounts(1, 2)))
+    }
 
     @Test fun problemsAndPausesAreNamed() {
         assertEquals(Summary(R.string.cyclon_sync_attention), SyncPasswords.calendarSummary(HealthReading(HealthState.ATTENTION, HealthReason.AUTHORIZATION), Accounts(1, 2)))

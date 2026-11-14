@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.microg.gms.calendar.CalendarHandover
 import org.microg.gms.calendar.CalendarSyncPreferences
 import org.microg.gms.people.ContactSyncPreferences
 import org.microg.gms.people.sync.SyncMode
@@ -52,10 +53,10 @@ internal object SyncPasswords {
         HealthState.PAUSED -> Summary(R.string.cyclon_sync_paused)
         // With several accounts, say when only some sync, so "On" never hides an account that is off.
         HealthState.READY, HealthState.CONNECTED -> when {
-            reading.reason == HealthReason.GOOGLE_CALENDAR -> Summary(R.string.cyclon_sync_calendar_google)
             accounts.total > 1 && accounts.on in 1 until accounts.total -> Summary(
                 if (reading.reason == HealthReason.SYNC_PENDING) R.plurals.cyclon_sync_pending_some else R.plurals.cyclon_sync_on_some,
                 listOf(accounts.on, accounts.total), count = accounts.total)
+            reading.reason == HealthReason.GOOGLE_CALENDAR -> Summary(R.string.cyclon_sync_calendar_google)
             reading.reason == HealthReason.SYNC_PENDING -> Summary(R.string.cyclon_sync_pending)
             else -> Summary(R.string.cyclon_sync_on)
         }
@@ -116,7 +117,9 @@ private suspend fun PreferenceFragmentCompat.showSyncPasswordsState() {
         runCatching {
             val accounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google")).toList()
             SyncPasswords.Accounts(accounts.count { ContactSyncPreferences(context, it).mode != SyncMode.OFF }, accounts.size) to
-                SyncPasswords.Accounts(accounts.count { CalendarSyncPreferences(context, it).enabled }, accounts.size)
+                // While the Google Calendar app's adapter syncs, an account is on when Android's switch for it is (CYC-2073).
+                SyncPasswords.Accounts(accounts.count { CalendarSyncPreferences(context, it).let { prefs ->
+                    if (CalendarHandover.steppedAside(context)) prefs.accountSyncOn else prefs.enabled } }, accounts.size)
         }.getOrDefault(SyncPasswords.Accounts(0, 0) to SyncPasswords.Accounts(0, 0))
     }
     if (!isAdded) return

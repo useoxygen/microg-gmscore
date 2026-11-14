@@ -94,6 +94,8 @@ class CalendarSyncService : Service() {
                     prefs.status = "local"; result.stats.numParseExceptions++
                 }
             }
+            // Changes Google Calendar's adapter left unsent at a hand-back stay on the phone; Calendar sync counts them (CYC-2073).
+            runCatching { prefs.strandedChanges = AndroidCalendarStore(provider, account, prefs).strandedChanges() }
             // Waiting for unsent changes: this sync may have uploaded the last of them.
             if (CalendarHandover.waiting(this@CalendarSyncService)) runCatching { CalendarHandoverWorker.evaluate(this@CalendarSyncService) }
         }

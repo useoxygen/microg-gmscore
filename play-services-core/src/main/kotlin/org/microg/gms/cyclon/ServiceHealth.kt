@@ -53,10 +53,15 @@ internal fun contactHealthReason(stored: String): HealthReason = when (stored) {
 }
 
 /** [googleSyncing]: the Google Calendar app's own adapter keeps the store in sync and ours steps aside (CYC-2073); ours'
- * choices, permission and status then say nothing about the calendar. */
+ * permission and status then say nothing about the calendar, and an account is on when Android's per-account switch, which
+ * that adapter follows too, is on ([ContactHealthObservation.enabled]). */
 internal fun calendarHealth(accounts: List<ContactHealthObservation>?, masterSync: Boolean?, permitted: Boolean?,
     googleSyncing: Boolean? = false): HealthReading = when {
-    googleSyncing == true && !accounts.isNullOrEmpty() -> HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR)
+    googleSyncing == true && !accounts.isNullOrEmpty() -> when {
+        accounts.none { it.enabled } -> HealthReading(HealthState.OFF, HealthReason.DISABLED)
+        masterSync == false -> HealthReading(HealthState.PAUSED, HealthReason.SYNC_PAUSED)
+        else -> HealthReading(HealthState.READY, HealthReason.GOOGLE_CALENDAR)
+    }
     else -> contactsHealth(accounts, masterSync, permitted).let {
         if (it.reason == HealthReason.CONTACT_PERMISSION) it.copy(reason = HealthReason.CALENDAR_PERMISSION) else it
     }

@@ -45,10 +45,13 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
     /**
      * Records the default for an account without a saved choice, once: download only, scheduled like turning sync on. Android
      * requests the first sync itself when the account becomes syncable, following master sync. A saved choice, including off,
-     * is never changed; nor is a default already recorded (Android's own account switch may have turned it off since).
+     * is never changed; nor is a default already recorded (Android's own account switch may have turned it off since). An
+     * account Android marks not syncable for the authority (0, which only an explicit choice sets; auto-initialization sets 1)
+     * gets no default and keeps that state. The caller leaves out Cyclon's device account.
      */
     fun ensureDefaults() {
         if (hasSavedChoice || prefs.contains(prefix + "defaultEnabled")) return
+        if (ContentResolver.getIsSyncable(account, AUTHORITY) == 0) return
         check(prefs.edit().putBoolean(prefix + "defaultEnabled", true).commit())
         schedule(true)
     }
@@ -86,6 +89,16 @@ class CalendarSyncPreferences(private val context: Context, val account: Account
     var rebuild: Boolean
         get() = prefs.getBoolean(prefix + "rebuild", false)
         set(value) { check(prefs.edit().putBoolean(prefix + "rebuild", value).commit()) }
+    /** Android's own switch for this account and authority is on (or not yet initialized). It is per account and authority,
+     * not per adapter: while Google Calendar's adapter holds the slot, an account that is off here is off for it too. */
+    val accountSyncOn: Boolean get() = ContentResolver.getSyncAutomatically(account, AUTHORITY) &&
+        ContentResolver.getIsSyncable(account, AUTHORITY) != 0
+    /** Google Calendar's own adapter keeps this account in sync (CYC-2073). */
+    val googleSyncs: Boolean get() = CalendarHandover.steppedAside(context) && accountSyncOn
+    /** Changes left after Google Calendar's adapter handed back that it had not uploaded; ours does not upload them. */
+    var strandedChanges: Int
+        get() = prefs.getInt(prefix + "strandedChanges", 0)
+        set(value) { prefs.edit().putInt(prefix + "strandedChanges", value).apply() }
     /** On here, but Android's own switch for this account (Settings › Accounts › Account sync) stops it running. */
     val androidSyncOff: Boolean get() = enabled &&
         (!ContentResolver.getSyncAutomatically(account, AUTHORITY) || ContentResolver.getIsSyncable(account, AUTHORITY) <= 0)

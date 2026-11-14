@@ -51,9 +51,10 @@ class CalendarTransferProvider : ContentProvider() {
             putBoolean("two_way", prefs.twoWay)
             putBoolean("uploads_held", prefs.uploadsHeld)
             // CYC-2073. default_on: on without an owner choice (download only). google_calendar_sync: the Google Calendar app's
-            // own adapter keeps the store in sync and ours steps aside; the fields above stay the owner's choices for ours.
+            // own adapter keeps this account in sync (ours steps aside and Android's switch for the account is on); the fields
+            // above stay the owner's choices for ours.
             putBoolean("default_on", prefs.onByDefault)
-            putBoolean("google_calendar_sync", CalendarHandover.steppedAside(context))
+            putBoolean("google_calendar_sync", prefs.googleSyncs)
             putParcelable("settings_intent", Intent().setClassName(context.packageName, SETTINGS)
                 .putExtra("account_name", account.name))
         }

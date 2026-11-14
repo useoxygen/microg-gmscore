@@ -21,5 +21,13 @@
     <string name="cyclon_calendar_google_waiting">The Google Calendar app can keep this phone’s calendar in sync. It takes over once Cyclon’s calendar sync has uploaded your unsent changes, conflicts are resolved and paused uploads are resumed.</string>
     <string name="cyclon_calendar_default_on">On by default, download only. Choose here to turn it off or sync both ways.</string>
     <string name="cyclon_sync_calendar_google">On: kept in sync by the Google Calendar app</string>
+    <string name="cyclon_calendar_google_account_on">On: the Google Calendar app keeps this account’s calendars in sync.</string>
+    <string name="cyclon_calendar_google_account_off">Off: sync for this account is off in Android’s account settings, so the Google Calendar app does not sync it either.</string>
+    <string name="cyclon_calendar_google_stalled">The Google Calendar app had not synced %1$s within 6 hours, so Cyclon’s calendar sync took over again. It hands over again after that app is updated, or after a day.</string>
+    <plurals name="cyclon_calendar_stranded">
+        <item quantity="one">%1$d change made while the Google Calendar app was syncing was not uploaded. It stays on this phone only. To upload it, turn the Google Calendar app back on (installed, enabled, with calendar access), or make the change again in Google Calendar on the web.</item>
+        <item quantity="other">%1$d changes made while the Google Calendar app was syncing were not uploaded. They stay on this phone only. To upload them, turn the Google Calendar app back on (installed, enabled, with calendar access), or make the changes again in Google Calendar on the web.</item>
+    </plurals>
+    <string name="cyclon_calendar_two_way_unsent">Download only would replace your unsent calendar changes with Google’s versions. Tap Sync now to upload them, or resolve the conflicts, then switch to download only.</string>
     <string name="cyclon_calendar_permissions">Calendar permission is missing. Review permissions in Calendar sync.</string>
 </resources>

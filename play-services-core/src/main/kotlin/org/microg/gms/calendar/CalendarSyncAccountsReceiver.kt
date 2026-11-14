@@ -3,6 +3,7 @@
 package org.microg.gms.calendar
 
 import org.microg.gms.cyclon.DeviceAccount
+import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -32,15 +33,17 @@ class CalendarSyncAccountsReceiver : BroadcastReceiver() {
         val pending = goAsync()
         worker.execute {
             try {
-                if (accounts) runCatching {
-                    DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google"))
-                        .forEach { CalendarSyncPreferences(context, it).ensureDefaults() }
-                }
+                if (accounts) runCatching { defaultAccounts(context).forEach { CalendarSyncPreferences(context, it).ensureDefaults() } }
                 runCatching { CalendarHandoverWorker.evaluate(context) }
             } finally { pending.finish() }
         }
     }
-    companion object { private val worker = Executors.newSingleThreadExecutor() }
+    companion object {
+        private val worker = Executors.newSingleThreadExecutor()
+        /** The accounts the default applies to: never Cyclon's device account, even while a test phone shows it. */
+        fun defaultAccounts(context: Context): List<Account> =
+            AccountManager.get(context).getAccountsByType("com.google").filterNot { DeviceAccount.isDevice(context, it) }
+    }
 }
 
 /** While Google Calendar's adapter holds the slot ours runs no sync, so this notices when it can no longer sync. */

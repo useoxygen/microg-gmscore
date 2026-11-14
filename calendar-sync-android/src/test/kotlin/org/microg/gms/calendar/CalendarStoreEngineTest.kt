@@ -117,16 +117,18 @@ class CalendarStoreEngineTest {
         put(Calendars.ACCOUNT_NAME, account.name); put(Calendars.ACCOUNT_TYPE, account.type)
         put(Calendars._SYNC_ID, "chosen"); put(Calendars.CAL_SYNC1, sync1); put(Calendars.SYNC_EVENTS, 1); put(Calendars.VISIBLE, 1)
     })))
-    private fun foreignEvent(calendar: Long, remote: String?, dirty: Boolean, parent: Long? = null): Long =
+    private fun foreignEvent(calendar: Long, remote: String?, dirty: Boolean, parent: Long? = null, rrule: String? = null): Long =
         ContentUris.parseId(requireNotNull(client.insert(Events.CONTENT_URI, ContentValues().apply {
             put(Events.CALENDAR_ID, calendar); put(Events._SYNC_ID, remote); put(Events.TITLE, "copy of $remote")
             put(Events.DTSTART, 0L); put(Events.DTEND, 3_600_000L); put(Events.DIRTY, if (dirty) 1 else 0)
             if (parent != null) put(Events.ORIGINAL_ID, parent)
+            if (rrule != null) put(Events.RRULE, rrule)
         })))
     private fun count(table: Uri, selection: String, vararg args: String) =
         requireNotNull(client.query(table, null, selection, arrayOf(*args), null)).use { it.count }
     // Hand-back: Google's adapter left its own copies (CAL_SYNC1 = Google's calendar id). Its clean copies go from this phone
-    // only, an unsent edit and its series stay, local calendars are untouched, and ours downloads everything again.
+    // only, an unsent edit and its series stay and are counted, any calendar without our marker counts as not ours (CAL_SYNC1
+    // empty included), and ours downloads everything again.
     @Test fun firstSyncAfterHandBackRebuildsWithoutDoublingOrDeletingOnGoogle() {
         seed(event())
         val google = foreignCalendar("chosen@group.calendar.google.com")
@@ -143,13 +145,49 @@ class CalendarStoreEngineTest {
         assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=?", master.toString()))
         assertEquals(0, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", clean.toString()))
         assertEquals(0, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", clean.toString()))
-        assertEquals(1, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", local.toString()))
+        assertEquals(0, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", local.toString()))
+        assertEquals(0, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", local.toString()))
+        assertEquals(1, store().strandedChanges())
         api.checkpoints.clear()
         assertNoFailure(sync())
         assertEquals(listOf<String?>(null), api.checkpoints)
         assertEquals(1, count(Events.CONTENT_URI, "${Events._SYNC_ID}=? AND ${Events.SYNC_DATA1}=?", "event", AndroidCalendarStore.MARKER))
         assertTrue(api.patches.isEmpty()); assertEquals(0, api.creates)
         assertEquals("event", api.remote.keys.single())
+    }
+    // Each hand-back delete is decided when it runs: an occurrence another app changes meanwhile keeps its series.
+    @Test fun handBackKeepsASeriesWhoseOccurrenceChangedMeanwhile() {
+        val google = foreignCalendar("chosen@group.calendar.google.com")
+        val master = foreignEvent(google, "series", dirty = false, rrule = "FREQ=DAILY;COUNT=3")
+        var occurrence = -1L
+        provider.beforeBatch = { occurrence = foreignEvent(google, null, dirty = true, parent = master) }
+        store().prepareAfterHandBack()
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=?", master.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events._ID}=?", occurrence.toString()))
+        assertEquals(1, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", google.toString()))
+        assertEquals(1, store().strandedChanges())
+    }
+    // ... and an event another app adds meanwhile keeps its calendar.
+    @Test fun handBackKeepsACalendarThatGainedAnEventMeanwhile() {
+        val google = foreignCalendar("chosen@group.calendar.google.com")
+        foreignEvent(google, "single", dirty = false)
+        provider.beforeBatch = { foreignEvent(google, null, dirty = true) }
+        store().prepareAfterHandBack()
+        assertEquals(1, count(Calendars.CONTENT_URI, "${Calendars._ID}=?", google.toString()))
+        assertEquals(1, count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", google.toString()))
+    }
+    // Only calendars ours uploads from hold unsent changes: read-only, unsynced and removed calendars never upload.
+    @Test fun unsentChangesCountOnlyCalendarsOursUploadsFrom() {
+        title(seed(event()), "phone edit")
+        assertTrue(store().hasUnsentChanges())
+        val restore = ContentValues().apply { put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_OWNER); put(Calendars.SYNC_EVENTS, 1); putNull(Calendars.CAL_SYNC2) }
+        for (values in listOf(ContentValues().apply { put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_READ) },
+            ContentValues().apply { put(Calendars.SYNC_EVENTS, 0) }, ContentValues().apply { put(Calendars.CAL_SYNC2, "removed") })) {
+            assertEquals(1, client.update(Calendars.CONTENT_URI, values, "${Calendars.CAL_SYNC1}=?", arrayOf(AndroidCalendarStore.MARKER)))
+            assertFalse(store().hasUnsentChanges())
+            client.update(Calendars.CONTENT_URI, restore, "${Calendars.CAL_SYNC1}=?", arrayOf(AndroidCalendarStore.MARKER))
+            assertTrue(store().hasUnsentChanges())
+        }
     }
     // A calendar new to this phone takes Google's selected/hidden flags and access role; the owner's later choice stays.
     @Test fun newCalendarsSyncOnlyWhatTheOwnerShowsAndCanWrite() {

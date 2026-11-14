@@ -52,12 +52,14 @@ internal class ServiceHealthReader(private val context: Context) {
             }
         }
         val masterSync = observe { ContentResolver.getMasterSyncAutomatically() }
+        val calendarAside = observe { org.microg.gms.calendar.CalendarHandover.steppedAside(context) }
         val calendars = observe {
             val accounts = DeviceAccount.visible(context, AccountManager.get(context).getAccountsByType("com.google"))
             check(accounts.size <= 100)
             accounts.map { account ->
                 val prefs = CalendarSyncPreferences(context, account)
-                ContactHealthObservation(prefs.enabled, observe {
+                // While the Google Calendar app's adapter syncs, Android's switch for the account decides whether it is on.
+                ContactHealthObservation(if (calendarAside == true) prefs.accountSyncOn else prefs.enabled, observe {
                     ContentResolver.getSyncAutomatically(account, CalendarSyncPreferences.AUTHORITY) &&
                         ContentResolver.getIsSyncable(account, CalendarSyncPreferences.AUTHORITY) > 0
                 }, if (prefs.status == "permission") HealthReason.SYNC_PENDING else contactHealthReason(prefs.status), prefs.lastSuccess)
@@ -99,8 +101,7 @@ internal class ServiceHealthReader(private val context: Context) {
                 @Suppress("DEPRECATION")
                 val info = context.packageManager.getPackageInfo("com.android.vending", 0)
                 if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-            }, Build.VERSION.SDK_INT, calendarHealth(calendars, masterSync, calendarPermission,
-                observe { org.microg.gms.calendar.CalendarHandover.steppedAside(context) })
+            }, Build.VERSION.SDK_INT, calendarHealth(calendars, masterSync, calendarPermission, calendarAside)
         )
     }
 
