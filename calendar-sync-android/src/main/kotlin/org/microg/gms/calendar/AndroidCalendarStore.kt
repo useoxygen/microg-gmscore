@@ -279,11 +279,13 @@ class AndroidCalendarStore(private val provider: ContentProviderClient, private 
     }
     /** Rows of this account that ours still has to upload or settle: [localEvents] in the calendars ours uploads from. Leaving
      * two-way waits for them (CYC-2073). A dirty row in a read-only, unsynced or removed calendar is never uploaded. */
-    fun hasUnsentChanges(): Boolean = ownCalendars().filter { it.second }.any { (id, _) ->
-        requireNotNull(provider.query(sync(Events.CONTENT_URI), arrayOf(Events._ID), "${Events.CALENDAR_ID}=? AND " +
-            "(${Events.DIRTY}!=0 OR ${Events.SYNC_DATA4} IS NOT NULL) AND (${Events.SYNC_DATA1}=? OR (${Events.SYNC_DATA1} IS NULL AND ${Events._SYNC_ID} IS NULL))",
-            arrayOf(id.toString(), MARKER), null)).use { it.moveToFirst() }
-    }
+    fun hasUnsentChanges(): Boolean = ownCalendars().filter { it.second }.any { (id, _) -> unsentIn(id) }
+    /** Unsent or conflicting rows in any calendar of ours for this account. With sync off after two-way or a transfer hold
+     * they never reached Google, and a hand-over to Google Calendar's adapter would remove them (CYC-2073). */
+    fun hasLocalChanges(): Boolean = ownCalendars().any { (id, _) -> unsentIn(id) }
+    private fun unsentIn(calendar: Long): Boolean = requireNotNull(provider.query(sync(Events.CONTENT_URI), arrayOf(Events._ID), "${Events.CALENDAR_ID}=? AND " +
+        "(${Events.DIRTY}!=0 OR ${Events.SYNC_DATA4} IS NOT NULL) AND (${Events.SYNC_DATA1}=? OR (${Events.SYNC_DATA1} IS NULL AND ${Events._SYNC_ID} IS NULL))",
+        arrayOf(calendar.toString(), MARKER), null)).use { it.moveToFirst() }
     /**
      * Before Google Calendar's own adapter takes the slot (CYC-2073), with ours already unable to sync: our calendars of this
      * account and all their events leave this phone, as the sync adapter, so nothing reaches Google and Google's adapter starts

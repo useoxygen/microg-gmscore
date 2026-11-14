@@ -142,6 +142,15 @@ object CalendarHandover {
         return !prefs.enabled || !prefs.twoWay || prefs.status != "conflict" &&
             runCatching { withStore(context, account, prefs) { !it.hasUnsentChanges() } }.getOrDefault(false)
     }
+    /** Two-way or a transfer hold keeps ours. With sync off for the account it does so while our calendars still hold rows
+     * that never reached Google: the hand-over would remove them. Unreadable counts as holding some; without permission
+     * [rowsOutOfReach] keeps ours instead. */
+    private fun keepsOurs(context: Context, account: Account): Boolean {
+        val prefs = CalendarSyncPreferences(context, account)
+        if (!prefs.twoWay && !prefs.uploadsHeld) return false
+        return prefs.enabled || permitted(context) &&
+            runCatching { withStore(context, account, prefs) { it.hasLocalChanges() } }.getOrDefault(true)
+    }
     /** Without calendar permission ours cannot remove its rows: it may hold some unless it created none since they last left
      * (before this flag existed: unless no account ever synced). */
     private fun rowsOutOfReach(context: Context, accounts: Array<Account>): Boolean = !permitted(context) && state(context).let { state ->
@@ -185,10 +194,11 @@ object CalendarHandover {
         val unfinished = aside && !state.getBoolean(CalendarSyncPreferences.ROWS_REMOVED, false)
         val can = googleCanSync(context) && !forceOurs()
         val version = googleVersion(context)
-        val twoWay = accounts.firstOrNull { CalendarSyncPreferences(context, it).let { p -> p.enabled && (p.twoWay || p.uploadsHeld) } }
+        val twoWay = accounts.firstOrNull { keepsOurs(context, it) }
         val backingOff = !aside && state.contains("stalledVersion") && state.getLong("stalledVersion", -1) == version
         var stalled: Account? = null
-        if (aside && can) {
+        // Only a finished hand-over counts: the counter and recorded _id may still be from an earlier time aside.
+        if (aside && !unfinished && can) {
             var checks = state.getInt("checks", 0)
             if (hourly && online(context) && accounts.any(::syncOn)) state.edit().putInt("checks", ++checks).apply()
             val since = state.getLong("asideNewest", 0)

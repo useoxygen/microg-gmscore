@@ -215,6 +215,49 @@ class CalendarHandoverTest {
         assertEquals(0, client.count(Events.CONTENT_URI, "${Events.SYNC_DATA1}=?", AndroidCalendarStore.MARKER))
         assertTrue(state().getBoolean(CalendarSyncPreferences.ROWS_REMOVED, false))
     }
+    // A hand-over cut short after an earlier time aside: that time's liveness counter and recorded _id do not judge the new
+    // hand-over stalled before it is finished.
+    @Test fun anUnfinishedHandOverIgnoresAnEarlierLivenessCount() {
+        val client = store()
+        ContentResolver.setMasterSyncAutomatically(true)
+        prefs.configure(true)
+        client.event(client.calendar(AndroidCalendarStore.MARKER), "clean")
+        googleCalendar()
+        state().edit().putInt("checks", CalendarHandover.LIVENESS_CHECKS).putLong("asideNewest", Long.MAX_VALUE)
+            .putBoolean(CalendarSyncPreferences.STEPPING_ASIDE, true).commit()
+        context.packageManager.setComponentEnabledSetting(ours, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+        assertEquals(Owner.GOOGLE, CalendarHandover.evaluate(context, hourly = true))
+        assertTrue(CalendarHandover.steppedAside(context))
+        assertTrue(state().getBoolean(CalendarSyncPreferences.ROWS_REMOVED, false))
+        assertEquals(0, state().getInt("checks", -1))
+        assertEquals(0, client.count(Calendars.CONTENT_URI, "${Calendars.CAL_SYNC1}=?", AndroidCalendarStore.MARKER))
+    }
+    // Sync turned off after two-way (or during a transfer hold) keeps the account's calendars: unsent rows in them never
+    // reached Google, so ours keeps the slot instead of removing them; once nothing is unsent it hands over.
+    @Test fun anAccountTurnedOffWithUnsentTwoWayRowsKeepsOurs() {
+        val client = store()
+        prefs.configure(true, true)
+        val writable = client.calendar(AndroidCalendarStore.MARKER)
+        val created = client.event(writable, null, dirty = true, ours = false) // made on the phone, not uploaded yet
+        prefs.configure(false)
+        googleCalendar()
+        assertEquals(Owner.OURS, CalendarHandover.evaluate(context))
+        assertFalse(CalendarHandover.steppedAside(context))
+        assertEquals("two_way" to account.name, CalendarHandover.reason(context))
+        assertEquals(1, client.count(Events.CONTENT_URI, "${Events._ID}=?", created.toString()))
+        client.update(Events.CONTENT_URI, ContentValues().apply { put(Events.DIRTY, 0); put(Events._SYNC_ID, "uploaded") },
+            "${Events._ID}=?", arrayOf(created.toString()))
+        assertEquals(Owner.GOOGLE, CalendarHandover.evaluate(context))
+        // A hold with sync off and a row Switch copied in keeps ours the same way.
+        googleCalendar(read = false); assertEquals(Owner.OURS, CalendarHandover.evaluate(context))
+        prefs.configure(true, false); prefs.beginMigration()
+        val copied = client.calendar(AndroidCalendarStore.MARKER, Calendars.CAL_ACCESS_READ)
+        client.event(copied, null, dirty = true, ours = false)
+        prefs.configure(false)
+        googleCalendar()
+        assertEquals(Owner.OURS, CalendarHandover.evaluate(context))
+        assertEquals(1, client.count(Events.CONTENT_URI, "${Events.CALENDAR_ID}=?", copied.toString()))
+    }
     // A calendar with our marker is no sign that Google's adapter syncs the account.
     @Test fun ourOwnCalendarsAreNoEvidenceOfLiveness() {
         val client = store()

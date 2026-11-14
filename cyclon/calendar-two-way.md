@@ -64,7 +64,10 @@ aside and Google's fills the store; ours remains the fallback.
   two-way on, ours keeps the slot for every account and Calendar sync says why
   ("Two-way sync is on for …, so the Google Calendar app's sync is not used").
   A transfer upload hold keeps ours the same way, because Google's adapter has no
-  hold and would upload what Switch copies at once. There is no check of unsent
+  hold and would upload what Switch copies at once. An account whose sync is off
+  but still marked two-way or held keeps ours the same way while our calendars
+  hold unsent or conflicting rows for it (turning sync off keeps local events,
+  and the hand-over would remove them). Otherwise there is no check of unsent
   rows at hand-over time: only download-only accounts are ever handed over, and
   in download only a local edit is not an upload (Google's copy wins).
 - **Order of a hand-over** (rules 2 and 7):
